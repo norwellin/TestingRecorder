@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Iframe Drag Detector",
+  "version": "1.0",
+  "permissions": ["scripting"],
+  "host_permissions": ["https://iot.ttu.edu.tw/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://iot.ttu.edu.tw/SnapIonic8.1/*"],
+      "js": ["bundle.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
