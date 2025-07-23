@@ -1,9 +1,11 @@
 // 監聽外部 drag-drop 事件
+import { DOMElement } from "../entities/DOMElement";
+
 export class OuterEventListener {
   constructor(iframeWindow) {
     this.iframeWindow = iframeWindow;
     this.dragSources = document.querySelectorAll('[draggable="true"]');
-
+    this.DOMElement = new DOMElement();
     //
     this.target = null;
     this.source = null;
@@ -11,12 +13,11 @@ export class OuterEventListener {
 
   init() {
     this.dragSources.forEach((dragSource) => {
-        dragSource.addEventListener('dragstart', (e) => {
+      dragSource.addEventListener('dragstart', (e) => {
         console.log('拖曳開始:', dragSource);
-        this.iframeWindow.postMessage({
-          type: 'dragstart',
-          target: e.target
-        }, '*');
+
+        this.DOMElement.setElementData(e.target);
+        this.iframeWindow.postMessage(this.DOMElement.getAllElements('drag'), '*');
         this.source = e.target.getAttribute('title');
       });
 

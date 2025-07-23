@@ -2,13 +2,19 @@
   "manifest_version": 3,
   "name": "Iframe Drag Detector",
   "version": "1.0",
-  "permissions": ["scripting"],
+  "permissions": ["scripting", "tabs", "activeTab", "windows"],
   "host_permissions": ["https://iot.ttu.edu.tw/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": ["https://iot.ttu.edu.tw/SnapIonic8.1/*"],
       "js": ["bundle.js"],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "action": {
+    "default_title": "Iframe Drag Detector"
+  }
 }

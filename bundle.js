@@ -4,8 +4,32 @@
     constructor(code) {
       this.code = code;
     }
-    static codeGetter() {
+    codeGetter() {
       return this.code;
+    }
+  };
+
+  // entities/DOMElement.js
+  var DOMElement = class {
+    constructor() {
+      this.tag = "";
+      this.id = "";
+      this.title = "";
+    }
+    setElementData(element) {
+      this.tag = element.tagName.toLowerCase();
+      this.id = element.id || "";
+      this.title = element.getAttribute("title") || "";
+    }
+    getAllElements(type) {
+      return {
+        type,
+        elementData: {
+          id: this.id,
+          title: this.title,
+          tagname: this.tag
+        }
+      };
     }
   };
 
@@ -13,8 +37,8 @@
   var DOMParserService = class {
     constructor() {
     }
-    getDomPath(el) {
-      const path2 = [];
+    static getDomPath(el) {
+      const path = [];
       while (el && el.nodeType === Node.ELEMENT_NODE) {
         let name = el.nodeName.toLowerCase();
         let siblingIndex = 1;
@@ -27,22 +51,23 @@
         if (siblingIndex > 1) {
           name += `:nth-of-type(${siblingIndex})`;
         }
-        path2.unshift(name);
+        path.unshift(name);
         el = el.parentElement;
       }
-      return path2.join(" > ");
+      return path.join(" > ");
     }
   };
 
   // usecases/PlaywrightCodeGenerator.js
   var PlaywrightCodeGenerator = class {
-    static generate(action, iframe, sourceEl, targetEl) {
-      const sourcepath = DOMParserService.getDomPath(sourceEl);
-      const targetpath = DOMParserService.getDomPath(targetEl);
-      if (action.type === "drag") {
+    static generate(action) {
+      const targetpath = DOMParserService.getDomPath(action.getTargetElement());
+      console.log("\u6ED1\u9F20\u505C\u7559\u5728 iframe \u4E2D\u7684\u5143\u7D20:", targetpath);
+      if (action.getActionType() === "drag") {
         return new PlaywrightCommand(
           //`await page.dragAndDrop('${action.source.textContent}', '${action.target.textContent}')`
-          `await page.locator(${sourcepath}).dragTo(${iframe}.locator(${targetpath}));`
+          //await page.locator('[title = "ion-tabs"]').dragTo(frame.locator('ion-content'));
+          `await page.locator('[title = '${action.getSourceElement().title}']').dragTo(iframe.locator(css=${targetpath}));`
         );
       }
       return new PlaywrightCommand("// Unknown action");
@@ -51,10 +76,19 @@
 
   // entities/UserAction.js
   var UserAction = class {
-    constructor(type, source, target) {
+    constructor({ type, source, target }) {
       this.type = type;
       this.source = source;
       this.target = target;
+    }
+    getActionType() {
+      return this.type;
+    }
+    getSourceElement() {
+      return this.source;
+    }
+    getTargetElement() {
+      return this.target;
     }
   };
 
@@ -95,21 +129,20 @@
         e.preventDefault();
         const data = e.dataTransfer.getData("text/plain");
         console.log("\u653E\u958B\u4E86:", data);
-        this.iframeWindow.postMessage("mouseup-from-parent", "*");
         console.log("iframe\u9032\u884Cdrop\u4E8B\u4EF6\u8655\u7406");
         if (this.currentHoveredElement) {
-          console.log("\u6ED1\u9F20\u505C\u7559\u5728 iframe \u4E2D\u7684\u5143\u7D20:", path);
-          this.PlaywrightCommand = PlaywrightCodeGenerator.generate(ActionInterpreter.interpretDrag(this.source, this.currentHoveredElement), this.iframeWindow, this.source, this.currentHoveredElement);
+          this.PlaywrightCommand = PlaywrightCodeGenerator.generate(ActionInterpreter.interpretDrag(this.source, this.currentHoveredElement), this.iframeWindow);
           console.log("Playwright Command:", this.PlaywrightCommand.codeGetter());
           this.currentHoveredElement = null;
         }
       });
       this.iframeWindow.addEventListener("message", (e) => {
         const msg = e.data;
+        console.log("msg:", msg);
         switch (msg.type) {
-          case "dragstart":
+          case "drag":
             console.log("iframe \u6536\u5230 parent \u50B3\u4F86\u7684 dragstart");
-            this.source = msg.target;
+            this.source = msg.elementData;
             break;
         }
       });
@@ -121,6 +154,7 @@
     constructor(iframeWindow) {
       this.iframeWindow = iframeWindow;
       this.dragSources = document.querySelectorAll('[draggable="true"]');
+      this.DOMElement = new DOMElement();
       this.target = null;
       this.source = null;
     }
@@ -128,10 +162,8 @@
       this.dragSources.forEach((dragSource) => {
         dragSource.addEventListener("dragstart", (e) => {
           console.log("\u62D6\u66F3\u958B\u59CB:", dragSource);
-          this.iframeWindow.postMessage({
-            type: "dragstart",
-            target: e.target
-          }, "*");
+          this.DOMElement.setElementData(e.target);
+          this.iframeWindow.postMessage(this.DOMElement.getAllElements("drag"), "*");
           this.source = e.target.getAttribute("title");
         });
         dragSource.addEventListener("dragend", () => {

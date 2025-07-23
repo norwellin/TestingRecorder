@@ -11,7 +11,7 @@ export class IframeEventListener {
     this.PlaywrightCommand = PlaywrightCommand;
     //
     this.target = null;
-    this.source = null;
+    this.source = null; //存放的是drag and drop的title
     this.currentHoveredElement = null;
   }
 
@@ -32,14 +32,11 @@ export class IframeEventListener {
       e.preventDefault();
       const data = e.dataTransfer.getData('text/plain');
       console.log('放開了:', data);
-      this.iframeWindow.postMessage('mouseup-from-parent', '*');
       console.log('iframe進行drop事件處理');
         if (this.currentHoveredElement) {
-          console.log('滑鼠停留在 iframe 中的元素:', path);
           
-
           //在這裡處理轉換成Playwright Code Logic
-          this.PlaywrightCommand = PlaywrightCodeGenerator.generate(ActionInterpreter.interpretDrag(this.source, this.currentHoveredElement),this.iframeWindow, this.source, this.currentHoveredElement);
+          this.PlaywrightCommand = PlaywrightCodeGenerator.generate(ActionInterpreter.interpretDrag(this.source, this.currentHoveredElement),this.iframeWindow);
           console.log('Playwright Command:', this.PlaywrightCommand.codeGetter());
           //回復狀態
           this.currentHoveredElement = null;
@@ -47,11 +44,11 @@ export class IframeEventListener {
     });
     this.iframeWindow.addEventListener('message', (e) => {
       const msg = e.data;
-
+      console.log('msg:', msg);
       switch (msg.type) {
-        case 'dragstart':
+        case 'drag':
           console.log('iframe 收到 parent 傳來的 dragstart');
-          this.source = msg.target;
+          this.source = msg.elementData;
           break;
       }
     });

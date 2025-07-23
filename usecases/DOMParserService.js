@@ -4,7 +4,7 @@ import { DOMElement } from './../entities/DOMElement.js';
 export class DOMParserService {
   constructor() { }
 
-  getDomPath(el) {
+  static getDomPath(el) {
     const path = [];
     while (el && el.nodeType === Node.ELEMENT_NODE) {
       let name = el.nodeName.toLowerCase();

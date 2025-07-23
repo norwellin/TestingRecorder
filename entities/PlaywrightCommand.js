@@ -2,7 +2,7 @@ export class PlaywrightCommand {
   constructor(code) {
     this.code = code; // string, e.g., page.click('text=Submit');
   }
-  static codeGetter(){
+  codeGetter(){
     return this.code;
   }
 }

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Playwright Code Viewer</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #fafafa; }
+    pre { white-space: pre-wrap; background: white; border: 1px solid #ccc; padding: 10px; }
+  </style>
+</head>
+<body>
+  <h2>Generated Code</h2>
+  <pre id="code">Loading...</pre>
+
+  <script>
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg.type === "display_code") {
+        document.getElementById("code").textContent = msg.code;
+      }
+    });
+  </script>
+</body>
+</html>
