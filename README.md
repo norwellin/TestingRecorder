@@ -6,6 +6,9 @@ A brief description of what your project does and who it's for.
 
 - List key features or use cases
 
+## Functions in this version
+✅Only support one iframe with one main window
+
 ## Documents Structure
 
 ```bash
@@ -47,6 +50,7 @@ npx esbuild MainApp.js --bundle --outfile=bundle.js
 const app = new MainApp();
 app.start();
 ```
+
 ## Usage
 
 ```bash

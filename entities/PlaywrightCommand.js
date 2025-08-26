@@ -1,6 +1,9 @@
 export class PlaywrightCommand {
-  constructor(code) {
-    this.code = code; // string, e.g., page.click('text=Submit');
+  constructor() {
+    this.code = []; // string, e.g., page.click('text=Submit');
+  }
+  codeSetter(codeline) {
+    this.code.push(codeline);
   }
   codeGetter(){
     return this.code;

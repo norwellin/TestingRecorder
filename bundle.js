@@ -1,8 +1,11 @@
 (() => {
   // entities/PlaywrightCommand.js
   var PlaywrightCommand = class {
-    constructor(code) {
-      this.code = code;
+    constructor() {
+      this.code = [];
+    }
+    codeSetter(codeline) {
+      this.code.push(codeline);
     }
     codeGetter() {
       return this.code;
@@ -60,17 +63,12 @@
 
   // usecases/PlaywrightCodeGenerator.js
   var PlaywrightCodeGenerator = class {
-    static generate(action) {
+    static generate(action, playwrightCommand) {
       const targetpath = DOMParserService.getDomPath(action.getTargetElement());
       console.log("\u6ED1\u9F20\u505C\u7559\u5728 iframe \u4E2D\u7684\u5143\u7D20:", targetpath);
       if (action.getActionType() === "drag") {
-        return new PlaywrightCommand(
-          //`await page.dragAndDrop('${action.source.textContent}', '${action.target.textContent}')`
-          //await page.locator('[title = "ion-tabs"]').dragTo(frame.locator('ion-content'));
-          `await page.locator('[title = '${action.getSourceElement().title}']').dragTo(iframe.locator(css=${targetpath}));`
-        );
+        playwrightCommand.codeSetter(`await page.locator('[title = '${action.getSourceElement().title}']').dragTo(iframe.locator(css=${targetpath}));`);
       }
-      return new PlaywrightCommand("// Unknown action");
     }
   };
 
@@ -105,11 +103,11 @@
 
   // interfaces/IframeEventListener.js
   var IframeEventListener = class {
-    constructor(iframeWindow, domParserService) {
+    constructor(iframeWindow, domParserService, playwrightCommand) {
       this.iframeWindow = iframeWindow;
       this.domParserService = domParserService;
       this.iframeDocument = iframeWindow.document;
-      this.PlaywrightCommand = PlaywrightCommand;
+      this.playwrightCommand = playwrightCommand;
       this.target = null;
       this.source = null;
       this.currentHoveredElement = null;
@@ -131,9 +129,15 @@
         console.log("\u653E\u958B\u4E86:", data);
         console.log("iframe\u9032\u884Cdrop\u4E8B\u4EF6\u8655\u7406");
         if (this.currentHoveredElement) {
-          this.PlaywrightCommand = PlaywrightCodeGenerator.generate(ActionInterpreter.interpretDrag(this.source, this.currentHoveredElement), this.iframeWindow);
-          console.log("Playwright Command:", this.PlaywrightCommand.codeGetter());
+          PlaywrightCodeGenerator.generate(ActionInterpreter.interpretDrag(this.source, this.currentHoveredElement), this.playwrightCommand);
+          console.log("Playwright Command:", this.playwrightCommand.codeGetter());
           this.currentHoveredElement = null;
+          const generatedCode = this.playwrightCommand.codeGetter();
+          console.log("Playwright Command:", generatedCode);
+          chrome.runtime.sendMessage({
+            type: "display_code",
+            code: generatedCode
+          });
         }
       });
       this.iframeWindow.addEventListener("message", (e) => {
@@ -159,39 +163,49 @@
       this.source = null;
     }
     init() {
-      this.dragSources.forEach((dragSource) => {
-        dragSource.addEventListener("dragstart", (e) => {
-          console.log("\u62D6\u66F3\u958B\u59CB:", dragSource);
-          this.DOMElement.setElementData(e.target);
+      document.addEventListener("dragstart", (e) => {
+        const target = e.target;
+        if (target.getAttribute("draggable") === "true") {
+          console.log("\u62D6\u62C9\u958B\u59CB:", target);
+          this.DOMElement.setElementData(target);
           this.iframeWindow.postMessage(this.DOMElement.getAllElements("drag"), "*");
-          this.source = e.target.getAttribute("title");
-        });
-        dragSource.addEventListener("dragend", () => {
-          console.log("\u62D6\u66F3end:");
-        });
+          this.source = target.getAttribute("title");
+        }
       });
+    }
+  };
+
+  // WindowsCatcher.js
+  var WindowsCatcher = class {
+    constructor(doucumentRef = document) {
+      this.documentRef = doucumentRef;
+    }
+    catch() {
+      const iframe = this.documentRef.querySelector("iframe");
+      const iframeWindow = iframe?.contentWindow || null;
+      const mainWindow = window;
+      return { mainWindow, iframeWindow };
     }
   };
 
   // MainApp.js
   var MainApp = class {
     constructor() {
-      this.iframe = document.querySelector("iframe");
+      this.allwindows = new WindowsCatcher();
     }
     start() {
-      if (!this.iframe) {
-        console.error("\u627E\u4E0D\u5230 iframe");
-        return;
-      }
       console.log("\u7A0B\u5F0F\u6D3B\u8457!");
-      const iframeWindow = this.iframe.contentWindow;
+      const { mainWindow, iframeWindow } = this.allwindows.catch();
       const domParserService = new DOMParserService();
-      const iframeListener = new IframeEventListener(iframeWindow, domParserService);
-      iframeListener.init();
+      const command = new PlaywrightCommand();
+      if (iframeWindow) {
+        const iframeListener = new IframeEventListener(iframeWindow, domParserService, command);
+        iframeListener.init();
+      }
       const outerListener = new OuterEventListener(iframeWindow);
       outerListener.init();
     }
   };
   const app = new MainApp();
-  app.start();
+app.start();
 })();

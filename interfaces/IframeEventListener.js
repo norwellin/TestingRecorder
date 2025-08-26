@@ -4,11 +4,11 @@ import { PlaywrightCodeGenerator } from '../usecases/PlaywrightCodeGenerator';
 import { ActionInterpreter } from '../usecases/ActionInterpreter.js';
 
 export class IframeEventListener {
-  constructor(iframeWindow, domParserService) {
+  constructor(iframeWindow, domParserService, playwrightCommand) {
     this.iframeWindow = iframeWindow;
     this.domParserService = domParserService;
     this.iframeDocument = iframeWindow.document;
-    this.PlaywrightCommand = PlaywrightCommand;
+    this.playwrightCommand = playwrightCommand;
     //
     this.target = null;
     this.source = null; //存放的是drag and drop的title
@@ -33,14 +33,23 @@ export class IframeEventListener {
       const data = e.dataTransfer.getData('text/plain');
       console.log('放開了:', data);
       console.log('iframe進行drop事件處理');
-        if (this.currentHoveredElement) {
-          
-          //在這裡處理轉換成Playwright Code Logic
-          this.PlaywrightCommand = PlaywrightCodeGenerator.generate(ActionInterpreter.interpretDrag(this.source, this.currentHoveredElement),this.iframeWindow);
-          console.log('Playwright Command:', this.PlaywrightCommand.codeGetter());
-          //回復狀態
-          this.currentHoveredElement = null;
-        }
+      if (this.currentHoveredElement) {
+
+        //在這裡處理轉換成Playwright Code Logic
+        PlaywrightCodeGenerator.generate(ActionInterpreter.interpretDrag(this.source, this.currentHoveredElement), this.playwrightCommand);
+        console.log('Playwright Command:', this.playwrightCommand.codeGetter());
+        //回復狀態
+        this.currentHoveredElement = null;
+
+        // 傳送Playwright Code到背景頁面
+        const generatedCode = this.playwrightCommand.codeGetter();
+        console.log("Playwright Command:", generatedCode);
+        chrome.runtime.sendMessage({
+          type: "display_code",
+          code: generatedCode
+        });
+        
+      }
     });
     this.iframeWindow.addEventListener('message', (e) => {
       const msg = e.data;

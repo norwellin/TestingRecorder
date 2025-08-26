@@ -12,7 +12,7 @@ export class OuterEventListener {
   }
 
   init() {
-    this.dragSources.forEach((dragSource) => {
+    /*this.dragSources.forEach((dragSource) => {
       dragSource.addEventListener('dragstart', (e) => {
         console.log('拖曳開始:', dragSource);
 
@@ -25,7 +25,16 @@ export class OuterEventListener {
         console.log('拖曳end:');
       });
     });
-
+*/
+document.addEventListener("dragstart", (e) => {
+    const target = e.target;
+    if (target.getAttribute("draggable") === "true") {
+      console.log("拖拉開始:", target);
+      this.DOMElement.setElementData(target);
+      this.iframeWindow.postMessage(this.DOMElement.getAllElements("drag"), "*");
+      this.source = target.getAttribute("title");
+    }
+  });
 
   }
 }

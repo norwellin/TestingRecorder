@@ -1,22 +1,18 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Playwright Code Viewer</title>
+  <title>Iframe Drag Detector</title>
   <style>
-    body { font-family: monospace; padding: 20px; background: #fafafa; }
-    pre { white-space: pre-wrap; background: white; border: 1px solid #ccc; padding: 10px; }
+    body { font-family: sans-serif; padding: 20px; }
+    textarea { width: 100%; height: 200px; }
+    button { padding: 10px; margin-top: 10px; }
   </style>
 </head>
 <body>
-  <h2>Generated Code</h2>
-  <pre id="code">Loading...</pre>
+  <h2>Iframe Drag Detector</h2>
+  <textarea id="log" readonly></textarea><br>
+  <button id="startBtn">Start</button>
 
-  <script>
-    chrome.runtime.onMessage.addListener((msg) => {
-      if (msg.type === "display_code") {
-        document.getElementById("code").textContent = msg.code;
-      }
-    });
-  </script>
+  <script src="viewer.js"></script>
 </body>
 </html>
