@@ -30,14 +30,17 @@ export class OuterEventListener {
 */
   document.addEventListener("drop", (e) => {
     //identify the source
-    
+   
+    chrome.storage.local.get(["sourceOfDD"], (result) => {
+      const sourceDD = result.sourceOfDD;
+    });
     try {
       //1. from iframe
-      if(this.iframeWindow){
+      if(sourceDD == "iframe"){
         console.log("drag & drop: iframe -> main");
       }
       //2. from mainwindow
-      else{
+      else if (sourceDD == "window"){
         console.log("drag & drop: main -> main");
       }
     } catch (error) {
@@ -54,6 +57,9 @@ export class OuterEventListener {
             this.DOMElement.setElementData(target);
             this.iframeWindow.postMessage(this.DOMElement.getAllElements("drag"), "*");
             this.source = target.getAttribute("title");
+
+            //紀錄drag 的來源到chrome storage
+            chrome.storage.local.set({sourceOfDD: "window"});
           }
         }
         else{

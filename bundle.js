@@ -171,10 +171,13 @@
     }
     init() {
       document.addEventListener("drop", (e) => {
+        chrome.storage.local.get(["sourceOfDD"], (result) => {
+          const sourceDD2 = result.sourceOfDD;
+        });
         try {
-          if (this.iframeWindow) {
+          if (sourceDD == "iframe") {
             console.log("drag & drop: iframe -> main");
-          } else {
+          } else if (sourceDD == "window") {
             console.log("drag & drop: main -> main");
           }
         } catch (error) {
@@ -189,6 +192,7 @@
               this.DOMElement.setElementData(target);
               this.iframeWindow.postMessage(this.DOMElement.getAllElements("drag"), "*");
               this.source = target.getAttribute("title");
+              chrome.storage.local.set({ sourceOfDD: "window" });
             }
           } else {
           }
