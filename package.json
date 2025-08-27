@@ -11,5 +11,8 @@
   "license": "ISC",
   "devDependencies": {
     "esbuild": "^0.25.8"
+  },
+  "dependencies": {
+    "codemirror": "^5.65.20"
   }
 }

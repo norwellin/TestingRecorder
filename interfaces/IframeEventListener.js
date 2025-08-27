@@ -2,13 +2,16 @@
 import { PlaywrightCommand } from '../entities/PlaywrightCommand.js';
 import { PlaywrightCodeGenerator } from '../usecases/PlaywrightCodeGenerator';
 import { ActionInterpreter } from '../usecases/ActionInterpreter.js';
+import { UserAction } from '../entities/UserAction.js';
 
 export class IframeEventListener {
-  constructor(iframeWindow, domParserService, playwrightCommand) {
+  constructor(iframeWindow, domParserService, command, userActionDB, rightNowAction) {
     this.iframeWindow = iframeWindow;
     this.domParserService = domParserService;
     this.iframeDocument = iframeWindow.document;
-    this.playwrightCommand = playwrightCommand;
+    this.useractionDB = userActionDB;
+    this.rightNowAction = rightNowAction;
+    this.playwrightCommand = command;
     //
     this.target = null;
     this.source = null; //存放的是drag and drop的title
@@ -33,10 +36,14 @@ export class IframeEventListener {
       const data = e.dataTransfer.getData('text/plain');
       console.log('放開了:', data);
       console.log('iframe進行drop事件處理');
+      console.log("type: ", Array.isArray(this.useractionDB));
+      const action_type = "drag";
       if (this.currentHoveredElement) {
 
         //在這裡處理轉換成Playwright Code Logic
-        PlaywrightCodeGenerator.generate(ActionInterpreter.interpretDrag(this.source, this.currentHoveredElement), this.playwrightCommand);
+        this.rightNowAction = this.rightNowAction + 1;
+        this.useractionDB[this.rightNowAction] = ActionInterpreter.interpretDrag(action_type, this.source, this.currentHoveredElement);
+        PlaywrightCodeGenerator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
         console.log('Playwright Command:', this.playwrightCommand.codeGetter());
         //回復狀態
         this.currentHoveredElement = null;

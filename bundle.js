@@ -92,9 +92,9 @@
 
   // usecases/ActionInterpreter.js
   var ActionInterpreter = class {
-    static interpretDrag(sourceEl, targetEl) {
+    static interpretDrag(action_type, sourceEl, targetEl) {
       return new UserAction({
-        type: "drag",
+        type: action_type,
         source: sourceEl,
         target: targetEl
       });
@@ -103,11 +103,13 @@
 
   // interfaces/IframeEventListener.js
   var IframeEventListener = class {
-    constructor(iframeWindow, domParserService, playwrightCommand) {
+    constructor(iframeWindow, domParserService, command, userActionDB, rightNowAction) {
       this.iframeWindow = iframeWindow;
       this.domParserService = domParserService;
       this.iframeDocument = iframeWindow.document;
-      this.playwrightCommand = playwrightCommand;
+      this.useractionDB = userActionDB;
+      this.rightNowAction = rightNowAction;
+      this.playwrightCommand = command;
       this.target = null;
       this.source = null;
       this.currentHoveredElement = null;
@@ -128,8 +130,12 @@
         const data = e.dataTransfer.getData("text/plain");
         console.log("\u653E\u958B\u4E86:", data);
         console.log("iframe\u9032\u884Cdrop\u4E8B\u4EF6\u8655\u7406");
+        console.log("type: ", Array.isArray(this.useractionDB));
+        const action_type = "drag";
         if (this.currentHoveredElement) {
-          PlaywrightCodeGenerator.generate(ActionInterpreter.interpretDrag(this.source, this.currentHoveredElement), this.playwrightCommand);
+          this.rightNowAction = this.rightNowAction + 1;
+          this.useractionDB[this.rightNowAction] = ActionInterpreter.interpretDrag(action_type, this.source, this.currentHoveredElement);
+          PlaywrightCodeGenerator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
           console.log("Playwright Command:", this.playwrightCommand.codeGetter());
           this.currentHoveredElement = null;
           const generatedCode = this.playwrightCommand.codeGetter();
@@ -155,21 +161,39 @@
 
   // interfaces/OuterEventListener.js
   var OuterEventListener = class {
-    constructor(iframeWindow) {
+    constructor(iframeWindow, useractionDB) {
       this.iframeWindow = iframeWindow;
       this.dragSources = document.querySelectorAll('[draggable="true"]');
       this.DOMElement = new DOMElement();
+      this.useractionDB = useractionDB;
       this.target = null;
       this.source = null;
     }
     init() {
+      document.addEventListener("drop", (e) => {
+        try {
+          if (this.iframeWindow) {
+            console.log("drag & drop: iframe -> main");
+          } else {
+            console.log("drag & drop: main -> main");
+          }
+        } catch (error) {
+        }
+      });
       document.addEventListener("dragstart", (e) => {
-        const target = e.target;
-        if (target.getAttribute("draggable") === "true") {
-          console.log("\u62D6\u62C9\u958B\u59CB:", target);
-          this.DOMElement.setElementData(target);
-          this.iframeWindow.postMessage(this.DOMElement.getAllElements("drag"), "*");
-          this.source = target.getAttribute("title");
+        try {
+          if (this.iframeWindow) {
+            const target = e.target;
+            if (target.getAttribute("draggable") === "true") {
+              console.log("\u62D6\u62C9\u958B\u59CB:", target);
+              this.DOMElement.setElementData(target);
+              this.iframeWindow.postMessage(this.DOMElement.getAllElements("drag"), "*");
+              this.source = target.getAttribute("title");
+            }
+          } else {
+          }
+        } catch (err) {
+          console.log("ERROR: " + err);
         }
       });
     }
@@ -192,6 +216,8 @@
   var MainApp = class {
     constructor() {
       this.allwindows = new WindowsCatcher();
+      this.userActionDB = [];
+      this.rightNowAction = -1;
     }
     start() {
       console.log("\u7A0B\u5F0F\u6D3B\u8457!");
@@ -199,10 +225,10 @@
       const domParserService = new DOMParserService();
       const command = new PlaywrightCommand();
       if (iframeWindow) {
-        const iframeListener = new IframeEventListener(iframeWindow, domParserService, command);
+        const iframeListener = new IframeEventListener(iframeWindow, domParserService, command, this.userActionDB, this.rightNowAction);
         iframeListener.init();
       }
-      const outerListener = new OuterEventListener(iframeWindow);
+      const outerListener = new OuterEventListener(iframeWindow, this.userActionDB);
       outerListener.init();
     }
   };

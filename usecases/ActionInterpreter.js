@@ -4,9 +4,9 @@ import { DOMParserService } from './DOMParserService.js';
 
 export class ActionInterpreter {
 
-  static interpretDrag(sourceEl, targetEl) {
+  static interpretDrag(action_type, sourceEl, targetEl) { 
     return new UserAction({
-      type: 'drag',
+      type: action_type,
       source: sourceEl,
       target: targetEl,
   });
