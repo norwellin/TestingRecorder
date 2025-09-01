@@ -65,9 +65,13 @@
   var PlaywrightCodeGenerator = class {
     static generate(action, playwrightCommand) {
       const targetpath = DOMParserService.getDomPath(action.getTargetElement());
+      const sourcepath = DOMParserService.getDomPath(action.getSourceElement());
       console.log("\u6ED1\u9F20\u505C\u7559\u5728 iframe \u4E2D\u7684\u5143\u7D20:", targetpath);
+      console.log("source path: ", sourcepath);
       if (action.getActionType() === "drag") {
         playwrightCommand.codeSetter(`await page.locator('[title = '${action.getSourceElement().title}']').dragTo(iframe.locator(css=${targetpath}));`);
+      } else if (action.getActionType() === "click") {
+        playwrightCommand.codeSetter(`await page.click('${sourcepath}')`);
       }
     }
   };
@@ -161,15 +165,35 @@
 
   // interfaces/OuterEventListener.js
   var OuterEventListener = class {
-    constructor(iframeWindow, useractionDB) {
+    constructor(iframeWindow, domParserService, command, userActionDB, rightNowAction) {
       this.iframeWindow = iframeWindow;
+      this.domParserService = domParserService;
       this.dragSources = document.querySelectorAll('[draggable="true"]');
       this.DOMElement = new DOMElement();
-      this.useractionDB = useractionDB;
+      this.useractionDB = userActionDB;
+      this.rightNowAction = rightNowAction;
+      this.playwrightCommand = command;
       this.target = null;
       this.source = null;
+      this.currentHoveredElement = null;
     }
     init() {
+      document.addEventListener("click", (e) => {
+        console.log("Here is a click event!");
+        const action_type = "click";
+        this.currentHoveredElement = e.target;
+        this.DOMElement.setElementData(this.currentHoveredElement);
+        this.rightNowAction = this.rightNowAction + 1;
+        this.useractionDB[this.rightNowAction] = ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements("click"), null);
+        PlaywrightCodeGenerator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
+        console.log("Playwright Command:", this.playwrightCommand.codeGetter());
+        const generatedCode = this.playwrightCommand.codeGetter();
+        console.log("Playwright Command:", generatedCode);
+        chrome.runtime.sendMessage({
+          type: "display_code",
+          code: generatedCode
+        });
+      });
       document.addEventListener("drop", (e) => {
         chrome.storage.local.get(["sourceOfDD"], (result) => {
           const sourceDD2 = result.sourceOfDD;
@@ -232,10 +256,11 @@
         const iframeListener = new IframeEventListener(iframeWindow, domParserService, command, this.userActionDB, this.rightNowAction);
         iframeListener.init();
       }
-      const outerListener = new OuterEventListener(iframeWindow, this.userActionDB);
+      const outerListener = new OuterEventListener(iframeWindow, domParserService, command, this.userActionDB, this.rightNowAction);
       outerListener.init();
     }
   };
+
   const app = new MainApp();
 app.start();
 })();

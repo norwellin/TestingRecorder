@@ -1,3 +1,4 @@
+//note: JS 是 by reference傳遞 (不是by value)
 // iframe 內部事件監聽器，負責處理 iframe 內部事件
 import { PlaywrightCommand } from '../entities/PlaywrightCommand.js';
 import { PlaywrightCodeGenerator } from '../usecases/PlaywrightCodeGenerator';

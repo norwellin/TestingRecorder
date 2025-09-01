@@ -62,6 +62,10 @@ python main.py
 
 Pull requests are welcome. For major changes, please open an issue first.
 
-## License
+## Update
+[31.08.2025] Click event can be detect at window.
+
+
+
 
 [MIT](LICENSE)

@@ -3,13 +3,13 @@
   "name": "My Recorder",
   "version": "1.0",
   "permissions": ["scripting", "tabs", "activeTab", "windows", "storage"],
-  "host_permissions": ["https://iot.ttu.edu.tw/*"],
+  "host_permissions": ["https://*/*"], 
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["https://iot.ttu.edu.tw/*"],
+      "matches": ["https://*/*"], 
       "js": ["bundle.js"],
       "run_at": "document_idle"
     }

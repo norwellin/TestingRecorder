@@ -1,16 +1,23 @@
 // 監聽外部 drag-drop 事件
 import { DOMElement } from "../entities/DOMElement";
 import { UserAction } from "../entities/UserAction";
+import { PlaywrightCommand } from '../entities/PlaywrightCommand.js';
+import { PlaywrightCodeGenerator } from '../usecases/PlaywrightCodeGenerator';
+import { ActionInterpreter } from '../usecases/ActionInterpreter.js';
 
 export class OuterEventListener {
-  constructor(iframeWindow, useractionDB) {
+  constructor(iframeWindow, domParserService, command, userActionDB, rightNowAction) {
     this.iframeWindow = iframeWindow;
+    this.domParserService = domParserService;
     this.dragSources = document.querySelectorAll('[draggable="true"]');
     this.DOMElement = new DOMElement();
-    this.useractionDB = useractionDB;
+    this.useractionDB = userActionDB;
+    this.rightNowAction = rightNowAction;
+    this.playwrightCommand = command;
     //
-    this.target = null;
-    this.source = null;
+    this.target = null;  //終點
+    this.source = null; //起點 // store CSS path
+    this.currentHoveredElement = null;
   }
 
   init() {
@@ -28,27 +35,45 @@ export class OuterEventListener {
       });
     });
 */
-  document.addEventListener("drop", (e) => {
-    //identify the source
-   
-    chrome.storage.local.get(["sourceOfDD"], (result) => {
-      const sourceDD = result.sourceOfDD;
+    document.addEventListener("click", (e) => {
+      console.log("Here is a click event!");
+      const action_type = 'click';
+      this.currentHoveredElement = e.target;
+     this.DOMElement.setElementData(this.currentHoveredElement);
+      //在這裡處理轉換成Playwright Code Logic
+      this.rightNowAction = this.rightNowAction + 1;
+      this.useractionDB[this.rightNowAction] = ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements('click'), null);
+      PlaywrightCodeGenerator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
+      console.log('Playwright Command:', this.playwrightCommand.codeGetter());
+      // 傳送Playwright Code到背景頁面
+      const generatedCode = this.playwrightCommand.codeGetter();
+      console.log("Playwright Command:", generatedCode);
+      chrome.runtime.sendMessage({
+        type: "display_code",
+        code: generatedCode
+      });
     });
-    try {
-      //1. from iframe
-      if(sourceDD == "iframe"){
-        console.log("drag & drop: iframe -> main");
+    document.addEventListener("drop", (e) => {
+      //identify the source
+
+      chrome.storage.local.get(["sourceOfDD"], (result) => {
+        const sourceDD = result.sourceOfDD;
+      });
+      try {
+        //1. from iframe
+        if (sourceDD == "iframe") {
+          console.log("drag & drop: iframe -> main");
+        }
+        //2. from mainwindow
+        else if (sourceDD == "window") {
+          console.log("drag & drop: main -> main");
+        }
+      } catch (error) {
+
       }
-      //2. from mainwindow
-      else if (sourceDD == "window"){
-        console.log("drag & drop: main -> main");
-      }
-    } catch (error) {
-      
-    }
-    
-  });  
-  document.addEventListener("dragstart", (e) => {
+
+    });
+    document.addEventListener("dragstart", (e) => {
       try {
         if (this.iframeWindow) {
           const target = e.target;
@@ -59,10 +84,10 @@ export class OuterEventListener {
             this.source = target.getAttribute("title");
 
             //紀錄drag 的來源到chrome storage
-            chrome.storage.local.set({sourceOfDD: "window"});
+            chrome.storage.local.set({ sourceOfDD: "window" });
           }
         }
-        else{
+        else {
 
         }
 

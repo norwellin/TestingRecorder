@@ -27,7 +27,7 @@ export class MainApp {
     }
 
     // 初始化外部 drag-drop 事件監聽
-    const outerListener = new OuterEventListener(iframeWindow, this.userActionDB);
+    const outerListener = new OuterEventListener(iframeWindow, domParserService, command, this.userActionDB, this.rightNowAction);
     outerListener.init();
 
     // 傳送Playwright Code到背景頁面
