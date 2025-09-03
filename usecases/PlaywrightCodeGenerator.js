@@ -4,6 +4,7 @@ import { DOMParserService } from './DOMParserService.js';
 
 export class PlaywrightCodeGenerator {
   static generate(action, playwrightCommand) {
+    console.log("action: ",action);
     const targetpath = DOMParserService.getDomPath(action.getTargetElement());
     const sourcepath = DOMParserService.getDomPath(action.getSourceElement());
     console.log('滑鼠停留在 iframe 中的元素:', targetpath);

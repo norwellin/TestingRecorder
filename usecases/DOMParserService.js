@@ -5,6 +5,7 @@ export class DOMParserService {
   constructor() { }
 
   static getDomPath(el) {
+    console.log("el: ",el);
     const path = [];
     while (el && el.nodeType === Node.ELEMENT_NODE) {
       let name = el.nodeName.toLowerCase();

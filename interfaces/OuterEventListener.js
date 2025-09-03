@@ -6,18 +6,18 @@ import { PlaywrightCodeGenerator } from '../usecases/PlaywrightCodeGenerator';
 import { ActionInterpreter } from '../usecases/ActionInterpreter.js';
 
 export class OuterEventListener {
-  constructor(iframeWindow, domParserService, command, userActionDB, rightNowAction) {
+  constructor(iframeWindow, domParserService, command, userActionDB) {
     this.iframeWindow = iframeWindow;
     this.domParserService = domParserService;
     this.dragSources = document.querySelectorAll('[draggable="true"]');
     this.DOMElement = new DOMElement();
     this.useractionDB = userActionDB;
-    this.rightNowAction = rightNowAction;
     this.playwrightCommand = command;
     //
     this.target = null;  //終點
     this.source = null; //起點 // store CSS path
     this.currentHoveredElement = null;
+    this.rightNowAction = -1;
   }
 
   init() {
@@ -37,14 +37,23 @@ export class OuterEventListener {
 */
     document.addEventListener("click", (e) => {
       console.log("Here is a click event!");
+
+      //從chrome storgae 取出必要的data
+      chrome.storage.local.get(['actionPos'], (result) => {
+         this.rightNowAction = result.actionPos;
+      });
+      //新的串接方法 setting basic variable
+      this.rightNowAction = this.rightNowAction + 1;
       const action_type = 'click';
       this.currentHoveredElement = e.target;
-     this.DOMElement.setElementData(this.currentHoveredElement);
+      this.DOMElement.setElementData(this.currentHoveredElement, 'click');
+      console.log(this.DOMElement.getAllElements());
+
       //在這裡處理轉換成Playwright Code Logic
-      this.rightNowAction = this.rightNowAction + 1;
-      this.useractionDB[this.rightNowAction] = ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements('click'), null);
+      this.useractionDB[this.rightNowAction] = ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null);
       PlaywrightCodeGenerator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
       console.log('Playwright Command:', this.playwrightCommand.codeGetter());
+
       // 傳送Playwright Code到背景頁面
       const generatedCode = this.playwrightCommand.codeGetter();
       console.log("Playwright Command:", generatedCode);
@@ -52,6 +61,8 @@ export class OuterEventListener {
         type: "display_code",
         code: generatedCode
       });
+      //存直value到chrome storage
+      chrome.storage.local.set({ actionPos: this.rightNowAction});
     });
     document.addEventListener("drop", (e) => {
       //identify the source
@@ -74,14 +85,16 @@ export class OuterEventListener {
 
     });
     document.addEventListener("dragstart", (e) => {
+
+      /*
       try {
         if (this.iframeWindow) {
           const target = e.target;
           if (target.getAttribute("draggable") === "true") {
             console.log("拖拉開始:", target);
-            this.DOMElement.setElementData(target);
-            this.iframeWindow.postMessage(this.DOMElement.getAllElements("drag"), "*");
-            this.source = target.getAttribute("title");
+            this.DOMElement.setElementData(target, "drag");
+            this.iframeWindow.postMessage(this.DOMElement.getAllElements(), "*");
+            this.source = target;
 
             //紀錄drag 的來源到chrome storage
             chrome.storage.local.set({ sourceOfDD: "window" });
@@ -94,7 +107,36 @@ export class OuterEventListener {
       } catch (err) {
         console.log("ERROR: " + err);
       }
+        */
+      //重新改寫 (不用post messenge，因為JS是傳ref的)
+      try {
+        //get share variable from chrome storage
+        chrome.storage.local.get(['actionPos'],(result) => {
+          this.rightNowAction = result.actionPos;
+        });
+        //setting basic variable
+        this.rightNowAction = this.rightNowAction +1;
+        console.log("right now action in window: ", this.rightNowAction);
+        const target = e.target;
+        if (target.getAttribute("draggable") === "true") {
+          console.log("拖拉開始:", target);
+          this.DOMElement.setElementData(target, "drag");
+          //在這裡處理轉換成Playwright Code Logic
+          this.useractionDB[this.rightNowAction] = ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null);
+          
+          this.iframeWindow.postMessage("drag_start", "*");
+          //this.source = target;
 
+          //紀錄drag 的來源到chrome storage
+          chrome.storage.local.set({ sourceOfDD: "window" });
+          chrome.storage.local.set({ actionPos: this.rightNowAction});
+
+          
+        }
+
+      } catch (error) {
+
+      }
     });
 
   }

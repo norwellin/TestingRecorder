@@ -1,10 +1,16 @@
-# Project Title
+# My Note
 
-A brief description of what your project does and who it's for.
-
-## Features
-
-- List key features or use cases
+//note: JS 是 by reference傳遞 (不是by value)
+JS 的 物件 (object, array, function, class instance) → 是 by reference。
+JS 的 原始型別 (number, string, boolean, null, undefined, symbol, bigint) → 是 by value。
+//note: JS的ARRAY可以直接存CLASS物件
+## API
+DOMParserService.js
+- getDomPath(el): el: 為event.target (完整的node節點)
+UserAction.js
+只是一個action的架構物件 (算是最底層物件)
+- this.type (string)為事件名稱
+- this.source (event.target)
 
 ## Functions in this version
 ✅Only support one iframe with one main window
@@ -62,6 +68,9 @@ python main.py
 
 Pull requests are welcome. For major changes, please open an issue first.
 
-## License
-
-[MIT](LICENSE)
+## Update
+[31.08.2025] Click event can be detect at window.
+[31.08.2025 Error] The code of the click event is incomplete
+[31.08.2025] 串接方法改寫 (click)
+[03.09.2025] 一堆bug還在修，drag and drop改寫
+[03.09.2025] 用存在Chrome storage會有同步問題 (公共variable)，嘗試改成用post messenge的方式

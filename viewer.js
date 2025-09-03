@@ -9,7 +9,7 @@ let editor = CodeMirror(document.getElementById("editor"), {
 
 // 先抓一次
   chrome.storage.local.get(["generatedCode"], (result) => {
-    const code = "";
+    let code = "";
     if(result.generatedCode){
       code = result.generatedCode.join("\n");
     }
