@@ -9,11 +9,11 @@ export class PlaywrightCodeGenerator {
     const sourcepath = DOMParserService.getDomPath(action.getSourceElement());
     console.log('滑鼠停留在 iframe 中的元素:', targetpath);
     console.log('source path: ', sourcepath);
-    if (action.getActionType() === 'drag') {
-      playwrightCommand.codeSetter(`await page.locator('[title = '${action.getSourceElement().title}']').dragTo(iframe.locator(css=${targetpath}));`);
+    if (action.getActionType() === 'dragANDdrop') {
+      playwrightCommand.codeSetter(`await page.locator('css=${sourcepath}').dragTo(iframe.locator('css=${targetpath}');`);
     }
     else if(action.getActionType() === 'click'){
-      playwrightCommand.codeSetter(`await page.click('${sourcepath}')`);
+      playwrightCommand.codeSetter(`await page.click('css=${sourcepath}')`);
     }
   }
 }

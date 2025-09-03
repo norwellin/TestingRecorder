@@ -37,22 +37,25 @@ export class IframeEventListener {
       //const data = e.dataTransfer.getData('text/plain');
       // console.log('放開了:', data);
 
+      /*
+      //此段目前失效已在window post messenge的時候給this.rightNowAction賦值
       //get share variable from chrome storage
       this.rightNowAction = await waitForLocalSotrageChanged();
 
       console.log("Right now action: ", this.rightNowAction);
       console.log('iframe進行drop事件處理');
       console.log("type: ", Array.isArray(this.useractionDB));
+      */
+     
       const action_type = "drag";
       if (this.currentHoveredElement) {
-
+        console.log("iframe - rightNowAction: ", this.rightNowAction);
         //在這裡處理轉換成Playwright Code Logic
         const tempAction = this.useractionDB[this.rightNowAction];
 
         console.log("action db: ", this.useractionDB);
-        console.log("tempAction: ", tempAction);
         tempAction.setTargetElement(this.currentHoveredElement);
-
+        console.log("tempAction: ", tempAction);
         PlaywrightCodeGenerator.generate(tempAction, this.playwrightCommand);
         console.log('Playwright Command:', this.playwrightCommand.codeGetter());
         //回復狀態
@@ -77,10 +80,14 @@ export class IframeEventListener {
       switch (msg.type) {
         case 'drag_start':
           console.log('iframe 收到 window 傳來的 dragstart');
-
+          this.rightNowAction = msg.nowAction;
+          break;
+        case 'actionPosChanged':
+          this.rightNowAction = msg.actionPos;
           break;
       }
     });
+    //用來等待存在chrome local storage的變數改變 (目前失效) 
     function waitForLocalSotrageChanged() {
       return new Promise((resolve) => {
         function listener(changes, areaName) {
@@ -92,6 +99,7 @@ export class IframeEventListener {
       });
 
     }
+    
   }
 
 }

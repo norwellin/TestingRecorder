@@ -38,22 +38,19 @@ export class OuterEventListener {
     document.addEventListener("click", (e) => {
       console.log("Here is a click event!");
 
-      //從chrome storgae 取出必要的data
-      chrome.storage.local.get(['actionPos'], (result) => {
-         this.rightNowAction = result.actionPos;
-      });
       //新的串接方法 setting basic variable
       this.rightNowAction = this.rightNowAction + 1;
+      console.log("window - rightNowAction(click): ", this.rightNowAction);
       const action_type = 'click';
       this.currentHoveredElement = e.target;
       this.DOMElement.setElementData(this.currentHoveredElement, 'click');
       console.log(this.DOMElement.getAllElements());
 
       //在這裡處理轉換成Playwright Code Logic
-      this.useractionDB[this.rightNowAction] = ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null);
+      this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
       PlaywrightCodeGenerator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
       console.log('Playwright Command:', this.playwrightCommand.codeGetter());
-
+      console.log('useractionDB: ', this.useractionDB);
       // 傳送Playwright Code到背景頁面
       const generatedCode = this.playwrightCommand.codeGetter();
       console.log("Playwright Command:", generatedCode);
@@ -61,9 +58,10 @@ export class OuterEventListener {
         type: "display_code",
         code: generatedCode
       });
-      //存直value到chrome storage
-      chrome.storage.local.set({ actionPos: this.rightNowAction});
+      //每次變更rightnowAction都要給對應的class傳訊息
+      this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
     });
+
     document.addEventListener("drop", (e) => {
       //identify the source
 
@@ -84,6 +82,7 @@ export class OuterEventListener {
       }
 
     });
+
     document.addEventListener("dragstart", (e) => {
 
       /*
@@ -110,34 +109,39 @@ export class OuterEventListener {
         */
       //重新改寫 (不用post messenge，因為JS是傳ref的)
       try {
-        //get share variable from chrome storage
-        chrome.storage.local.get(['actionPos'],(result) => {
-          this.rightNowAction = result.actionPos;
-        });
         //setting basic variable
-        this.rightNowAction = this.rightNowAction +1;
-        console.log("right now action in window: ", this.rightNowAction);
+        this.rightNowAction = this.rightNowAction + 1;
+        console.log("window - rightNowAction (drag stat): ", this.rightNowAction);
         const target = e.target;
+        const action_type = "dragANDdrop";
         if (target.getAttribute("draggable") === "true") {
           console.log("拖拉開始:", target);
           this.DOMElement.setElementData(target, "drag");
           //在這裡處理轉換成Playwright Code Logic
-          this.useractionDB[this.rightNowAction] = ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null);
-          
-          this.iframeWindow.postMessage("drag_start", "*");
+          this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
+
+          this.iframeWindow.postMessage({ type: "drag_start", nowAction: this.rightNowAction }, "*");
           //this.source = target;
 
           //紀錄drag 的來源到chrome storage
           chrome.storage.local.set({ sourceOfDD: "window" });
-          chrome.storage.local.set({ actionPos: this.rightNowAction});
-
-          
+          //每次變更rightnowAction都要給對應的class傳訊息
+          this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
         }
 
       } catch (error) {
 
       }
     });
+    this.iframeWindow.addEventListener('messenge', (e) => {
+      const msg = e.data;
+      console.log("window get msg: ", msg);
 
+      switch (msg.type) {
+        case 'actionPosChanged':
+          this.rightNowAction = msg.actionPos;
+          break;
+      }
+    });
   }
 }

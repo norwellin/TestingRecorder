@@ -34,9 +34,6 @@ export class MainApp {
       console.log("storage 已清空");
     });
     
-    //初始化storage
-    chrome.storage.local.set({ actionPos: -1}); // to remember the action right now
-    
 
 
   }
