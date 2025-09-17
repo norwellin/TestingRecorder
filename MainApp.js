@@ -14,9 +14,9 @@ export class MainApp {
 
   start() {
     console.log('程式活著!');
-    const { mainWindow, iframeWindow } = this.allwindows.catch();
+    const { mainWindow, iframeWindow } = this.allwindows.getWindows();
 
-    const domParserService = new DOMParserService();
+    const domParserService = new DOMParserService(iframeWindow);
     const command = new PlaywrightCommand();
     // 初始化 iframe 內事件監聽f
 

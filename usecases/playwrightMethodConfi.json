@@ -1,0 +1,30 @@
+{
+    "ByRole" : {
+        "priority": 0,
+        "obj": { "name": null, "role": null }
+    },
+    "ByDomPath": {
+        "priority": 1,
+        "obj" : { "csspath" : null }
+    },
+    "ByTitle": {
+        "priority": 2,
+        "obj": {"title": null}
+    },
+    "ByText": {
+        "priority": 3,
+        "obj": {}
+    },
+    "ByPlaceholder": {
+        "priority": 4,
+        "obj": {}
+    },
+    "ByAltText": {
+        "priority": 5, 
+        "obj": {}
+    },
+    "ByLabel": {
+        "priority": 6,
+        "obj": {}
+    } 
+}

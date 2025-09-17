@@ -4,14 +4,25 @@
 JS 的 物件 (object, array, function, class instance) → 是 by reference。
 JS 的 原始型別 (number, string, boolean, null, undefined, symbol, bigint) → 是 by value。
 //note: JS的ARRAY可以直接存CLASS物件
+//note: 靜態方法屬於 class 本身，而不是屬於 class 的實例（instance）
+必須用 ClassName.methodName() 來呼叫，而不是用 new 出來的物件呼叫
+靜態方法通常用在 跟某個類別有關，但不需要針對個別物件的行為
+//note
+=== 嚴格比較 (不回座型別轉換的比較)， == 則會先轉換型別
 ## API
 DOMParserService.js
 - getDomPath(el): el: 為event.target (完整的node節點)
+
 UserAction.js
 只是一個action的架構物件 (算是最底層物件)
 - this.type (string)為事件名稱
 - this.source (event.target)
 
+Post Massenge structure:
+- {
+    type: "dragANDdrop" || "click",
+    actionPos: this.rightNowAction (協助iframe和window互相及時同步更新action database現在位置)
+}
 ## Functions in this version
 ✅Only support one iframe with one main window
 

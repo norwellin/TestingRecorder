@@ -13,11 +13,13 @@ export class OuterEventListener {
     this.DOMElement = new DOMElement();
     this.useractionDB = userActionDB;
     this.playwrightCommand = command;
+    this.generator = new PlaywrightCodeGenerator(iframeWindow);
     //
     this.target = null;  //終點
     this.source = null; //起點 // store CSS path
     this.currentHoveredElement = null;
     this.rightNowAction = -1;
+    this.typedText = "";
   }
 
   init() {
@@ -36,7 +38,7 @@ export class OuterEventListener {
     });
 */
     document.addEventListener("click", (e) => {
-      console.log("Here is a click event!");
+      console.log("Here is a click event! e: ",e.target);
 
       //新的串接方法 setting basic variable
       this.rightNowAction = this.rightNowAction + 1;
@@ -48,7 +50,7 @@ export class OuterEventListener {
 
       //在這裡處理轉換成Playwright Code Logic
       this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
-      PlaywrightCodeGenerator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
+      this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
       console.log('Playwright Command:', this.playwrightCommand.codeGetter());
       console.log('useractionDB: ', this.useractionDB);
       // 傳送Playwright Code到背景頁面
@@ -85,28 +87,6 @@ export class OuterEventListener {
 
     document.addEventListener("dragstart", (e) => {
 
-      /*
-      try {
-        if (this.iframeWindow) {
-          const target = e.target;
-          if (target.getAttribute("draggable") === "true") {
-            console.log("拖拉開始:", target);
-            this.DOMElement.setElementData(target, "drag");
-            this.iframeWindow.postMessage(this.DOMElement.getAllElements(), "*");
-            this.source = target;
-
-            //紀錄drag 的來源到chrome storage
-            chrome.storage.local.set({ sourceOfDD: "window" });
-          }
-        }
-        else {
-
-        }
-
-      } catch (err) {
-        console.log("ERROR: " + err);
-      }
-        */
       //重新改寫 (不用post messenge，因為JS是傳ref的)
       try {
         //setting basic variable
@@ -133,6 +113,57 @@ export class OuterEventListener {
 
       }
     });
+    document.addEventListener('dblclick', (e) => {
+      console.log("double click detected!");
+      //新的串接方法 setting basic variable
+      this.rightNowAction = this.rightNowAction + 1;
+      console.log("window - rightNowAction(dbclick): ", this.rightNowAction);
+      const action_type = 'dbclick';
+      this.currentHoveredElement = e.target;
+      this.DOMElement.setElementData(this.currentHoveredElement, action_type);
+      console.log(this.DOMElement.getAllElements());
+
+      //在這裡處理轉換成Playwright Code Logic
+      this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
+      this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
+      console.log('Playwright Command:', this.playwrightCommand.codeGetter());
+      console.log('useractionDB: ', this.useractionDB);
+      // 傳送Playwright Code到背景頁面
+      const generatedCode = this.playwrightCommand.codeGetter();
+      console.log("Playwright Command:", generatedCode);
+      chrome.runtime.sendMessage({
+        type: "display_code",
+        code: generatedCode
+      });
+      //每次變更rightnowAction都要給對應的class傳訊息
+      this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+
+    });
+    document.addEventListener("keydown", (e) => {  
+      this.typedText = "";//先清空之前存的
+      if(e.key.length === 1){
+        this.typedText += e.key;
+      }else if(e.key === "Backspace"){
+        this.typedText.slice(0,-1); //刪除最後一個字元
+      }
+
+      //新的串接方法 setting basic variable
+      this.rightNowAction = this.rightNowAction + 1;
+      console.log("window - rightNowAction(keydown): ", this.rightNowAction);
+      const action_type = 'keydown';
+      this.currentHoveredElement = e.target;
+      this.DOMElement.setElementData(this.currentHoveredElement, 'keydown');
+      console.log(this.DOMElement.getAllElements());
+
+      //在這裡處理轉換成Playwright Code Logic
+      this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
+      this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
+      console.log('Playwright Command:', this.playwrightCommand.codeGetter());
+      console.log('useractionDB: ', this.useractionDB);
+      
+      //最後做同步
+      this.AfterAllSteps();
+    });
     this.iframeWindow.addEventListener('messenge', (e) => {
       const msg = e.data;
       console.log("window get msg: ", msg);
@@ -143,5 +174,18 @@ export class OuterEventListener {
           break;
       }
     });
+
   }
+  AfterAllSteps(){ //所有監聽後都要做的事情 (同步到iframe與chrome storage)
+    // 傳送Playwright Code到背景頁面
+      const generatedCode = this.playwrightCommand.codeGetter();
+      console.log("Playwright Command:", generatedCode);
+      chrome.runtime.sendMessage({
+        type: "display_code",
+        code: generatedCode
+      });
+      //每次變更rightnowAction都要給對應的class傳訊息
+      this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+      this.iframeWindow.postMessage({ type: "typedTextChanged", typedText: this.typedText }, "*");
+    }
 }

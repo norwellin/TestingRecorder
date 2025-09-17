@@ -49,13 +49,95 @@
 
   // usecases/DOMParserService.js
   var DOMParserService = class {
-    constructor() {
+    constructor(iframeWindow) {
+      this.iframeWindow = iframeWindow;
+      this.iframeDoc = iframeWindow.document;
+      this.priSize = 7;
+      this.priority = {
+        //要新增方法改這裡就可以
+        0: "ByRole",
+        1: "ByDomPath",
+        2: "ByTitle",
+        3: "ByText",
+        4: "ByPlaceholder",
+        5: "ByAltText",
+        6: "ByLabel"
+      };
+      this.allAttributeInfo = {
+        //根據節點取到所有可以找到唯一path的屬性
+        tagName: null,
+        id: null,
+        className: null,
+        title: null,
+        text: null,
+        placeholder: null,
+        alt: null,
+        ariaLabel: null,
+        role: null
+      };
+      this.playwrightObj = {
+        //playwright所有方法與要存的內容
+        ByRole: { name: null, role: null },
+        ByLabel: {},
+        ByPlaceholder: {},
+        ByText: {},
+        ByTitle: { title: null },
+        ByAltText: {},
+        ByDomPath: { csspath: null }
+      };
     }
-    static getDomPath(el) {
-      console.log("el: ", el);
+    getAllPath(el) {
+      console.log("el:", el);
+      this.cleanInfo();
+      this.setInfo(el);
+      let isUniqueObj = {
+        ByRole: false,
+        ByTitle: false,
+        ByDomPath: false
+      };
+      let dompath = this.getDomPath(el);
+      if (this.checkUniqueByDompath(dompath)) {
+        console.log("DOMPATH is UNIQUE!!!!");
+        this.playwrightObj.ByDomPath.csspath = dompath;
+        isUniqueObj.ByDomPath = true;
+      } else {
+        console.log("dompath is not unique~");
+        isUniqueObj.ByDomPath = false;
+      }
+      if (this.checkUniqueByRole(this.allAttributeInfo.role, this.allAttributeInfo.tagName)) {
+        this.playwrightObj.ByRole.name = this.allAttributeInfo.tagName;
+        this.playwrightObj.ByRole.role = this.allAttributeInfo.role;
+        isUniqueObj.ByRole = true;
+      } else {
+        isUniqueObj.ByRole = false;
+      }
+      if (this.checkUniqueByTitle(this.allAttributeInfo.title)) {
+        this.playwrightObj.ByTitle.title = this.allAttributeInfo.title;
+        isUniqueObj.ByTitle = true;
+      } else {
+        isUniqueObj.ByTitle = false;
+      }
+      let newObj = {};
+      for (let i = 0; i < this.priSize; i++) {
+        let key = this.priority[i];
+        if (isUniqueObj[key]) {
+          newObj[i] = { funName: key, obj: this.playwrightObj[key] };
+        }
+      }
+      console.log("newObj: ", newObj);
+      return newObj;
+    }
+    getDomPath(el) {
+      if (!el || el.nodeType !== Node.ELEMENT_NODE) return "";
       const path = [];
       while (el && el.nodeType === Node.ELEMENT_NODE) {
-        let name = el.nodeName.toLowerCase();
+        let selector = el.nodeName.toLowerCase();
+        if (el.className) {
+          const className = el.className.split(" ")[0];
+          if (className) {
+            selector += `.${className}`;
+          }
+        }
         let siblingIndex = 1;
         let sibling = el;
         while (sibling = sibling.previousElementSibling) {
@@ -64,28 +146,196 @@
           }
         }
         if (siblingIndex > 1) {
-          name += `:nth-of-type(${siblingIndex})`;
+          selector += `:nth-of-type(${siblingIndex})`;
         }
-        path.unshift(name);
+        path.unshift(selector);
         el = el.parentElement;
       }
-      return path.join(" > ");
+      let newpath = path.join(">");
+      console.log("dom path: ", newpath);
+      return newpath;
+    }
+    checkUniqueByDompath(path) {
+      console.log("iframeDOC: ", this.iframeDoc);
+      console.log("all dom path", document.querySelectorAll(path));
+      let main_findLength = 0;
+      let iframe_findLength = 0;
+      main_findLength = document.querySelectorAll(path).length;
+      iframe_findLength = this.iframeDoc.querySelectorAll(path).length;
+      console.log("DOM iframe find: ", iframe_findLength);
+      if (main_findLength === 1 || iframe_findLength === 1)
+        return true;
+      else
+        return false;
+    }
+    checkUniqueByRole(role, name) {
+      const elements = Array.from(document.querySelectorAll(`[role="${role}"]`));
+      const iframe_elements = Array.from(this.iframeDoc.querySelectorAll(`[role="${role}"]`));
+      const matched = elements.filter((el) => el.innerText.trim() === name);
+      const iframe_matched = iframe_elements.filter((el) => el.innerText.trim() === name);
+      if (matched.length === 0) {
+        console.log("ByRole: X unique, X exists");
+        return false;
+      } else if (matched.length === 1 || iframe_matched === 1) {
+        console.log("ByRole: IS unique, Is exists");
+        return true;
+      } else {
+        console.log("ByRole: X unique, Is exists");
+        return false;
+      }
+    }
+    checkUniqueByTitle(title) {
+      const elements = document.querySelectorAll(`[title="${title}"]`);
+      const iframe_elements = this.iframeDoc.querySelectorAll(`[title="${title}"]`);
+      console.log("check title: ", elements, "check iframe title: ", iframe_elements);
+      if (elements.length === 1 || iframe_elements === 1) {
+        return true;
+      } else {
+        return false;
+      }
+    }
+    setInfo(el) {
+      this.allAttributeInfo.tagName = el.tagName || null;
+      this.allAttributeInfo.id = el.id || null;
+      this.allAttributeInfo.className = el.className || null;
+      this.allAttributeInfo.title = el.title || null;
+      this.allAttributeInfo.text = el.innerText.trim() || null;
+      this.allAttributeInfo.placeholder = el.placeholder || null;
+      this.allAttributeInfo.alt = el.alt || null;
+      this.allAttributeInfo.ariaLabel = el.getAttribute("aria-label") || null;
+      this.allAttributeInfo.role = el.getAttribute("role") || null;
+    }
+    cleanInfo() {
+      this.allAttributeInfo.tagName = null;
+      this.allAttributeInfo.id = null;
+      this.allAttributeInfo.className = null;
+      this.allAttributeInfo.title = null;
+      this.allAttributeInfo.text = null;
+      this.allAttributeInfo.placeholder = null;
+      this.allAttributeInfo.alt = null;
+      this.allAttributeInfo.ariaLabel = null;
+      this.allAttributeInfo.role = null;
+    }
+    getPriority() {
+      return this.priority;
+    }
+    getPriSize() {
+      return this.priSize;
     }
   };
 
   // usecases/PlaywrightCodeGenerator.js
   var PlaywrightCodeGenerator = class {
-    static generate(action, playwrightCommand) {
+    constructor(iframeWindow) {
+      this.typedText = "";
+      this.domService = new DOMParserService(iframeWindow);
+    }
+    generate(action, playwrightCommand) {
       console.log("action: ", action);
-      const targetpath = DOMParserService.getDomPath(action.getTargetElement());
-      const sourcepath = DOMParserService.getDomPath(action.getSourceElement());
+      const sourcepath = this.domService.getAllPath(action.getSourceElement());
+      let targetpath;
+      if (action.type === "dragANDdrop") {
+        targetpath = this.domService.getAllPath(action.getTargetElement());
+        console.log("inside generate: targetpath  ", targetpath);
+      }
       console.log("\u6ED1\u9F20\u505C\u7559\u5728 iframe \u4E2D\u7684\u5143\u7D20:", targetpath);
       console.log("source path: ", sourcepath);
       if (action.getActionType() === "dragANDdrop") {
-        playwrightCommand.codeSetter(`await page.locator('css=${sourcepath}').dragTo(iframe.locator('css=${targetpath}');`);
+        this.dragAndDropCodeSetter(playwrightCommand, targetpath, sourcepath);
       } else if (action.getActionType() === "click") {
-        playwrightCommand.codeSetter(`await page.click('css=${sourcepath}')`);
+        this.clickSetter(playwrightCommand, sourcepath);
+      } else if (action.getActionType() === "dbclick") {
+        playwrightCommand.codeSetter(`await page.dbclick('css=${sourcepath}');`);
+      } else if (action.getActionType() === "keydown") {
+        playwrightCommand.codeSetter(`await page.locator('css=${sourcepath}').fill(${this.typedText});`);
       }
+    }
+    dragAndDropCodeSetter(playwrightCommand, targetpath, sourcepath) {
+      let souPriMin = -1;
+      let tarPriMin = -1;
+      for (let i = 0; i < this.domService.priSize; i++) {
+        if (sourcepath[i]) {
+          souPriMin = i;
+        }
+      }
+      for (let i = 0; i < this.domService.priSize; i++) {
+        if (targetpath[i]) {
+          tarPriMin = i;
+        }
+      }
+      console.log("Source priMin: ", souPriMin, "Target Primin: ", tarPriMin);
+      let souFunName = sourcepath[souPriMin].funName;
+      let souObj = sourcepath[souPriMin].obj;
+      console.log("source funName: ", souFunName, "source obj", souObj);
+      let tarFunName = targetpath[tarPriMin].funName;
+      let tarObj = targetpath[tarPriMin].obj;
+      console.log("target funName: ", tarFunName, "target obj: ", tarObj);
+      let actDrag = { type: "dragANDdrop", ddConfig: "drag" };
+      let actDrop = { type: "dragANDdrop", ddConfig: "drop" };
+      const souCommand = this.playwrightCodeSetter(souFunName, souObj, actDrag);
+      const tarCommand = this.playwrightCodeSetter(tarFunName, tarObj, actDrop);
+      console.log("tarComnd: ", tarCommand);
+      playwrightCommand.codeSetter(`${souCommand}.dragTo(${tarCommand});`);
+    }
+    clickSetter(playwrightCommand, sourcepath) {
+      let priMin = -1;
+      for (let i = 0; i < this.domService.priSize; i++) {
+        if (sourcepath[i]) {
+          priMin = i;
+        }
+      }
+      console.log("priMin: ", priMin);
+      let funName = sourcepath[priMin].funName;
+      let obj = sourcepath[priMin].obj;
+      console.log("funName: ", funName, "obj", obj);
+      let act = { type: "click", addConfig: "" };
+      const command = this.playwrightCodeSetter(funName, obj, act);
+      playwrightCommand.codeSetter(command);
+    }
+    keydownSetter() {
+    }
+    playwrightCodeSetter(funName, obj, act) {
+      console.log("variable in codeSetter: funName= ", funName, "obg= ", obj, "act = ", act);
+      if (funName === "ByRole") {
+        if (act.type === "click")
+          return `await page.getByRole("${obj.role}", { name: "${obj.name}" }).click();`;
+        else if (act.type === "dragANDdrop") {
+          if (act.ddConfig === "drag")
+            return `await page.getByRole("${obj.role}", { name: "${obj.name}" })`;
+          else if (act.ddConfig === "drop")
+            return `page.getByRole("${obj.role}", { name: "${obj.name}" })`;
+        }
+      } else if (funName === "ByTitle") {
+        if (act.type === "click")
+          return `await page.getByTitle(${obj.title}).click();`;
+        else if (act.type === "dragANDdrop") {
+          if (act.ddConfig === "drag")
+            return `await page.getByTitle(${obj.title})`;
+          else if (act.ddConfig === "drop")
+            return `page.getByTitle(${obj.title})`;
+        }
+      } else if (funName === "ByDomPath") {
+        console.log("in by dom path!!");
+        if (act.type === "click")
+          return `await page.click('css=${obj.csspath}');`;
+        else if (act.type === "dragANDdrop") {
+          if (act.ddConfig === "drag")
+            return `await page.locator('css=${obj.csspath}')`;
+          else if (act.ddConfig === "drop") {
+            console.log("in by dom path!! drop");
+            return `page.locator('css=${obj.csspath}')`;
+          }
+        }
+      }
+    }
+    static initListener() {
+      window.addEventListener("message", (event) => {
+        const data = event.data;
+        console.log("\u{1F4E9} PlaywrightCodeGenerator \u6536\u5230\u8A0A\u606F:", data);
+        if (data.type === "keydown") {
+          this.typedText = data.typedText;
+        }
+      });
     }
   };
 
@@ -131,6 +381,7 @@
       this.iframeDocument = iframeWindow.document;
       this.useractionDB = userActionDB;
       this.playwrightCommand = command;
+      this.generator = new PlaywrightCodeGenerator(iframeWindow);
       this.target = null;
       this.source = null;
       this.currentHoveredElement = null;
@@ -149,14 +400,13 @@
       });
       this.iframeWindow.addEventListener("drop", async (e) => {
         e.preventDefault();
-        const action_type = "drag";
         if (this.currentHoveredElement) {
           console.log("iframe - rightNowAction: ", this.rightNowAction);
           const tempAction = this.useractionDB[this.rightNowAction];
           console.log("action db: ", this.useractionDB);
           tempAction.setTargetElement(this.currentHoveredElement);
           console.log("tempAction: ", tempAction);
-          PlaywrightCodeGenerator.generate(tempAction, this.playwrightCommand);
+          this.generator.generate(tempAction, this.playwrightCommand);
           console.log("Playwright Command:", this.playwrightCommand.codeGetter());
           this.currentHoveredElement = null;
           const generatedCode = this.playwrightCommand.codeGetter();
@@ -174,7 +424,6 @@
         switch (msg.type) {
           case "drag_start":
             console.log("iframe \u6536\u5230 window \u50B3\u4F86\u7684 dragstart");
-            this.rightNowAction = msg.nowAction;
             break;
           case "actionPosChanged":
             this.rightNowAction = msg.actionPos;
@@ -203,14 +452,16 @@
       this.DOMElement = new DOMElement();
       this.useractionDB = userActionDB;
       this.playwrightCommand = command;
+      this.generator = new PlaywrightCodeGenerator(iframeWindow);
       this.target = null;
       this.source = null;
       this.currentHoveredElement = null;
       this.rightNowAction = -1;
+      this.typedText = "";
     }
     init() {
       document.addEventListener("click", (e) => {
-        console.log("Here is a click event!");
+        console.log("Here is a click event! e: ", e.target);
         this.rightNowAction = this.rightNowAction + 1;
         console.log("window - rightNowAction(click): ", this.rightNowAction);
         const action_type = "click";
@@ -218,7 +469,7 @@
         this.DOMElement.setElementData(this.currentHoveredElement, "click");
         console.log(this.DOMElement.getAllElements());
         this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
-        PlaywrightCodeGenerator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
+        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
         console.log("Playwright Command:", this.playwrightCommand.codeGetter());
         console.log("useractionDB: ", this.useractionDB);
         const generatedCode = this.playwrightCommand.codeGetter();
@@ -259,6 +510,45 @@
         } catch (error) {
         }
       });
+      document.addEventListener("dblclick", (e) => {
+        console.log("double click detected!");
+        this.rightNowAction = this.rightNowAction + 1;
+        console.log("window - rightNowAction(dbclick): ", this.rightNowAction);
+        const action_type = "dbclick";
+        this.currentHoveredElement = e.target;
+        this.DOMElement.setElementData(this.currentHoveredElement, action_type);
+        console.log(this.DOMElement.getAllElements());
+        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
+        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
+        console.log("Playwright Command:", this.playwrightCommand.codeGetter());
+        console.log("useractionDB: ", this.useractionDB);
+        const generatedCode = this.playwrightCommand.codeGetter();
+        console.log("Playwright Command:", generatedCode);
+        chrome.runtime.sendMessage({
+          type: "display_code",
+          code: generatedCode
+        });
+        this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+      });
+      document.addEventListener("keydown", (e) => {
+        this.typedText = "";
+        if (e.key.length === 1) {
+          this.typedText += e.key;
+        } else if (e.key === "Backspace") {
+          this.typedText.slice(0, -1);
+        }
+        this.rightNowAction = this.rightNowAction + 1;
+        console.log("window - rightNowAction(keydown): ", this.rightNowAction);
+        const action_type = "keydown";
+        this.currentHoveredElement = e.target;
+        this.DOMElement.setElementData(this.currentHoveredElement, "keydown");
+        console.log(this.DOMElement.getAllElements());
+        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
+        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
+        console.log("Playwright Command:", this.playwrightCommand.codeGetter());
+        console.log("useractionDB: ", this.useractionDB);
+        this.AfterAllSteps();
+      });
       this.iframeWindow.addEventListener("messenge", (e) => {
         const msg = e.data;
         console.log("window get msg: ", msg);
@@ -269,6 +559,16 @@
         }
       });
     }
+    AfterAllSteps() {
+      const generatedCode = this.playwrightCommand.codeGetter();
+      console.log("Playwright Command:", generatedCode);
+      chrome.runtime.sendMessage({
+        type: "display_code",
+        code: generatedCode
+      });
+      this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+      this.iframeWindow.postMessage({ type: "typedTextChanged", typedText: this.typedText }, "*");
+    }
   };
 
   // WindowsCatcher.js
@@ -276,7 +576,7 @@
     constructor(doucumentRef = document) {
       this.documentRef = doucumentRef;
     }
-    catch() {
+    getWindows() {
       const iframe = this.documentRef.querySelector("iframe");
       const iframeWindow = iframe?.contentWindow || null;
       const mainWindow = window;
@@ -292,8 +592,8 @@
     }
     start() {
       console.log("\u7A0B\u5F0F\u6D3B\u8457!");
-      const { mainWindow, iframeWindow } = this.allwindows.catch();
-      const domParserService = new DOMParserService();
+      const { mainWindow, iframeWindow } = this.allwindows.getWindows();
+      const domParserService = new DOMParserService(iframeWindow);
       const command = new PlaywrightCommand();
       if (iframeWindow) {
         const iframeListener = new IframeEventListener(iframeWindow, domParserService, command, this.userActionDB);
