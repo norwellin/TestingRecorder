@@ -13,7 +13,7 @@ export class OuterEventListener {
     this.DOMElement = new DOMElement();
     this.useractionDB = userActionDB;
     this.playwrightCommand = command;
-    this.generator = new PlaywrightCodeGenerator(iframeWindow);
+    this.generator = new PlaywrightCodeGenerator(iframeWindow, this.useractionDB);
     //
     this.target = null;  //終點
     this.source = null; //起點 // store CSS path
@@ -49,8 +49,9 @@ export class OuterEventListener {
       console.log(this.DOMElement.getAllElements());
 
       //在這裡處理轉換成Playwright Code Logic
-      this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
-      this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
+      this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
+     
+      this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
       console.log('Playwright Command:', this.playwrightCommand.codeGetter());
       console.log('useractionDB: ', this.useractionDB);
       // 傳送Playwright Code到背景頁面
@@ -98,7 +99,7 @@ export class OuterEventListener {
           console.log("拖拉開始:", target);
           this.DOMElement.setElementData(target, "drag");
           //在這裡處理轉換成Playwright Code Logic
-          this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
+          this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
 
           this.iframeWindow.postMessage({ type: "drag_start", nowAction: this.rightNowAction }, "*");
           //this.source = target;
@@ -124,8 +125,8 @@ export class OuterEventListener {
       console.log(this.DOMElement.getAllElements());
 
       //在這裡處理轉換成Playwright Code Logic
-      this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
-      this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
+      this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
+      this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
       console.log('Playwright Command:', this.playwrightCommand.codeGetter());
       console.log('useractionDB: ', this.useractionDB);
       // 傳送Playwright Code到背景頁面
@@ -156,15 +157,15 @@ export class OuterEventListener {
       console.log(this.DOMElement.getAllElements());
 
       //在這裡處理轉換成Playwright Code Logic
-      this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
-      this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
+      this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
+      this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
       console.log('Playwright Command:', this.playwrightCommand.codeGetter());
       console.log('useractionDB: ', this.useractionDB);
       
       //最後做同步
       this.AfterAllSteps();
     });
-    this.iframeWindow.addEventListener('messenge', (e) => {
+    window.addEventListener('message', (e) => {
       const msg = e.data;
       console.log("window get msg: ", msg);
 

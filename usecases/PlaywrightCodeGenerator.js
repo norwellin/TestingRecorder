@@ -4,11 +4,12 @@ import { DOMParserService } from './DOMParserService.js';
 
 
 export class PlaywrightCodeGenerator {
-  constructor(iframeWindow){
+  constructor(iframeWindow, userActionDB){
     this.typedText = '';
     this.domService = new DOMParserService(iframeWindow);
+    this.userActionDB = userActionDB;
   }
-  generate(action, playwrightCommand) {
+  generate(action, playwrightCommand, rightNowAction) {
     console.log("action: ",action);
     const sourcepath = this.domService.getAllPath(action.getSourceElement());
     let targetpath;
@@ -17,16 +18,21 @@ export class PlaywrightCodeGenerator {
       console.log("inside generate: targetpath  ", targetpath);
     }
       
-
+    //取得來源window (iframe || main)
+    console.log("inside generate: ",this.userActionDB, rightNowAction);
+    let sourceWindow = this.userActionDB[rightNowAction].getSourceWindow();
+    let targetWindow = this.userActionDB[rightNowAction].getTargetWindow();
+    console.log("userDB inside generator: ",this.userActionDB);
+    console.log("sourceWin, targetWin, rightnowACT: ", sourceWindow, targetWindow, rightNowAction);
     //解析回傳的元素
     console.log('滑鼠停留在 iframe 中的元素:', targetpath);
     console.log('source path: ', sourcepath);
 
     if (action.getActionType() === 'dragANDdrop') {
-      this.dragAndDropCodeSetter(playwrightCommand, targetpath, sourcepath);
+      this.dragAndDropCodeSetter(playwrightCommand, targetpath, sourcepath, sourceWindow, targetWindow);
     }
     else if(action.getActionType() === 'click'){   
-      this.clickSetter(playwrightCommand, sourcepath);
+      this.clickSetter(playwrightCommand, sourcepath, sourceWindow);
     }
     else if(action.getActionType() === 'dbclick'){
       playwrightCommand.codeSetter(`await page.dbclick('css=${sourcepath}');`);
@@ -36,7 +42,7 @@ export class PlaywrightCodeGenerator {
     }
   }
 
-  dragAndDropCodeSetter(playwrightCommand, targetpath, sourcepath){
+  dragAndDropCodeSetter(playwrightCommand, targetpath, sourcepath, sourceWindow, targetWindow){
     //Object.keys(tar)
     //找到存在的最優先順序
     let souPriMin = -1;
@@ -63,16 +69,17 @@ export class PlaywrightCodeGenerator {
     console.log("target funName: ", tarFunName, "target obj: ", tarObj);
 
     //產出code
-    let actDrag = {type: "dragANDdrop", ddConfig: "drag"};
-    let actDrop = {type: "dragANDdrop", ddConfig: "drop"};
+    let actDrag = {type: "dragANDdrop", ddConfig: "drag", sourceWindow: sourceWindow, targetWindow: targetWindow};
+    let actDrop = {type: "dragANDdrop", ddConfig: "drop", sourceWindow: sourceWindow, targetWindow: targetWindow};
     const souCommand = this.playwrightCodeSetter(souFunName, souObj,  actDrag);
     const tarCommand = this.playwrightCodeSetter(tarFunName, tarObj,  actDrop);
 
     console.log("tarComnd: ", tarCommand);
     playwrightCommand.codeSetter(`${souCommand}.dragTo(${tarCommand});`);
   }
-  clickSetter(playwrightCommand, sourcepath){
+  clickSetter(playwrightCommand, sourcepath, sourceWindow){
     //找到存在的最優先順序
+    console.log("inside CLICK SETTER: ", sourceWindow);
     let priMin = -1;
     for(let i=0; i<this.domService.priSize; i++){
       if(sourcepath[i]){
@@ -85,7 +92,7 @@ export class PlaywrightCodeGenerator {
     console.log("funName: ",funName,"obj", obj);
 
     //產出code
-    let act = {type: "click", addConfig: ""};
+    let act = {type: "click", addConfig: "", sourceWindow: sourceWindow, targetWindow : ""};
     const command = this.playwrightCodeSetter(funName, obj,  act);
     playwrightCommand.codeSetter(command);
   }
@@ -95,6 +102,38 @@ export class PlaywrightCodeGenerator {
   }
   playwrightCodeSetter(funName, obj, act){//all action have the same code setter. 
     console.log("variable in codeSetter: funName= ", funName, "obg= ",obj, "act = ", act);
+    //新版寫法更清晰
+    let sourceWinVar = act.sourceWindow;
+    let targetWinVar = act.targetWindow;
+  
+    const getLocator = (windowVar) => {
+      switch(funName){
+        case "ByRole":
+          return `${windowVar}.getByRole("${obj.role}", { name: "${obj.name}" })`;
+        case "ByTitle":
+          return `${windowVar}.getByTitle("${obj.title}")`;
+        case "ByDomPath":
+          return `${windowVar}.locator('css=${obj.csspath}')`;
+        default:
+          return new Error (funName, " Not found!!");
+      }
+    };
+    if(act.type === "click"){
+      if(funName === "ByDomPath"){
+        return `await ${sourceWinVar}.click('css=${obj.csspath}');`;
+      }
+      return `await ${getLocator(sourceWinVar)}.click();`;
+    }
+    else if (act.type === "dragANDdrop"){
+      if (act.ddConfig === "drag") {
+        return `await ${getLocator(sourceWinVar)}`;
+      }
+      if (act.ddConfig === "drop") {
+        return `${getLocator(targetWinVar)}`;
+      }
+    }
+//舊版
+    /*
     if(funName === "ByRole"){
       if (act.type === "click")
         return `await page.getByRole("${obj.role}", { name: "${obj.name}" }).click();`;
@@ -108,12 +147,12 @@ export class PlaywrightCodeGenerator {
     } 
     else if(funName === "ByTitle"){
       if (act.type === "click")
-        return `await page.getByTitle(${obj.title}).click();`;
+        return `await page.getByTitle("${obj.title}").click();`;
       else if (act.type === "dragANDdrop"){
         if (act.ddConfig === "drag")
-          return `await page.getByTitle(${obj.title})`;
+          return `await page.getByTitle("${obj.title}")`;
         else if (act.ddConfig === "drop")
-          return `page.getByTitle(${obj.title})`;
+          return `page.getByTitle("${obj.title}")`;
       }
         
     }
@@ -132,7 +171,7 @@ export class PlaywrightCodeGenerator {
       }
         
     }
-
+*/
   }
   static initListener() {
     window.addEventListener("message", (event) => {

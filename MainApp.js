@@ -5,6 +5,7 @@ import { PlaywrightCommand } from './entities/PlaywrightCommand.js';
 import { WindowsCatcher } from './WindowsCatcher.js';
 import { UserAction } from './entities/UserAction.js';
 
+//預設先用iframeWindow[0]，之後改成可以選擇
 //https://iot.ttu.edu.tw/SnapIonic8.1/
 export class MainApp {
   constructor() {

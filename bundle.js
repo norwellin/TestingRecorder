@@ -226,11 +226,12 @@
 
   // usecases/PlaywrightCodeGenerator.js
   var PlaywrightCodeGenerator = class {
-    constructor(iframeWindow) {
+    constructor(iframeWindow, userActionDB) {
       this.typedText = "";
       this.domService = new DOMParserService(iframeWindow);
+      this.userActionDB = userActionDB;
     }
-    generate(action, playwrightCommand) {
+    generate(action, playwrightCommand, rightNowAction) {
       console.log("action: ", action);
       const sourcepath = this.domService.getAllPath(action.getSourceElement());
       let targetpath;
@@ -238,19 +239,24 @@
         targetpath = this.domService.getAllPath(action.getTargetElement());
         console.log("inside generate: targetpath  ", targetpath);
       }
+      console.log("inside generate: ", this.userActionDB, rightNowAction);
+      let sourceWindow = this.userActionDB[rightNowAction].getSourceWindow();
+      let targetWindow = this.userActionDB[rightNowAction].getTargetWindow();
+      console.log("userDB inside generator: ", this.userActionDB);
+      console.log("sourceWin, targetWin, rightnowACT: ", sourceWindow, targetWindow, rightNowAction);
       console.log("\u6ED1\u9F20\u505C\u7559\u5728 iframe \u4E2D\u7684\u5143\u7D20:", targetpath);
       console.log("source path: ", sourcepath);
       if (action.getActionType() === "dragANDdrop") {
-        this.dragAndDropCodeSetter(playwrightCommand, targetpath, sourcepath);
+        this.dragAndDropCodeSetter(playwrightCommand, targetpath, sourcepath, sourceWindow, targetWindow);
       } else if (action.getActionType() === "click") {
-        this.clickSetter(playwrightCommand, sourcepath);
+        this.clickSetter(playwrightCommand, sourcepath, sourceWindow);
       } else if (action.getActionType() === "dbclick") {
         playwrightCommand.codeSetter(`await page.dbclick('css=${sourcepath}');`);
       } else if (action.getActionType() === "keydown") {
         playwrightCommand.codeSetter(`await page.locator('css=${sourcepath}').fill(${this.typedText});`);
       }
     }
-    dragAndDropCodeSetter(playwrightCommand, targetpath, sourcepath) {
+    dragAndDropCodeSetter(playwrightCommand, targetpath, sourcepath, sourceWindow, targetWindow) {
       let souPriMin = -1;
       let tarPriMin = -1;
       for (let i = 0; i < this.domService.priSize; i++) {
@@ -270,14 +276,15 @@
       let tarFunName = targetpath[tarPriMin].funName;
       let tarObj = targetpath[tarPriMin].obj;
       console.log("target funName: ", tarFunName, "target obj: ", tarObj);
-      let actDrag = { type: "dragANDdrop", ddConfig: "drag" };
-      let actDrop = { type: "dragANDdrop", ddConfig: "drop" };
+      let actDrag = { type: "dragANDdrop", ddConfig: "drag", sourceWindow, targetWindow };
+      let actDrop = { type: "dragANDdrop", ddConfig: "drop", sourceWindow, targetWindow };
       const souCommand = this.playwrightCodeSetter(souFunName, souObj, actDrag);
       const tarCommand = this.playwrightCodeSetter(tarFunName, tarObj, actDrop);
       console.log("tarComnd: ", tarCommand);
       playwrightCommand.codeSetter(`${souCommand}.dragTo(${tarCommand});`);
     }
-    clickSetter(playwrightCommand, sourcepath) {
+    clickSetter(playwrightCommand, sourcepath, sourceWindow) {
+      console.log("inside CLICK SETTER: ", sourceWindow);
       let priMin = -1;
       for (let i = 0; i < this.domService.priSize; i++) {
         if (sourcepath[i]) {
@@ -288,7 +295,7 @@
       let funName = sourcepath[priMin].funName;
       let obj = sourcepath[priMin].obj;
       console.log("funName: ", funName, "obj", obj);
-      let act = { type: "click", addConfig: "" };
+      let act = { type: "click", addConfig: "", sourceWindow, targetWindow: "" };
       const command = this.playwrightCodeSetter(funName, obj, act);
       playwrightCommand.codeSetter(command);
     }
@@ -296,35 +303,31 @@
     }
     playwrightCodeSetter(funName, obj, act) {
       console.log("variable in codeSetter: funName= ", funName, "obg= ", obj, "act = ", act);
-      if (funName === "ByRole") {
-        if (act.type === "click")
-          return `await page.getByRole("${obj.role}", { name: "${obj.name}" }).click();`;
-        else if (act.type === "dragANDdrop") {
-          if (act.ddConfig === "drag")
-            return `await page.getByRole("${obj.role}", { name: "${obj.name}" })`;
-          else if (act.ddConfig === "drop")
-            return `page.getByRole("${obj.role}", { name: "${obj.name}" })`;
+      let sourceWinVar = act.sourceWindow;
+      let targetWinVar = act.targetWindow;
+      const getLocator = (windowVar) => {
+        switch (funName) {
+          case "ByRole":
+            return `${windowVar}.getByRole("${obj.role}", { name: "${obj.name}" })`;
+          case "ByTitle":
+            return `${windowVar}.getByTitle("${obj.title}")`;
+          case "ByDomPath":
+            return `${windowVar}.locator('css=${obj.csspath}')`;
+          default:
+            return new Error(funName, " Not found!!");
         }
-      } else if (funName === "ByTitle") {
-        if (act.type === "click")
-          return `await page.getByTitle(${obj.title}).click();`;
-        else if (act.type === "dragANDdrop") {
-          if (act.ddConfig === "drag")
-            return `await page.getByTitle(${obj.title})`;
-          else if (act.ddConfig === "drop")
-            return `page.getByTitle(${obj.title})`;
+      };
+      if (act.type === "click") {
+        if (funName === "ByDomPath") {
+          return `await ${sourceWinVar}.click('css=${obj.csspath}');`;
         }
-      } else if (funName === "ByDomPath") {
-        console.log("in by dom path!!");
-        if (act.type === "click")
-          return `await page.click('css=${obj.csspath}');`;
-        else if (act.type === "dragANDdrop") {
-          if (act.ddConfig === "drag")
-            return `await page.locator('css=${obj.csspath}')`;
-          else if (act.ddConfig === "drop") {
-            console.log("in by dom path!! drop");
-            return `page.locator('css=${obj.csspath}')`;
-          }
+        return `await ${getLocator(sourceWinVar)}.click();`;
+      } else if (act.type === "dragANDdrop") {
+        if (act.ddConfig === "drag") {
+          return `await ${getLocator(sourceWinVar)}`;
+        }
+        if (act.ddConfig === "drop") {
+          return `${getLocator(targetWinVar)}`;
         }
       }
     }
@@ -341,10 +344,12 @@
 
   // entities/UserAction.js
   var UserAction = class {
-    constructor(type, source, target) {
+    constructor(type, source, target, sourceWindow, targetWindow) {
       this.type = type;
       this.source = source;
       this.target = target;
+      this.sourceWindow = sourceWindow;
+      this.targetWindow = targetWindow;
     }
     setActionType(type) {
       this.type = type;
@@ -355,6 +360,12 @@
     setTargetElement(target) {
       this.target = target;
     }
+    setSourceWindow(sourceWindow) {
+      this.soureWindow = sourceWindow;
+    }
+    setTargetWindow(targetWindow) {
+      this.targetWindow = targetWindow;
+    }
     getActionType() {
       return this.type;
     }
@@ -364,12 +375,18 @@
     getTargetElement() {
       return this.target;
     }
+    getSourceWindow() {
+      return this.sourceWindow;
+    }
+    getTargetWindow() {
+      return this.targetWindow;
+    }
   };
 
   // usecases/ActionInterpreter.js
   var ActionInterpreter = class {
-    static interpretDrag(action_type, sourceEl, targetEl) {
-      return new UserAction(action_type, sourceEl, targetEl);
+    static interpretDrag(action_type, sourceEl, targetEl, sourceWindow, targetWindow) {
+      return new UserAction(action_type, sourceEl, targetEl, sourceWindow, targetWindow);
     }
   };
 
@@ -381,7 +398,7 @@
       this.iframeDocument = iframeWindow.document;
       this.useractionDB = userActionDB;
       this.playwrightCommand = command;
-      this.generator = new PlaywrightCodeGenerator(iframeWindow);
+      this.generator = new PlaywrightCodeGenerator(iframeWindow, this.useractionDB);
       this.target = null;
       this.source = null;
       this.currentHoveredElement = null;
@@ -391,22 +408,19 @@
       this.iframeDocument.addEventListener("mousemove", (e) => {
         this.currentHoveredElement = e.target;
       });
-      this.iframeDocument.addEventListener("mouseup", (e) => {
-        console.log("iframe mouseup:", e.target);
-      });
       this.iframeWindow.addEventListener("dragover", (e) => {
-        e.preventDefault();
         console.log("\u62D6\u66F3\u6ED1\u904E\u76EE\u6A19\u5340");
       });
       this.iframeWindow.addEventListener("drop", async (e) => {
-        e.preventDefault();
         if (this.currentHoveredElement) {
           console.log("iframe - rightNowAction: ", this.rightNowAction);
           const tempAction = this.useractionDB[this.rightNowAction];
-          console.log("action db: ", this.useractionDB);
+          console.log("tempAction inside iframeWindow", tempAction);
+          tempAction.setTargetWindow("iframe");
+          console.log("inside drop action db: ", this.useractionDB);
           tempAction.setTargetElement(this.currentHoveredElement);
           console.log("tempAction: ", tempAction);
-          this.generator.generate(tempAction, this.playwrightCommand);
+          this.generator.generate(tempAction, this.playwrightCommand, this.rightNowAction);
           console.log("Playwright Command:", this.playwrightCommand.codeGetter());
           this.currentHoveredElement = null;
           const generatedCode = this.playwrightCommand.codeGetter();
@@ -418,6 +432,9 @@
           chrome.storage.local.set({ actionPos: this.rightNowAction });
         }
       });
+      this.iframeDocument.addEventListener("click", (e) => {
+        console.log("\u5075\u6E2C\u5230click!!!!!!!!!!!!!!!");
+      });
       this.iframeWindow.addEventListener("message", (e) => {
         const msg = e.data;
         console.log("msg:", msg);
@@ -426,6 +443,7 @@
             console.log("iframe \u6536\u5230 window \u50B3\u4F86\u7684 dragstart");
             break;
           case "actionPosChanged":
+            console.log("iframe receive rightNowAction change request~");
             this.rightNowAction = msg.actionPos;
             break;
         }
@@ -452,7 +470,7 @@
       this.DOMElement = new DOMElement();
       this.useractionDB = userActionDB;
       this.playwrightCommand = command;
-      this.generator = new PlaywrightCodeGenerator(iframeWindow);
+      this.generator = new PlaywrightCodeGenerator(iframeWindow, this.useractionDB);
       this.target = null;
       this.source = null;
       this.currentHoveredElement = null;
@@ -468,8 +486,8 @@
         this.currentHoveredElement = e.target;
         this.DOMElement.setElementData(this.currentHoveredElement, "click");
         console.log(this.DOMElement.getAllElements());
-        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
-        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
+        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
+        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
         console.log("Playwright Command:", this.playwrightCommand.codeGetter());
         console.log("useractionDB: ", this.useractionDB);
         const generatedCode = this.playwrightCommand.codeGetter();
@@ -502,7 +520,7 @@
           if (target.getAttribute("draggable") === "true") {
             console.log("\u62D6\u62C9\u958B\u59CB:", target);
             this.DOMElement.setElementData(target, "drag");
-            this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
+            this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
             this.iframeWindow.postMessage({ type: "drag_start", nowAction: this.rightNowAction }, "*");
             chrome.storage.local.set({ sourceOfDD: "window" });
             this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
@@ -518,8 +536,8 @@
         this.currentHoveredElement = e.target;
         this.DOMElement.setElementData(this.currentHoveredElement, action_type);
         console.log(this.DOMElement.getAllElements());
-        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
-        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
+        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
+        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
         console.log("Playwright Command:", this.playwrightCommand.codeGetter());
         console.log("useractionDB: ", this.useractionDB);
         const generatedCode = this.playwrightCommand.codeGetter();
@@ -543,13 +561,13 @@
         this.currentHoveredElement = e.target;
         this.DOMElement.setElementData(this.currentHoveredElement, "keydown");
         console.log(this.DOMElement.getAllElements());
-        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null));
-        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand);
+        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
+        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
         console.log("Playwright Command:", this.playwrightCommand.codeGetter());
         console.log("useractionDB: ", this.useractionDB);
         this.AfterAllSteps();
       });
-      this.iframeWindow.addEventListener("messenge", (e) => {
+      window.addEventListener("message", (e) => {
         const msg = e.data;
         console.log("window get msg: ", msg);
         switch (msg.type) {
