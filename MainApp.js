@@ -11,23 +11,25 @@ export class MainApp {
   constructor() {
     this.allwindows = new WindowsCatcher(); //contain all windows (include: iframe, mainwindow) base on the website
     this.userActionDB = []; // record all user action
+    this.command = new PlaywrightCommand();
   }
 
   start() {
     console.log('程式活著!');
-    const { mainWindow, iframeWindow } = this.allwindows.getWindows();
+    const { mainWindow, iframeWindows } = this.allwindows.getWindows();
+    this.init_codeSetter();
 
-    const domParserService = new DOMParserService(iframeWindow);
-    const command = new PlaywrightCommand();
-    // 初始化 iframe 內事件監聽f
+    const domParserService = new DOMParserService(iframeWindows);
 
-    if (iframeWindow) {
-      const iframeListener = new IframeEventListener(iframeWindow, domParserService, command, this.userActionDB);
+    
+    // 初始化 iframe 內事件監聽
+    if (iframeWindows) {
+      const iframeListener = new IframeEventListener(iframeWindows, domParserService, this.command, this.userActionDB);
       iframeListener.init();
     }
 
     // 初始化外部 drag-drop 事件監聽
-    const outerListener = new OuterEventListener(iframeWindow, domParserService, command, this.userActionDB);
+    const outerListener = new OuterEventListener(iframeWindows, domParserService, this.command, this.userActionDB);
     outerListener.init();
 
     // 清空所有storage
@@ -37,5 +39,10 @@ export class MainApp {
     
 
 
+  }
+  init_codeSetter(){
+    const iframesId = this.allwindows.getIframesId();
+    const codeline = `const iframe = await page.frameLocator('iframe#${iframesId}');`;
+    this.command.codeWindowsSetter(codeline);
   }
 }

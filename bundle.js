@@ -3,12 +3,26 @@
   var PlaywrightCommand = class {
     constructor() {
       this.code = [];
+      this.code_import = [];
+      this.codeOutsider_up = [];
+      this.codeOutsider_down = [];
+      this.codeWindows = [];
+      this.code_import.push("import { test, expect } from '@playwright/test'");
+      this.codeOutsider_up.push("test.beforeEach('Set up', async ({page}) => {");
+      this.codeOutsider_down.push("});");
     }
     codeSetter(codeline) {
       this.code.push(codeline);
     }
+    codeImportSetter(codeline) {
+      this.code_import.push(codeline);
+    }
+    codeWindowsSetter(codeline) {
+      this.codeWindows.push(codeline);
+    }
     codeGetter() {
-      return this.code;
+      let all_code = [...this.code_import, ...this.codeOutsider_up, ...this.codeWindows, ...this.code, ...this.codeOutsider_down];
+      return all_code;
     }
   };
 
@@ -593,12 +607,18 @@
   var WindowsCatcher = class {
     constructor(doucumentRef = document) {
       this.documentRef = doucumentRef;
+      this.iframeWindowsId = [];
     }
     getWindows() {
       const iframe = this.documentRef.querySelector("iframe");
-      const iframeWindow = iframe?.contentWindow || null;
+      this.iframeWindowsId.push(iframe.id);
+      const anotherIframe = this.documentRef.querySelectorAll("iframe");
+      const iframeWindows = iframe?.contentWindow || null;
       const mainWindow = window;
-      return { mainWindow, iframeWindow };
+      return { mainWindow, iframeWindows };
+    }
+    getIframesId() {
+      return this.iframeWindowsId;
     }
   };
 
@@ -607,21 +627,27 @@
     constructor() {
       this.allwindows = new WindowsCatcher();
       this.userActionDB = [];
+      this.command = new PlaywrightCommand();
     }
     start() {
       console.log("\u7A0B\u5F0F\u6D3B\u8457!");
-      const { mainWindow, iframeWindow } = this.allwindows.getWindows();
-      const domParserService = new DOMParserService(iframeWindow);
-      const command = new PlaywrightCommand();
-      if (iframeWindow) {
-        const iframeListener = new IframeEventListener(iframeWindow, domParserService, command, this.userActionDB);
+      const { mainWindow, iframeWindows } = this.allwindows.getWindows();
+      this.init_codeSetter();
+      const domParserService = new DOMParserService(iframeWindows);
+      if (iframeWindows) {
+        const iframeListener = new IframeEventListener(iframeWindows, domParserService, this.command, this.userActionDB);
         iframeListener.init();
       }
-      const outerListener = new OuterEventListener(iframeWindow, domParserService, command, this.userActionDB);
+      const outerListener = new OuterEventListener(iframeWindows, domParserService, this.command, this.userActionDB);
       outerListener.init();
       chrome.storage.local.clear(() => {
         console.log("storage \u5DF2\u6E05\u7A7A");
       });
+    }
+    init_codeSetter() {
+      const iframesId = this.allwindows.getIframesId();
+      const codeline = `const iframe = await page.frameLocator('iframe#${iframesId}');`;
+      this.command.codeWindowsSetter(codeline);
     }
   };
   const app = new MainApp();

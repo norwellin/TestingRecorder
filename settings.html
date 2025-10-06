@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Setting Pages</title>
+    <link rel="stylesheet" href="node_modules/@ionic/core/css/ionic.bundle.css" />
+    <script type="module" src="node_modules/@ionic/core/dist/ionic/ionic.esm.js"></script>
+    <script nomodule src="node_modules/@ionic/core/dist/ionic/ionic.js"></script>
+
+    <style>
+        body,
+        ion-app {
+            height: 100vh;
+            margin: 0;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 200px 1fr;
+            /* 左200px, 右自適應 */
+            height: 100%;
+        }
+
+        ion-tab-bar {
+            flex-direction: column;
+            /* 垂直排列 */
+            height: 100%;
+        }
+
+        .page {
+            display: none;
+            padding: 20px;
+        }
+
+        .page.active {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <ion-app>
+        <div class="container">
+
+            <!-- 左邊的選單 (Tab Bar) -->
+            <ion-tab-bar>
+                <ion-tab-button tab="window">
+                    <ion-icon name="home-outline"></ion-icon>
+                    <ion-label>Select Window</ion-label>
+                </ion-tab-button>
+                <ion-tab-button tab="settings">
+                    <ion-icon name="settings-outline"></ion-icon>
+                    <ion-label>Settings</ion-label>
+                </ion-tab-button>
+                <ion-tab-button tab="about">
+                    <ion-icon name="information-circle-outline"></ion-icon>
+                    <ion-label>About</ion-label>
+                </ion-tab-button>
+            </ion-tab-bar>
+
+            <!-- 右邊內容區 -->
+            <ion-content>
+                <div id="home" class="page active">
+                    <h2>
+                        detected window
+                    </h2>
+                    <h3>Iframe</h3>
+                    <div id="iframe-list"></div>
+                </div>
+                <div id="settings" class="page">
+                    <h2>Methods</h2>
+                    
+                    <h2>⚙️ Settings Page</h2>
+                    <ion-item id="iwoif">
+                        <ion-item id="iykve">
+                            <ion-checkbox slot="start"></ion-checkbox>
+                            <ion-label id="in4zh">id</ion-label>
+                        </ion-item>
+                    </ion-item>
+                    <ion-item id="ir69h">
+                        <ion-item id="ibvl1">
+                            <ion-checkbox slot="start"></ion-checkbox>
+                            <ion-label id="iwufj">csspath</ion-label>
+                        </ion-item>
+                    </ion-item>
+                    <ion-item id="itbbh">
+                        <ion-item id="ikotb">
+                            <ion-checkbox slot="start"></ion-checkbox>
+                            <ion-label id="ikoum">xpath</ion-label>
+                        </ion-item>
+                    </ion-item>
+                </div>
+                <div id="about" class="page">
+                    <h2>ℹ️ About Page</h2>
+                    <p>This is an about page example.</p>
+                </div>
+            </ion-content>
+
+        </div>
+    </ion-app>
+
+    <script src="settings.js"></script>
+</body>
+
+</html>

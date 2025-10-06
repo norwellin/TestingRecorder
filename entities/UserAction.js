@@ -3,7 +3,7 @@ export class UserAction {
     this.type = type; //string event type
     this.source = source; // event.target (whole node of the event)
     this.target = target;
-    this.sourceWindow = sourceWindow;
+    this.sourceWindow = sourceWindow;//存放變數名稱，main window無變數就叫window
     this.targetWindow = targetWindow;
   }
 

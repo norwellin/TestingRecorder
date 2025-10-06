@@ -13,6 +13,7 @@
     "esbuild": "^0.25.8"
   },
   "dependencies": {
+    "@ionic/core": "^8.7.5",
     "codemirror": "^5.65.20"
   }
 }
