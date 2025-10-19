@@ -1,31 +1,4 @@
 (() => {
-  // entities/PlaywrightCommand.js
-  var PlaywrightCommand = class {
-    constructor() {
-      this.code = [];
-      this.code_import = [];
-      this.codeOutsider_up = [];
-      this.codeOutsider_down = [];
-      this.codeWindows = [];
-      this.code_import.push("import { test, expect } from '@playwright/test'");
-      this.codeOutsider_up.push("test.beforeEach('Set up', async ({page}) => {");
-      this.codeOutsider_down.push("});");
-    }
-    codeSetter(codeline) {
-      this.code.push(codeline);
-    }
-    codeImportSetter(codeline) {
-      this.code_import.push(codeline);
-    }
-    codeWindowsSetter(codeline) {
-      this.codeWindows.push(codeline);
-    }
-    codeGetter() {
-      let all_code = [...this.code_import, ...this.codeOutsider_up, ...this.codeWindows, ...this.code, ...this.codeOutsider_down];
-      return all_code;
-    }
-  };
-
   // entities/DOMElement.js
   var DOMElement = class {
     constructor() {
@@ -58,6 +31,35 @@
       this.id = "";
       this.title = "";
       this.event = null;
+    }
+  };
+
+  // entities/PlaywrightCommand.js
+  var PlaywrightCommand = class {
+    constructor() {
+      this.code = [];
+      this.code_import = [];
+      this.codeOutsider_up = [];
+      this.codeOutsider_down = [];
+      this.codeWindows = [];
+      this.code_import.push("import { test, expect } from '@playwright/test'");
+      this.codeOutsider_up.push("test.beforeEach('Set up', async ({page}) => {");
+      this.codeOutsider_down.push("});");
+      this.href = window.location.href;
+      this.codeSetter(`await page.goto('${this.href}');`);
+    }
+    codeSetter(codeline) {
+      this.code.push(codeline);
+    }
+    codeImportSetter(codeline) {
+      this.code_import.push(codeline);
+    }
+    codeWindowsSetter(codeline) {
+      this.codeWindows.push(codeline);
+    }
+    codeGetter() {
+      let all_code = [...this.code_import, ...this.codeOutsider_up, ...this.codeWindows, ...this.code, ...this.codeOutsider_down];
+      return all_code;
     }
   };
 
@@ -98,6 +100,15 @@
         ByTitle: { title: null },
         ByAltText: {},
         ByDomPath: { csspath: null }
+      };
+      this.playwrightMethodsStatus = {
+        ByRole: true,
+        ByLabel: false,
+        ByPlaceholder: false,
+        ByText: false,
+        ByTitle: true,
+        ByAltText: false,
+        ByDomPath: true
       };
     }
     getAllPath(el) {
@@ -249,9 +260,14 @@
       console.log("action: ", action);
       const sourcepath = this.domService.getAllPath(action.getSourceElement());
       let targetpath;
+      let inputText = "default";
       if (action.type === "dragANDdrop") {
         targetpath = this.domService.getAllPath(action.getTargetElement());
         console.log("inside generate: targetpath  ", targetpath);
+      }
+      if (action.type === "input") {
+        inputText = action.getSourceElement().innerText || action.getSourceElement().value;
+        console.log("InputTEXT: ", inputText);
       }
       console.log("inside generate: ", this.userActionDB, rightNowAction);
       let sourceWindow = this.userActionDB[rightNowAction].getSourceWindow();
@@ -265,7 +281,9 @@
       } else if (action.getActionType() === "click") {
         this.clickSetter(playwrightCommand, sourcepath, sourceWindow);
       } else if (action.getActionType() === "dbclick") {
-        playwrightCommand.codeSetter(`await page.dbclick('css=${sourcepath}');`);
+        this.doubleClickSetter(playwrightCommand, sourcepath, sourceWindow);
+      } else if (action.getActionType() === "input") {
+        this.inputSetter(playwrightCommand, sourcepath, sourceWindow, inputText);
       } else if (action.getActionType() === "keydown") {
         playwrightCommand.codeSetter(`await page.locator('css=${sourcepath}').fill(${this.typedText});`);
       }
@@ -313,20 +331,53 @@
       const command = this.playwrightCodeSetter(funName, obj, act);
       playwrightCommand.codeSetter(command);
     }
+    doubleClickSetter(playwrightCommand, sourcepath, sourceWindow) {
+      console.log("inside DOUBLE CLICK SETTER: ", sourceWindow);
+      let priMin = -1;
+      for (let i = 0; i < this.domService.priSize; i++) {
+        if (sourcepath[i]) {
+          priMin = i;
+        }
+      }
+      console.log("priMin: ", priMin);
+      let funName = sourcepath[priMin].funName;
+      let obj = sourcepath[priMin].obj;
+      console.log("funName: ", funName, "obj", obj);
+      let act = { type: "dbclick", addConfig: "", sourceWindow, targetWindow: "" };
+      const command = this.playwrightCodeSetter(funName, obj, act);
+      playwrightCommand.codeSetter(command);
+    }
+    inputSetter(playwrightCommand, sourcepath, sourceWindow, inputText) {
+      console.log("inside input Setter!");
+      let priMin = -1;
+      for (let i = 0; i < this.domService.priSize; i++) {
+        if (sourcepath[i]) {
+          priMin = i;
+          break;
+        }
+      }
+      console.log("priMin: ", priMin);
+      let funName = sourcepath[priMin].funName;
+      let obj = sourcepath[priMin].obj;
+      console.log("funName: ", funName, "obj", obj);
+      let act = { type: "input", addConfig: "", sourceWindow, targetWindow: "", inputText };
+      const command = this.playwrightCodeSetter(funName, obj, act);
+      playwrightCommand.codeSetter(command);
+    }
     keydownSetter() {
     }
     playwrightCodeSetter(funName, obj, act) {
       console.log("variable in codeSetter: funName= ", funName, "obg= ", obj, "act = ", act);
       let sourceWinVar = act.sourceWindow;
       let targetWinVar = act.targetWindow;
-      const getLocator = (windowVar) => {
+      const getLocator = (windowVar2) => {
         switch (funName) {
           case "ByRole":
-            return `${windowVar}.getByRole("${obj.role}", { name: "${obj.name}" })`;
+            return `${windowVar2}.getByRole("${obj.role}", { name: "${obj.name}" })`;
           case "ByTitle":
-            return `${windowVar}.getByTitle("${obj.title}")`;
+            return `${windowVar2}.getByTitle("${obj.title}")`;
           case "ByDomPath":
-            return `${windowVar}.locator('css=${obj.csspath}')`;
+            return `${windowVar2}.locator('css=${obj.csspath}')`;
           default:
             return new Error(funName, " Not found!!");
         }
@@ -336,6 +387,21 @@
           return `await ${sourceWinVar}.click('css=${obj.csspath}');`;
         }
         return `await ${getLocator(sourceWinVar)}.click();`;
+      } else if (act.type === "dbclick") {
+        if (funName === "ByDomPath") {
+          return `await ${sourceWinVar}.dblclick('css=${obj.csspath}');`;
+        }
+        return `await ${getLocator(sourceWinVar)}.dblclick();`;
+      } else if (act.type === "input") {
+        let text = act.inputText;
+        console.log("Inner Text: ", text);
+        if (funName === "ByDomPath") {
+          return `await ${sourceWinVar}.locator('${obj.csspath}').fill('${text}');`;
+        } else if (funName === "ByRole") {
+          return `${windowVar}.getByRole("${obj.role}", { name: "${obj.name}" }).fill('${text}')`;
+        } else if (funName === "ByTitle") {
+          return `${windowVar}.getByTitle("${obj.title}").fill('${text}')`;
+        }
       } else if (act.type === "dragANDdrop") {
         if (act.ddConfig === "drag") {
           return `await ${getLocator(sourceWinVar)}`;
@@ -413,14 +479,63 @@
       this.useractionDB = userActionDB;
       this.playwrightCommand = command;
       this.generator = new PlaywrightCodeGenerator(iframeWindow, this.useractionDB);
+      this.DOMElement = new DOMElement();
       this.target = null;
       this.source = null;
       this.currentHoveredElement = null;
       this.rightNowAction = -1;
+      this.clickFlag = 0;
+      this.clickTimeOut = null;
+      this.DOUBLE_CLICK_DELAY = 250;
     }
     init() {
       this.iframeDocument.addEventListener("mousemove", (e) => {
         this.currentHoveredElement = e.target;
+      });
+      this.iframeDocument.addEventListener("mousedown", (e) => {
+        console.log("mousedown detected!!", e.target);
+      });
+      this.iframeDocument.addEventListener("mouseup", (e) => {
+        this.clickFlag += 1;
+        console.log("iframe mouseup:", e.target);
+        if (this.clickFlag == 1) {
+          this.clickTimeOut = setTimeout(() => {
+            console.log("Single click detected");
+            this.clickFlag = 0;
+          }, this.DOUBLE_CLICK_DELAY);
+          const action_type = "click";
+          this.rightNowAction = this.rightNowAction + 1;
+          this.DOMElement.setElementData(e.target, "click");
+          this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "iframe", null));
+          this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
+          console.log("Playwright Command:", this.playwrightCommand.codeGetter());
+          console.log("useractionDB: ", this.useractionDB);
+          const generatedCode = this.playwrightCommand.codeGetter();
+          console.log("Playwright Command:", generatedCode);
+          chrome.runtime.sendMessage({
+            type: "display_code",
+            code: generatedCode
+          });
+          window.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+        } else if (this.clickFlag == 2) {
+          clearTimeout(this.clickTimeOut);
+          console.log("Double Click Detected!");
+          this.clickFlag = 0;
+          const action_type = "dbclick";
+          this.rightNowAction = this.rightNowAction + 1;
+          this.DOMElement.setElementData(e.target, "dbclick");
+          this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "iframe", null));
+          this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
+          console.log("Playwright Command:", this.playwrightCommand.codeGetter());
+          console.log("useractionDB: ", this.useractionDB);
+          const generatedCode = this.playwrightCommand.codeGetter();
+          console.log("Playwright Command:", generatedCode);
+          chrome.runtime.sendMessage({
+            type: "display_code",
+            code: generatedCode
+          });
+          window.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+        }
       });
       this.iframeWindow.addEventListener("dragover", (e) => {
         console.log("\u62D6\u66F3\u6ED1\u904E\u76EE\u6A19\u5340");
@@ -490,6 +605,7 @@
       this.currentHoveredElement = null;
       this.rightNowAction = -1;
       this.typedText = "";
+      this.timer;
     }
     init() {
       document.addEventListener("click", (e) => {
@@ -562,24 +678,28 @@
         });
         this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
       });
-      document.addEventListener("keydown", (e) => {
-        this.typedText = "";
-        if (e.key.length === 1) {
-          this.typedText += e.key;
-        } else if (e.key === "Backspace") {
-          this.typedText.slice(0, -1);
-        }
-        this.rightNowAction = this.rightNowAction + 1;
-        console.log("window - rightNowAction(keydown): ", this.rightNowAction);
-        const action_type = "keydown";
-        this.currentHoveredElement = e.target;
-        this.DOMElement.setElementData(this.currentHoveredElement, "keydown");
-        console.log(this.DOMElement.getAllElements());
-        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
-        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
-        console.log("Playwright Command:", this.playwrightCommand.codeGetter());
-        console.log("useractionDB: ", this.useractionDB);
-        this.AfterAllSteps();
+      document.addEventListener("input", (e) => {
+        clearTimeout(this.timer);
+        this.timer = setTimeout(() => {
+          console.log("\u4F7F\u7528\u8005\u8F38\u5165\u5B8C\u6210\uFF1A", e.target.value || e.target.innerText);
+          this.rightNowAction = this.rightNowAction + 1;
+          console.log("window - rightNowAction(input): ", this.rightNowAction);
+          const action_type = "input";
+          this.currentHoveredElement = e.target;
+          this.DOMElement.setElementData(this.currentHoveredElement, action_type);
+          console.log(this.DOMElement.getAllElements());
+          this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
+          this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
+          console.log("Playwright Command:", this.playwrightCommand.codeGetter());
+          console.log("useractionDB: ", this.useractionDB);
+          const generatedCode = this.playwrightCommand.codeGetter();
+          console.log("Playwright Command:", generatedCode);
+          chrome.runtime.sendMessage({
+            type: "display_code",
+            code: generatedCode
+          });
+          this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+        }, 500);
       });
       window.addEventListener("message", (e) => {
         const msg = e.data;
@@ -622,6 +742,10 @@
     }
   };
 
+  // usecases/StorageManager.js
+  var StorageManager = class {
+  };
+
   // MainApp.js
   var MainApp = class {
     constructor() {
@@ -635,14 +759,15 @@
       this.init_codeSetter();
       const domParserService = new DOMParserService(iframeWindows);
       if (iframeWindows) {
-        const iframeListener = new IframeEventListener(iframeWindows, domParserService, this.command, this.userActionDB);
-        iframeListener.init();
+        const iframeListener2 = new IframeEventListener(iframeWindows, domParserService, this.command, this.userActionDB);
+        iframeListener2.init();
       }
       const outerListener = new OuterEventListener(iframeWindows, domParserService, this.command, this.userActionDB);
       outerListener.init();
       chrome.storage.local.clear(() => {
         console.log("storage \u5DF2\u6E05\u7A7A");
       });
+      const storageManager = new StorageManager(iframeListener, outerListener, domParserService);
     }
     init_codeSetter() {
       const iframesId = this.allwindows.getIframesId();

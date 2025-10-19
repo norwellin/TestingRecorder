@@ -37,7 +37,7 @@ let editor = CodeMirror(document.getElementById("editor"), {
   chrome.windows.create({
     url: chrome.runtime.getURL("settings.html"),
     type: "popup",
-    width: 400,
+    width:500,
     height: 500
   });
 

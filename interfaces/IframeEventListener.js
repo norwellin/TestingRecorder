@@ -1,5 +1,6 @@
 //note: JS 是 by reference傳遞 (不是by value)
 // iframe 內部事件監聽器，負責處理 iframe 內部事件
+import { DOMElement } from "../entities/DOMElement";
 import { PlaywrightCommand } from '../entities/PlaywrightCommand.js';
 import { PlaywrightCodeGenerator } from '../usecases/PlaywrightCodeGenerator';
 import { ActionInterpreter } from '../usecases/ActionInterpreter.js';
@@ -13,22 +14,83 @@ export class IframeEventListener {
     this.useractionDB = userActionDB;
     this.playwrightCommand = command;
     this.generator = new PlaywrightCodeGenerator(iframeWindow, this.useractionDB);
+    this.DOMElement = new DOMElement();
     //
     this.target = null;
     this.source = null; //存放的是drag and drop的title
     this.currentHoveredElement = null;
     this.rightNowAction = -1;
+
+    this.clickFlag = 0;
+    this.clickTimeOut = null;
+    this.DOUBLE_CLICK_DELAY = 250;
+
   }
 
   init() {
     this.iframeDocument.addEventListener('mousemove', (e) => {
       this.currentHoveredElement = e.target;
+
+    });
+    this.iframeDocument.addEventListener('mousedown', (e) => {
+      console.log("mousedown detected!!", e.target);
+      //this.clickFlag = true;
     });
 
-   /* this.iframeDocument.addEventListener('mouseup', (e) => {
+    this.iframeDocument.addEventListener('mouseup', (e) => {
+      this.clickFlag += 1;
       console.log('iframe mouseup:', e.target);
+      if (this.clickFlag == 1) {
+        this.clickTimeOut = setTimeout(() => {
+      console.log("Single click detected");
+      this.clickFlag = 0;
+    }, this.DOUBLE_CLICK_DELAY);
+        const action_type = "click";
+        this.rightNowAction = this.rightNowAction + 1;
+        this.DOMElement.setElementData(e.target, 'click');
+
+        //push into database
+        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "iframe", null));
+        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
+        console.log('Playwright Command:', this.playwrightCommand.codeGetter());
+        console.log('useractionDB: ', this.useractionDB);
+        // 傳送Playwright Code到背景頁面
+        const generatedCode = this.playwrightCommand.codeGetter();
+        console.log("Playwright Command:", generatedCode);
+        chrome.runtime.sendMessage({
+          type: "display_code",
+          code: generatedCode
+        });
+        //每次變更rightnowAction都要給對應的class傳訊息
+        window.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+      }
+      else if (this.clickFlag == 2){
+        clearTimeout(this.clickTimeOut);
+        console.log("Double Click Detected!");
+        this.clickFlag = 0;
+
+        const action_type = "dbclick";
+        this.rightNowAction = this.rightNowAction + 1;
+        this.DOMElement.setElementData(e.target, 'dbclick');
+
+        //push into database
+        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "iframe", null));
+        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
+        console.log('Playwright Command:', this.playwrightCommand.codeGetter());
+        console.log('useractionDB: ', this.useractionDB);
+        // 傳送Playwright Code到背景頁面
+        const generatedCode = this.playwrightCommand.codeGetter();
+        console.log("Playwright Command:", generatedCode);
+        chrome.runtime.sendMessage({
+          type: "display_code",
+          code: generatedCode
+        });
+        //每次變更rightnowAction都要給對應的class傳訊息
+        window.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+
+      }
     });
-    */
+
     this.iframeWindow.addEventListener('dragover', (e) => {
       //e.preventDefault();
       console.log('拖曳滑過目標區');
@@ -64,34 +126,34 @@ export class IframeEventListener {
 
       }
     });
-    
+
     this.iframeDocument.addEventListener('click', (e) => {
       console.log("偵測到click!!!!!!!!!!!!!!!");
-/*
-      //新的串接方法 setting basic variable
-      this.rightNowAction = this.rightNowAction + 1;
-      console.log("iframe - rightNowAction(click): ", this.rightNowAction);
-      const action_type = 'click';
+      /*
+            //新的串接方法 setting basic variable
+            this.rightNowAction = this.rightNowAction + 1;
+            console.log("iframe - rightNowAction(click): ", this.rightNowAction);
+            const action_type = 'click';
+            
+            this.DOMElement.setElementData(e.target, 'click');
+            console.log(this.DOMElement.getAllElements());
       
-      this.DOMElement.setElementData(e.target, 'click');
-      console.log(this.DOMElement.getAllElements());
-
-      //在這裡處理轉換成Playwright Code Logic
-      this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "iframe", null));
-      this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
-      console.log('Playwright Command:', this.playwrightCommand.codeGetter());
-      console.log('useractionDB: ', this.useractionDB);
-      // 傳送Playwright Code到背景頁面
-      const generatedCode = this.playwrightCommand.codeGetter();
-      console.log("Playwright Command:", generatedCode);
-      chrome.runtime.sendMessage({
-        type: "display_code",
-        code: generatedCode 
-      });
-      //每次變更rightnowAction都要給對應的class傳訊息
-      this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
-    */
-      });
+            //在這裡處理轉換成Playwright Code Logic
+            this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "iframe", null));
+            this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
+            console.log('Playwright Command:', this.playwrightCommand.codeGetter());
+            console.log('useractionDB: ', this.useractionDB);
+            // 傳送Playwright Code到背景頁面
+            const generatedCode = this.playwrightCommand.codeGetter();
+            console.log("Playwright Command:", generatedCode);
+            chrome.runtime.sendMessage({
+              type: "display_code",
+              code: generatedCode 
+            });
+            //每次變更rightnowAction都要給對應的class傳訊息
+            this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+          */
+    });
     this.iframeWindow.addEventListener('message', (e) => {
       const msg = e.data;
       console.log('msg:', msg);
@@ -117,7 +179,7 @@ export class IframeEventListener {
       });
 
     }
-    
+
   }
 
 }

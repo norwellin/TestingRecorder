@@ -10,6 +10,8 @@ export class PlaywrightCommand {
     this.code_import.push("import { test, expect } from '@playwright/test'");
     this.codeOutsider_up.push("test.beforeEach('Set up', async ({page}) => {");
     this.codeOutsider_down.push("});");
+    this.href = window.location.href;
+    this.codeSetter(`await page.goto('${this.href}');`);
 
   }
   codeSetter(codeline) {

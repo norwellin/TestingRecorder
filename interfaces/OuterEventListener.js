@@ -20,6 +20,8 @@ export class OuterEventListener {
     this.currentHoveredElement = null;
     this.rightNowAction = -1;
     this.typedText = "";
+
+    this.timer;
   }
 
   init() {
@@ -38,7 +40,7 @@ export class OuterEventListener {
     });
 */
     document.addEventListener("click", (e) => {
-      console.log("Here is a click event! e: ",e.target);
+      console.log("Here is a click event! e: ", e.target);
 
       //新的串接方法 setting basic variable
       this.rightNowAction = this.rightNowAction + 1;
@@ -50,7 +52,7 @@ export class OuterEventListener {
 
       //在這裡處理轉換成Playwright Code Logic
       this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
-     
+
       this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
       console.log('Playwright Command:', this.playwrightCommand.codeGetter());
       console.log('useractionDB: ', this.useractionDB);
@@ -140,7 +142,36 @@ export class OuterEventListener {
       this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
 
     });
-    document.addEventListener("keydown", (e) => {  
+    document.addEventListener("input", (e) => {
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => {
+        console.log("使用者輸入完成：", e.target.value || e.target.innerText);
+        //新的串接方法 setting basic variable
+        this.rightNowAction = this.rightNowAction + 1;
+        console.log("window - rightNowAction(input): ", this.rightNowAction);
+        const action_type = 'input';
+        this.currentHoveredElement = e.target;
+        this.DOMElement.setElementData(this.currentHoveredElement, action_type);
+        console.log(this.DOMElement.getAllElements());
+
+        //在這裡處理轉換成Playwright Code Logic
+        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
+        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
+        console.log('Playwright Command:', this.playwrightCommand.codeGetter());
+        console.log('useractionDB: ', this.useractionDB);
+        // 傳送Playwright Code到背景頁面
+        const generatedCode = this.playwrightCommand.codeGetter();
+        console.log("Playwright Command:", generatedCode);
+        chrome.runtime.sendMessage({
+          type: "display_code",
+          code: generatedCode
+        });
+        //每次變更rightnowAction都要給對應的class傳訊息
+        this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+      }, 500); // 0.5 秒內沒再輸入視為完成
+    });
+
+    /*document.addEventListener("keydown", (e) => {  
       this.typedText = "";//先清空之前存的
       if(e.key.length === 1){
         this.typedText += e.key;
@@ -165,6 +196,7 @@ export class OuterEventListener {
       //最後做同步
       this.AfterAllSteps();
     });
+    */
     window.addEventListener('message', (e) => {
       const msg = e.data;
       console.log("window get msg: ", msg);
@@ -177,16 +209,16 @@ export class OuterEventListener {
     });
 
   }
-  AfterAllSteps(){ //所有監聽後都要做的事情 (同步到iframe與chrome storage)
+  AfterAllSteps() { //所有監聽後都要做的事情 (同步到iframe與chrome storage)
     // 傳送Playwright Code到背景頁面
-      const generatedCode = this.playwrightCommand.codeGetter();
-      console.log("Playwright Command:", generatedCode);
-      chrome.runtime.sendMessage({
-        type: "display_code",
-        code: generatedCode
-      });
-      //每次變更rightnowAction都要給對應的class傳訊息
-      this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
-      this.iframeWindow.postMessage({ type: "typedTextChanged", typedText: this.typedText }, "*");
-    }
+    const generatedCode = this.playwrightCommand.codeGetter();
+    console.log("Playwright Command:", generatedCode);
+    chrome.runtime.sendMessage({
+      type: "display_code",
+      code: generatedCode
+    });
+    //每次變更rightnowAction都要給對應的class傳訊息
+    this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+    this.iframeWindow.postMessage({ type: "typedTextChanged", typedText: this.typedText }, "*");
+  }
 }

@@ -4,6 +4,7 @@ import { DOMParserService } from './usecases/DOMParserService.js';
 import { PlaywrightCommand } from './entities/PlaywrightCommand.js';
 import { WindowsCatcher } from './WindowsCatcher.js';
 import { UserAction } from './entities/UserAction.js';
+import { StorageManager } from './usecases/StorageManager.js';
 
 //預設先用iframeWindow[0]，之後改成可以選擇
 //https://iot.ttu.edu.tw/SnapIonic8.1/
@@ -19,9 +20,9 @@ export class MainApp {
     const { mainWindow, iframeWindows } = this.allwindows.getWindows();
     this.init_codeSetter();
 
+
     const domParserService = new DOMParserService(iframeWindows);
 
-    
     // 初始化 iframe 內事件監聽
     if (iframeWindows) {
       const iframeListener = new IframeEventListener(iframeWindows, domParserService, this.command, this.userActionDB);
@@ -38,7 +39,7 @@ export class MainApp {
     });
     
 
-
+    const storageManager = new StorageManager(iframeListener, outerListener, domParserService);
   }
   init_codeSetter(){
     const iframesId = this.allwindows.getIframesId();

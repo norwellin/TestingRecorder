@@ -11,11 +11,16 @@ export class PlaywrightCodeGenerator {
   }
   generate(action, playwrightCommand, rightNowAction) {
     console.log("action: ",action);
-    const sourcepath = this.domService.getAllPath(action.getSourceElement());
+    const sourcepath = this.domService.getAllPath(action.getSourceElement()); //取得所有方法的值
     let targetpath;
+    let inputText = "default";
     if (action.type === "dragANDdrop"){
       targetpath = this.domService.getAllPath(action.getTargetElement());
       console.log("inside generate: targetpath  ", targetpath);
+    }
+    if (action.type === "input"){
+      inputText = action.getSourceElement().innerText || action.getSourceElement().value;
+      console.log("InputTEXT: ",inputText);
     }
       
     //取得來源window (iframe || main)
@@ -35,7 +40,11 @@ export class PlaywrightCodeGenerator {
       this.clickSetter(playwrightCommand, sourcepath, sourceWindow);
     }
     else if(action.getActionType() === 'dbclick'){
-      playwrightCommand.codeSetter(`await page.dbclick('css=${sourcepath}');`);
+      this.doubleClickSetter(playwrightCommand, sourcepath, sourceWindow);
+      ///playwrightCommand.codeSetter(`await page.dbclick('css=${sourcepath}');`);
+    }
+    else if (action.getActionType() === 'input'){
+      this.inputSetter(playwrightCommand, sourcepath, sourceWindow, inputText);
     }
     else if(action.getActionType() === 'keydown'){
       playwrightCommand.codeSetter(`await page.locator('css=${sourcepath}').fill(${this.typedText});`);
@@ -96,7 +105,43 @@ export class PlaywrightCodeGenerator {
     const command = this.playwrightCodeSetter(funName, obj,  act);
     playwrightCommand.codeSetter(command);
   }
-  
+  doubleClickSetter(playwrightCommand, sourcepath, sourceWindow){
+    console.log("inside DOUBLE CLICK SETTER: ", sourceWindow);
+    let priMin = -1;
+    for(let i=0; i<this.domService.priSize; i++){
+      if(sourcepath[i]){
+        priMin = i; 
+      }
+    }
+    console.log("priMin: ", priMin);
+    let funName = sourcepath[priMin].funName;
+    let obj = sourcepath[priMin].obj;
+    console.log("funName: ",funName,"obj", obj);
+
+    //產出code
+    let act = {type: "dbclick", addConfig: "", sourceWindow: sourceWindow, targetWindow : ""};
+    const command = this.playwrightCodeSetter(funName, obj,  act);
+    playwrightCommand.codeSetter(command);
+  }
+  inputSetter(playwrightCommand, sourcepath, sourceWindow, inputText){
+    console.log("inside input Setter!");
+     let priMin = -1;
+    for(let i=0; i<this.domService.priSize; i++){
+      if(sourcepath[i]){
+        priMin = i; 
+        break;
+      }
+    }
+    console.log("priMin: ", priMin);
+    let funName = sourcepath[priMin].funName;
+    let obj = sourcepath[priMin].obj;
+    console.log("funName: ",funName,"obj", obj);
+
+    //產出code
+    let act = {type: "input", addConfig: "", sourceWindow: sourceWindow, targetWindow : "", inputText: inputText};
+    const command = this.playwrightCodeSetter(funName, obj,  act);
+    playwrightCommand.codeSetter(command);
+  }
   keydownSetter(){
 
   }
@@ -123,6 +168,26 @@ export class PlaywrightCodeGenerator {
         return `await ${sourceWinVar}.click('css=${obj.csspath}');`;
       }
       return `await ${getLocator(sourceWinVar)}.click();`;
+    }
+    else if (act.type === "dbclick"){
+      if(funName === "ByDomPath"){
+        return `await ${sourceWinVar}.dblclick('css=${obj.csspath}');`;
+      }
+      return `await ${getLocator(sourceWinVar)}.dblclick();`;
+    }
+    else if (act.type === 'input'){
+      let text = act.inputText;
+      console.log("Inner Text: ",text);
+
+      if(funName === "ByDomPath"){
+        return `await ${sourceWinVar}.locator('${obj.csspath}').fill('${text}');`;
+      }
+      else if(funName === "ByRole"){
+        return `${windowVar}.getByRole("${obj.role}", { name: "${obj.name}" }).fill('${text}')`;
+      }
+      else if (funName === "ByTitle"){
+        return `${windowVar}.getByTitle("${obj.title}").fill('${text}')`;
+      }
     }
     else if (act.type === "dragANDdrop"){
       if (act.ddConfig === "drag") {

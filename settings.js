@@ -1,5 +1,6 @@
     const buttons = document.querySelectorAll("ion-tab-button");
     const pages = document.querySelectorAll(".page");
+    const btn_setting= document.querySelector("ion-button#save_button");
 
     buttons.forEach(btn => {
       btn.addEventListener("click", () => {
@@ -11,3 +12,8 @@
         document.getElementById(target).classList.add("active");
       });
     });
+
+    btn_setting.addEventListener("click", () => {
+        console.log("btn_setting onclick");
+    });
+

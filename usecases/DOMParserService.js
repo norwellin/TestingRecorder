@@ -36,6 +36,15 @@ export class DOMParserService {
       ByAltText: {},
       ByDomPath: { csspath: null }
     };
+    this.playwrightMethodsStatus = {
+      ByRole: true,
+      ByLabel: false,
+      ByPlaceholder: false,
+      ByText: false,
+      ByTitle: true,
+      ByAltText: false,
+      ByDomPath: true
+    };
   }
   getAllPath(el) {
     console.log("el:" ,el);
@@ -88,7 +97,7 @@ export class DOMParserService {
     }
 
     console.log("newObj: ", newObj);
-    return newObj;
+    return newObj; //return 按照優先順序排列的array path,ex: [{},{},{}]
   }
   getDomPath(el) {
     if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
