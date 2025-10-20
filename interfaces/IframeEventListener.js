@@ -25,6 +25,9 @@ export class IframeEventListener {
     this.clickTimeOut = null;
     this.DOUBLE_CLICK_DELAY = 250;
 
+    this.inputTimer = 0;
+    this.INPUT_DELAY = 500;
+
   }
 
   init() {
@@ -90,7 +93,34 @@ export class IframeEventListener {
 
       }
     });
+    this.iframeDocument.addEventListener('input', (e) => {
+      clearTimeout(this.inputTimer);
+      this.inputTimer = setTimeout(() => {
+        console.log("使用者輸入完成：", e.target.value || e.target.innerText);
+        //新的串接方法 setting basic variable
+        this.rightNowAction = this.rightNowAction + 1;
+        console.log("iframe - rightNowAction(input): ", this.rightNowAction);
+        const action_type = 'input';
+        this.currentHoveredElement = e.target;
+        this.DOMElement.setElementData(this.currentHoveredElement, action_type);
+        console.log(this.DOMElement.getAllElements());
 
+        //在這裡處理轉換成Playwright Code Logic
+        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "iframe", ""));
+        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
+        console.log('Playwright Command:', this.playwrightCommand.codeGetter());
+        console.log('useractionDB: ', this.useractionDB);
+        // 傳送Playwright Code到背景頁面
+        const generatedCode = this.playwrightCommand.codeGetter();
+        console.log("Playwright Command:", generatedCode);
+        chrome.runtime.sendMessage({
+          type: "display_code",
+          code: generatedCode
+        });
+        //每次變更rightnowAction都要給對應的class傳訊息
+        this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+      }, this.INPUT_DELAY); // 0.5 秒內沒再輸入視為完成
+    });
     this.iframeWindow.addEventListener('dragover', (e) => {
       //e.preventDefault();
       console.log('拖曳滑過目標區');

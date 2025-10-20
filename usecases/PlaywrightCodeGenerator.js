@@ -60,12 +60,14 @@ export class PlaywrightCodeGenerator {
     for(let i=0; i<this.domService.priSize; i++){
       if(sourcepath[i]){
         souPriMin = i; 
+        break;
       }
     }
     //找target min最小
     for(let i=0; i<this.domService.priSize; i++){
       if(targetpath[i]){
         tarPriMin = i;
+        break;
       }
     }
     console.log("Source priMin: ", souPriMin, "Target Primin: ",tarPriMin);
@@ -93,6 +95,7 @@ export class PlaywrightCodeGenerator {
     for(let i=0; i<this.domService.priSize; i++){
       if(sourcepath[i]){
         priMin = i; 
+        break;
       }
     }
     console.log("priMin: ", priMin);
@@ -111,6 +114,7 @@ export class PlaywrightCodeGenerator {
     for(let i=0; i<this.domService.priSize; i++){
       if(sourcepath[i]){
         priMin = i; 
+        break;
       }
     }
     console.log("priMin: ", priMin);

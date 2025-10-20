@@ -57,7 +57,7 @@ export class DOMParserService {
       ByDomPath: false
     };
     //先找dompath
-    let dompath = this.getDomPath(el);
+    let dompath = this.getShortUniqueDomPath(el);
     if (this.checkUniqueByDompath(dompath)) {
       console.log("DOMPATH is UNIQUE!!!!");
       this.playwrightObj.ByDomPath.csspath = dompath;
@@ -144,6 +144,61 @@ export class DOMParserService {
     console.log("dom path: ",newpath);
     return newpath;
   }
+
+getShortUniqueDomPath(el, opts = {}) {
+  if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
+  const maxDepth = typeof opts.maxDepth === 'number' ? opts.maxDepth : 8;
+
+  /*
+  // 如果有 ID，且確定唯一，直接回傳
+  if (el.id) {
+    const escapedId = CSS.escape(el.id);
+    if (document.querySelectorAll(`#${escapedId}`).length === 1) return `#${escapedId}`;
+  }
+*/
+  const path = [];
+  let current = el;
+  let depth = 0;
+
+  while (current && current.nodeType === Node.ELEMENT_NODE && depth < maxDepth) {
+    depth++;
+    let selector = current.tagName.toLowerCase();
+
+    // 如果有 class，嘗試用某個唯一 class（需 escape）
+    if (current.className && typeof current.className === 'string') {
+      const classList = current.className.trim().split(/\s+/).filter(Boolean);
+      for (const cls of classList) {
+        const esc = CSS.escape(cls);
+        const testSelector = `${selector}.${esc}`;
+        if (document.querySelectorAll(testSelector).length === 1) {
+          selector = testSelector;
+          break;
+        }
+      }
+    }
+
+    // 組成 fullPath 並檢查是否唯一
+    const fullPath = path.length ? `${selector} > ${path.join(' > ')}` : selector;
+    if (document.querySelectorAll(fullPath).length === 1) {
+      path.unshift(selector);
+      break;
+    }
+
+    // nth-of-type 作為最後手段（只在必要時加）
+    let siblingIndex = 1;
+    let sibling = current;
+    while ((sibling = sibling.previousElementSibling)) {
+      if (sibling.nodeName === current.nodeName) siblingIndex++;
+    }
+    if (siblingIndex > 1) selector += `:nth-of-type(${siblingIndex})`;
+
+    path.unshift(selector);
+    current = current.parentElement;
+  }
+
+  return path.join(' > ');
+}
+
 
 
   checkUniqueByDompath(path) {
