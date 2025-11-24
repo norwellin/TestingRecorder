@@ -1,42 +1,133 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <title>Iframe Drag Detector</title>
 
   <!-- CodeMirror CSS -->
   <link rel="stylesheet" href="codemirror/codemirror.css">
-<link rel="stylesheet" href="codemirror/theme/eclipse.css">
+  <link rel="stylesheet" href="codemirror/theme/eclipse.css">
 
- <!-- Ionic Core CSS & JS -->
-      <link rel="stylesheet" href="node_modules/@ionic/core/css/ionic.bundle.css" />
-    <script type="module" src="node_modules/@ionic/core/dist/ionic/ionic.esm.js"></script>
-    <script nomodule src="node_modules/@ionic/core/dist/ionic/ionic.js"></script>
+  <!-- Ionic Core CSS & JS -->
+  <link rel="stylesheet" href="node_modules/@ionic/core/css/ionic.bundle.css" />
+  <script type="module" src="node_modules/@ionic/core/dist/ionic/ionic.esm.js"></script>
+  <script nomodule src="node_modules/@ionic/core/dist/ionic/ionic.js"></script>
 
   <style>
-    body { font-family: sans-serif; padding: 20px; }
-    #editor { width: 100%; height: 300px; border: 1px solid #ccc; }
-    button { padding: 10px; margin-top: 10px; }
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+    }
+
+    #editor {
+      width: 100%;
+      height: 300px;
+      border: 1px solid #ccc;
+    }
+
+    button {
+      padding: 10px;
+      margin-top: 10px;
+    }
+
+    table {
+      font-family: Arial, Helvetica, sans-serif;
+      border-collapse: collapse;
+      width: 100%;
+      height: auto;
+    }
+
+    td,
+    th {
+      border: 1px solid #ddd;
+      padding: 8px;
+    }
+
+    tr:nth-child(even) {
+      background-color: #f2f2f2;
+    }
+
+    tr:hover {
+      background-color: #ddd;
+    }
+
+    th {
+      padding-top: 12px;
+      padding-bottom: 12px;
+      text-align: left;
+      background-color: #04AA6D;
+      color: white;
+    }
+
+    /* ✅ 新增：讓表格能滾動 */
+    #table-container {
+      max-height: 300px;
+      /* 你可以依需要調整高度 */
+      overflow-y: auto;
+      /* 垂直方向可滾動 */
+      overflow-x: auto;
+      /* 水平方向可滾動（可選） */
+      border: 1px solid #ccc;
+    }
+    #startBtn { 
+      width: 80px;
+    }
   </style>
 </head>
+
 <body>
   <ion-grid id="i0ojjm">
-            <ion-row>
-                <ion-col size="4" id="iattp5">
-                    <ion-button color="primary" id="btn_setting">setting</ion-button>
-                </ion-col>
-                <ion-col size="4" id="id4uri"></ion-col>
-                <ion-col size="4" id="ipf1pi"></ion-col>
-            </ion-row>
-        </ion-grid>
-  <h2>Iframe Drag Detector</h2>
-  <div id="editor"></div>
-  <button id="startBtn">Start</button>
+    <ion-row>
+      <ion-col size="1" id="id4uri">
+        <ion-button color="primary" id="startBtn">
+          <ion-icon name="stop-circle-outline" id="recordIcon"></ion-icon>
+        </ion-button>
+      </ion-col>
+      <ion-col size="1" id="iattp5">
+        <ion-button color="primary" id="btn_reset">Reset</ion-button>
+      </ion-col>
+      <ion-col size="1" id="iattp5">
+        <ion-button color="primary" id="btn_setting">Setting</ion-button>
+      </ion-col>
+
+    </ion-row>
+  </ion-grid>
+  <ion-grid id="i0ojjm">
+    <ion-row>
+      <!-- 左邊表格 -->
+      <ion-col size="6" id="table-container">
+        <table id="actionTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Action</th>
+              <th>Source Window</th>
+              <th>Target Window</th>
+              <th>S_Method</th>
+              <th>S_Data</th>
+              <th>T_Method</th>
+              <th>T_Data</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- JS 動態新增行 -->
+          </tbody>
+        </table>
+      </ion-col>
+
+      <!-- 右邊 CodeMirror -->
+      <ion-col size="6" id="editor-container">
+        <div id="editor"></div>
+      </ion-col>
+    </ion-row>
+  </ion-grid>
 
   <!-- CodeMirror JS -->
-  
-<script src="codemirror/codemirror.js"></script>
-<script src="codemirror/mode/javascript/javascript.js"></script>
+
+  <script src="codemirror/codemirror.js"></script>
+  <script src="codemirror/mode/javascript/javascript.js"></script>
 
   <script src="viewer.js"></script>
 </body>
+
 </html>

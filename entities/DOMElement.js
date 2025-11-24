@@ -8,10 +8,11 @@ export class DOMElement {
   }
   setElementData(element, type) {
     this.type = type;
-    this.tag = element.tagName.toLowerCase();
+    this.tag = element.tagName.toLowerCase() || '';
     this.id = element.id || '';
     this.title = element.getAttribute('title') || '';
-    this.event = element;
+    this.event = element; //for every actions this should be: event.target 
+    this.key = ""; //this is for keyboard action
   }
   getAllElements() {
     return {
@@ -19,7 +20,8 @@ export class DOMElement {
       elementData: {
         id: this.id,
         title: this.title,
-        tagname: this.tag
+        tagname: this.tag,
+        key: this.key
       },
       event: this.event
     };
@@ -29,6 +31,9 @@ export class DOMElement {
     this.id = '';
     this.title = '';
     this.event = null;
+  }
+  setKeyElement(key){
+    this.key = key;
   }
 }
 

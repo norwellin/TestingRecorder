@@ -8,7 +8,7 @@ export class PlaywrightCommand {
 
     //一些初始化
     this.code_import.push("import { test, expect } from '@playwright/test'");
-    this.codeOutsider_up.push("test.beforeEach('Set up', async ({page}) => {");
+    this.codeOutsider_up.push("test('Set up', async ({page}) => {");
     this.codeOutsider_down.push("});");
     this.href = window.location.href;
     this.codeSetter(`await page.goto('${this.href}');`);

@@ -1,3 +1,25 @@
+//For the start button
+const startBtn = document.getElementById('startBtn');
+const recordIcon = document.getElementById('recordIcon');
+
+let isRecording = false;
+
+startBtn.addEventListener("click", () => {
+  isRecording = !isRecording;
+
+  if(isRecording){
+    startBtn.setAttribute('color','danger');
+    recordIcon.setAttribute('name','stop-circle');
+    console.log("start recording");
+  }
+  else{
+    startBtn.setAttribute('color','primary');
+    recordIcon.setAttribute('name','stop-circle-outline');
+    console.log("stop recording");
+  }
+  
+});
+
 let editor = CodeMirror(document.getElementById("editor"), {
   value: "// No code has been generated yet",
   mode: "javascript",
@@ -23,12 +45,28 @@ let editor = CodeMirror(document.getElementById("editor"), {
     editor.setValue(code);
   });
 
+  // 先抓一次
+  chrome.storage.local.get(["generatedAction"], (result) => {
+    
+    if(result.generatedAction){
+      updateTable(result.generatedAction);
+    }
+    else{
+      console.log("no user action generated yet!")
+    }
+  });
   // 偵測 storage 更新 → 即時更新 popup
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (changes.generatedCode) {
       const code = changes.generatedCode.newValue.join("\n");
       editor.setOption("value", code);
-      autoIndentAll(editor);
+      this.autoIndentAll(editor);
+    }
+    else if (changes.generatedAction){
+      console.log("storage change!")
+      const useractionDB = changes.generatedAction.newValue || [];
+      console.log(useractionDB);
+      updateTable(useractionDB);
     }
   });
 
@@ -41,6 +79,7 @@ let editor = CodeMirror(document.getElementById("editor"), {
     height: 500
   });
 
+});
   function autoIndentAll(editor) {
   const lastLine = editor.lineCount();
   editor.operation(() => {
@@ -48,6 +87,27 @@ let editor = CodeMirror(document.getElementById("editor"), {
     editor.indentSelection("smart");
     editor.setCursor(0, 0); // 回到檔案開頭（避免游標停在最後）
   });
+  
 }
+function updateTable(list) {
+  const table = document.getElementById("actionTable"); 
+  const tbody = table.querySelector("tbody");
+  
+  // 清空 tbody
+  tbody.innerHTML = "";
 
-});
+  console.log("list: ", list);
+
+  // 依序新增每一筆資料
+  list.forEach((item, index) => {
+    const row = tbody.insertRow(); // ← 改成 tbody
+    row.insertCell().textContent = index + 1;
+    row.insertCell().textContent = item.type || "";
+    row.insertCell().textContent = item.sourceWindow || "";
+    row.insertCell().textContent = item.targetWindow || "";
+    row.insertCell().textContent = item.sourceMethod || "";
+    row.insertCell().textContent = item.sourceData || "";
+    row.insertCell().textContent = item.targetMethod || "";
+    row.insertCell().textContent = item.targetData || "";
+  });
+}

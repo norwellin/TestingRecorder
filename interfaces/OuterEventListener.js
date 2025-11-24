@@ -39,6 +39,11 @@ export class OuterEventListener {
       });
     });
 */
+/*
+    document.addEventListener("mousemove", (e)=>{
+      console.log("outer mousemove: ", e.target);
+    });
+    */
     document.addEventListener("click", (e) => {
       console.log("Here is a click event! e: ", e.target);
 
@@ -63,9 +68,14 @@ export class OuterEventListener {
         type: "display_code",
         code: generatedCode
       });
+      chrome.runtime.sendMessage({
+        type: "display_useraction",
+        action: this.useractionDB
+      });
+
       //每次變更rightnowAction都要給對應的class傳訊息
       this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
-    });
+    },true);
 
     document.addEventListener("drop", (e) => {
       //identify the source
@@ -88,7 +98,7 @@ export class OuterEventListener {
 
     });
 
-    document.addEventListener("dragstart", (e) => {
+    window.addEventListener("dragstart", (e) => {
 
       //重新改寫 (不用post messenge，因為JS是傳ref的)
       try {
@@ -103,7 +113,7 @@ export class OuterEventListener {
           //在這裡處理轉換成Playwright Code Logic
           this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
 
-          this.iframeWindow.postMessage({ type: "drag_start", nowAction: this.rightNowAction }, "*");
+          this.iframeWindow.postMessage({ type: "window_drag_start", nowAction: this.rightNowAction }, "*");
           //this.source = target;
 
           //紀錄drag 的來源到chrome storage
@@ -141,7 +151,100 @@ export class OuterEventListener {
       //每次變更rightnowAction都要給對應的class傳訊息
       this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
 
+    },true);
+    document.addEventListener('keydown', (e) => {
+  if (e.key === 'Backspace') {
+    console.log('Backspace key pressed!');
+    //新的串接方法 setting basic variable
+      this.rightNowAction = this.rightNowAction + 1;
+      console.log("window - rightNowAction(keyboard: ", this.rightNowAction);
+      const action_type = 'keyboard';
+      this.currentHoveredElement = e.target;
+      this.DOMElement.setElementData(this.currentHoveredElement, action_type);
+      //for keyboard action part we have to set element key
+      this.DOMElement.setKeyElement(e.key);
+      console.log(this.DOMElement.getAllElements());
+
+      //在這裡處理轉換成Playwright Code Logic
+      this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
+      //this line only for keyboard action setting
+      this.useractionDB[this.rightNowAction].setKeyboard(e.key);
+      this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
+      console.log('Playwright Command:', this.playwrightCommand.codeGetter());
+      console.log('useractionDB: ', this.useractionDB);
+      // 傳送Playwright Code到背景頁面
+      const generatedCode = this.playwrightCommand.codeGetter();
+      console.log("Playwright Command:", generatedCode);
+      chrome.runtime.sendMessage({
+        type: "display_code",
+        code: generatedCode
+      });
+      chrome.runtime.sendMessage({
+        type: "display_useraction",
+        action: this.useractionDB
+      });
+
+      //每次變更rightnowAction都要給對應的class傳訊息
+      this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+  }
+});
+document.addEventListener("input", (e) => {
+  const tag = e.target.tagName.toLowerCase();
+  const type = e.target.getAttribute("type");
+
+  // ✅ 僅允許文字輸入類型（input[type=text]、textarea、contenteditable）
+  const isTextInput =
+    (tag === "input" && (!type || type === "text" || type === "search" || type === "email" || type === "password")) ||
+    tag === "textarea" ||
+    e.target.isContentEditable;
+
+  if (!isTextInput) return; // ❌ 非文字輸入則不處理
+
+  // 🕒 Debounce：等待使用者停止輸入 0.5 秒後再觸發
+  clearTimeout(this.timer);
+  this.timer = setTimeout(() => {
+    console.log("📝 使用者輸入完成：", e.target.value || e.target.innerText);
+
+    // 🧩 基本變數設定
+    this.rightNowAction = this.rightNowAction + 1;
+    console.log("window - rightNowAction(input): ", this.rightNowAction);
+
+    const action_type = "input";
+    this.currentHoveredElement = e.target;
+    this.DOMElement.setElementData(this.currentHoveredElement, action_type);
+    console.log(this.DOMElement.getAllElements());
+
+    // 🎯 轉換成 Playwright Code
+    this.useractionDB.push(
+      ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", "")
+    );
+
+    this.generator.generate(
+      this.useractionDB[this.rightNowAction],
+      this.playwrightCommand,
+      this.rightNowAction
+    );
+
+    const generatedCode = this.playwrightCommand.codeGetter();
+    console.log("Playwright Command:", generatedCode);
+    console.log("useractionDB:", this.useractionDB);
+
+    // 🚀 傳送 Playwright Code 到背景頁面
+    chrome.runtime.sendMessage({
+      type: "display_code",
+      code: generatedCode,
     });
+
+    // 🔄 通知 iframe action 位置變更
+    this.iframeWindow.postMessage(
+      { type: "actionPosChanged", actionPos: this.rightNowAction },
+      "*"
+    );
+  }, 500);
+});
+
+/*
+
     document.addEventListener("input", (e) => {
       clearTimeout(this.timer);
       this.timer = setTimeout(() => {
@@ -170,7 +273,7 @@ export class OuterEventListener {
         this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
       }, 500); // 0.5 秒內沒再輸入視為完成
     });
-
+*/
     /*document.addEventListener("keydown", (e) => {  
       this.typedText = "";//先清空之前存的
       if(e.key.length === 1){

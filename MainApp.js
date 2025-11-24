@@ -43,7 +43,8 @@ export class MainApp {
   }
   init_codeSetter(){
     const iframesId = this.allwindows.getIframesId();
-    const codeline = `const iframe = await page.frameLocator('iframe#${iframesId}');`;
+    const codeline = `const iframe = page.frameLocator('iframe#${iframesId}');`;
+    
     this.command.codeWindowsSetter(codeline);
   }
 }
