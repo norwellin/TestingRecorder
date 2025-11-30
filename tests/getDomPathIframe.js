@@ -14,7 +14,7 @@ iframeWindows.document.addEventListener('mousedown', (e) => {
   const selector = select(e.target, {
     root: iframeDoc,
     ignore: {
-      tag: "id"
+      id: true
     }
   });
 

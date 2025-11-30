@@ -1121,13 +1121,13 @@
       this.iframeWindow = iframeWindow;
       this.iframeDoc = iframeWindow.document;
       this.DIALOG_SELECTORS = DIALOG_SELECTORS;
-      this.priSize = 3;
+      this.priSize = 4;
       this.priority = {
         //要新增方法改這裡就可以
-        3: "ByRole",
-        0: "ByTitle",
-        1: "ByText",
-        2: "ByDomPath",
+        0: "ByRole",
+        1: "ByTitle",
+        2: "ByText",
+        3: "ByDomPath",
         4: "ByPlaceholder",
         5: "ByAltText",
         6: "ByLabel"
@@ -1656,6 +1656,7 @@
       let targetpath = null;
       let inputText = "default";
       let inputKey = "default";
+      let selectValue = "default";
       sourcepath = this.domService.getOpenSourcePath(action.getSourceElement(), action.getSourceWindow());
       if (action.type === "dragANDdrop") {
         targetpath = this.domService.getOpenSourcePath(action.getTargetElement(), action.getTargetWindow());
@@ -1667,6 +1668,9 @@
       }
       if (action.type === "keyboard") {
         inputKey = action.getKeyboard();
+      }
+      if (action.type === "change") {
+        selectValue = action.getSourceElement().value;
       }
       console.log("inside generate: ", this.userActionDB, rightNowAction);
       let sourceWindow = this.userActionDB[rightNowAction].getSourceWindow();
@@ -1687,6 +1691,26 @@
         playwrightCommand.codeSetter(`await page.locator('${sourcepath}').fill(${this.typedText});`);
       } else if (action.getActionType() === "keyboard") {
         this.keyboardSetter(playwrightCommand, inputKey);
+      } else if (action.getActionType() === "change") {
+        console.log("change: sourcepath, ", sourcepath, "select value: ", selectValue);
+        this.changeSetter(playwrightCommand, sourcepath, selectValue);
+      }
+    }
+    changeSetter(playwrightCommand, sourcepath, selectedValue) {
+      let priMin = -1;
+      for (let i = 0; i < this.domService.priSize; i++) {
+        if (sourcepath[i]) {
+          priMin = i;
+          break;
+        }
+      }
+      console.log("priMin: ", priMin);
+      let funName = sourcepath[priMin].funName;
+      let obj = sourcepath[priMin].obj;
+      console.log("funName: ", funName, "obj", obj);
+      if (funName === "ByDomPath") {
+        let code = `await page.selectOption('${obj.csspath}', '${selectedValue}');`;
+        playwrightCommand.codeSetter(code);
       }
     }
     keyboardSetter(playwrightCommand, inputKey) {
@@ -1799,7 +1823,7 @@
           case "ByTitle":
             return `${windowVar}.getByTitle("${obj.title}", {exact: true})`;
           case "ByText":
-            return `${windowVar}.getByText("${obj.text}")`;
+            return `${windowVar}.getByText("${obj.text}", { exact: true })`;
           case "ByDomPath":
             return `${windowVar}.locator('${obj.csspath}')`;
           default:
@@ -1881,6 +1905,8 @@
       this.targetMethod = null;
       this.targetData = null;
       this.keyboard = null;
+      this.selectedText = null;
+      this.selectedValue = null;
     }
     setKeyboard(key) {
       this.keyboard = key;
@@ -1912,6 +1938,12 @@
     setTargetData(targetData) {
       this.targetData = targetData;
     }
+    setSelectedText(text) {
+      this.selectedText = text;
+    }
+    setSelectedValue(value) {
+      this.selectedValue = value;
+    }
     getActionType() {
       return this.type;
     }
@@ -1941,6 +1973,12 @@
     }
     getKeyboard() {
       return this.keyboard;
+    }
+    getSelectedText() {
+      return this.selectedText;
+    }
+    getSelectedValue() {
+      return this.selectedValue;
     }
   };
 
@@ -2279,6 +2317,36 @@
           this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
         }
       });
+      document.addEventListener("change", (e) => {
+        if (e.target.tagName !== "SELECT") return;
+        const action_type = "change";
+        let select2 = e.target.closest("select");
+        console.log("inside change!");
+        if (select2) {
+          console.log("inside change 1!");
+          let domTest = this.domParserService.getOpenSourcePath(e.target, "page");
+          console.log("checked test: ", domTest);
+          this.rightNowAction = this.rightNowAction + 1;
+          console.log("window - rightNowAction(change): ", this.rightNowAction);
+          this.DOMElement.setElementData(e.target, "change");
+          console.log(this.DOMElement.getAllElements());
+          this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
+          this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
+          console.log("Playwright Command:", this.playwrightCommand.codeGetter());
+          console.log("useractionDB: ", this.useractionDB);
+          const generatedCode = this.playwrightCommand.codeGetter();
+          console.log("Playwright Command:", generatedCode);
+          chrome.runtime.sendMessage({
+            type: "display_code",
+            code: generatedCode
+          });
+          chrome.runtime.sendMessage({
+            type: "display_useraction",
+            action: this.useractionDB
+          });
+          this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+        }
+      }, true);
       document.addEventListener("input", (e) => {
         const tag = e.target.tagName.toLowerCase();
         const type = e.target.getAttribute("type");

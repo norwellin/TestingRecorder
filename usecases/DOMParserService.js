@@ -10,12 +10,12 @@ export class DOMParserService {
 
     this.DIALOG_SELECTORS = ds;
 
-    this.priSize = 3;
+    this.priSize = 4;
     this.priority = { //要新增方法改這裡就可以
-      3: "ByRole",
-      0: "ByTitle",
-      1: "ByText",
-      2: "ByDomPath",
+      0: "ByRole",
+      1: "ByTitle",
+      2: "ByText",
+      3: "ByDomPath",
       4: "ByPlaceholder",
       5: "ByAltText",
       6: "ByLabel"

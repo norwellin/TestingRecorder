@@ -18,7 +18,7 @@ export class PlaywrightCodeGenerator {
     let targetpath = null;
     let inputText = "default";
     let inputKey = "default";
-
+    let selectValue = "default";
     //if (action.type != "keyboard")
 
     sourcepath = this.domService.getOpenSourcePath(action.getSourceElement(), action.getSourceWindow()); //取得所有方法的值
@@ -33,6 +33,9 @@ export class PlaywrightCodeGenerator {
     }
     if(action.type === "keyboard"){
       inputKey = action.getKeyboard();
+    }
+    if(action.type === "change"){
+      selectValue = action.getSourceElement().value;
     }
     //取得來源window (iframe || main)
     console.log("inside generate: ", this.userActionDB, rightNowAction);
@@ -63,8 +66,30 @@ export class PlaywrightCodeGenerator {
     else if (action.getActionType() === 'keyboard'){
       this.keyboardSetter(playwrightCommand, inputKey);
     }
+    else if (action.getActionType() === "change"){
+      console.log("change: sourcepath, ",sourcepath, "select value: ",selectValue);
+      this.changeSetter(playwrightCommand, sourcepath, selectValue);
+    }
   }
 
+  changeSetter(playwrightCommand, sourcepath, selectedValue){
+    let priMin = -1;
+    for (let i = 0; i < this.domService.priSize; i++) {
+      if (sourcepath[i]) {
+        priMin = i;
+        break;
+      }
+    }
+    console.log("priMin: ", priMin);
+    let funName = sourcepath[priMin].funName;
+    let obj = sourcepath[priMin].obj;
+    console.log("funName: ", funName, "obj", obj);
+
+    if(funName === "ByDomPath"){
+      let code = `await page.selectOption('${obj.csspath}', '${selectedValue}');`;
+      playwrightCommand.codeSetter(code);
+    }
+  }
   keyboardSetter(playwrightCommand, inputKey){    
     if (inputKey === "Backspace"){
       let code = `await page.keyboard.press('Backspace');`;
@@ -199,7 +224,7 @@ export class PlaywrightCodeGenerator {
         case "ByTitle":
           return `${windowVar}.getByTitle("${obj.title}", {exact: true})`;
         case "ByText":
-          return `${windowVar}.getByText("${obj.text}")`;
+          return `${windowVar}.getByText("${obj.text}", { exact: true })`;
           case "ByDomPath":
           return `${windowVar}.locator('${obj.csspath}')`;
         default:

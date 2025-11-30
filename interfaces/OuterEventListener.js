@@ -188,6 +188,51 @@ export class OuterEventListener {
       this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
   }
 });
+
+
+//下拉式選單偵測
+document.addEventListener("change", (e) => {
+  if (e.target.tagName !== "SELECT") return;
+  //新的串接方法 setting basic variable
+ 
+      const action_type = 'change';
+      //this.currentHoveredElement = e.target;
+      let select = e.target.closest('select');
+      console.log("inside change!");
+      if(select){
+        console.log("inside change 1!");
+        let domTest = this.domParserService.getOpenSourcePath(e.target, "page");
+        console.log("checked test: ",domTest);
+        this.rightNowAction = this.rightNowAction + 1;
+  console.log("window - rightNowAction(change): ", this.rightNowAction);
+      this.DOMElement.setElementData(e.target, 'change');
+      console.log(this.DOMElement.getAllElements());
+
+      //在這裡處理轉換成Playwright Code Logic
+      this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
+   //this.useractionDB[this.rightNowAction].setSelectedValue = select.value;
+      
+      this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
+      console.log('Playwright Command:', this.playwrightCommand.codeGetter());
+      console.log('useractionDB: ', this.useractionDB);
+      // 傳送Playwright Code到背景頁面
+      const generatedCode = this.playwrightCommand.codeGetter();
+      console.log("Playwright Command:", generatedCode);
+      chrome.runtime.sendMessage({
+        type: "display_code",
+        code: generatedCode
+      });
+      chrome.runtime.sendMessage({
+        type: "display_useraction",
+        action: this.useractionDB
+      });
+
+      //每次變更rightnowAction都要給對應的class傳訊息
+      this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+}
+  // 你可以把 pwCode 傳回後端 / UI 顯示
+},true);
+
 document.addEventListener("input", (e) => {
   const tag = e.target.tagName.toLowerCase();
   const type = e.target.getAttribute("type");

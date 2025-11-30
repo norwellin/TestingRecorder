@@ -10,6 +10,9 @@ export class UserAction {
     this.targetMethod = null;
     this.targetData = null;
     this.keyboard = null; //only use for keyboard event - type: text
+    this.selectedText = null;// only use for drop-down menu - type: text
+    this.selectedValue = null;
+
   }
   setKeyboard(key){
     this.keyboard = key;
@@ -41,6 +44,12 @@ export class UserAction {
   setTargetData(targetData){
     this.targetData = targetData;
   }
+  setSelectedText(text){
+    this.selectedText = text; 
+  }
+  setSelectedValue(value){
+    this.selectedValue = value;
+  }
   getActionType() {
     return this.type;
   }
@@ -70,5 +79,11 @@ export class UserAction {
   }
   getKeyboard(){
     return this.keyboard;
+  }
+  getSelectedText(){
+    return this.selectedText;
+  }
+  getSelectedValue(){
+    return this.selectedValue;
   }
 }
