@@ -2,6 +2,7 @@
 import { DOMElement } from './../entities/DOMElement.js';
 import { DIALOG_SELECTORS as ds} from './../config.js';
 import { optimize, select } from 'optimal-select' // global: 'OptimalSelect'
+import cssPath from 'css-path';
 
 export class DOMParserService {
   constructor(iframeWindow) {
@@ -50,16 +51,29 @@ export class DOMParserService {
       ByDomPath: true
     };
   }
-  getOpenSourcePath(e, sourceWin){
+  getOpenSourcePath(e, sourceWin, type){
     // 使用 Optimal-Select 嚴格模式參數
     //iframe部參考id
     this.cleanInfo();
     this.setInfo(e);
     this.clearPlaywrightObj();
     console.log("All Attribute Info: ", this.allAttributeInfo);
+        let isUniqueObj = {
+      ByTitle: false,
+      ByDomPath: false,
+      ByText: false
+    };
 
+    if (type === "change"){ //<select>用別的處理
+      const DOMPath = require('chrome-dompath');
 
-    let doc = document;
+      let selector = DOMPath.fullQualifiedSelector(e, true);
+      isUniqueObj.ByDomPath = true;
+      this.playwrightObj.ByDomPath.csspath = selector;
+      console.log("Generated unique selector_change:",selector);
+    }
+    else{
+        let doc = document;
     let myBlacklist = ['style', 'data-reactid'];
     let myPri = ['id','div'];
     let myIgnore = {
@@ -82,11 +96,6 @@ export class DOMParserService {
     }
     };
   }
-    let isUniqueObj = {
-      ByTitle: false,
-      ByDomPath: false,
-      ByText: false
-    };
 
 let selector = select(e, {
   root: doc,
@@ -97,6 +106,8 @@ let selector = select(e, {
 isUniqueObj.ByDomPath = true;
 this.playwrightObj.ByDomPath.csspath = selector;
   console.log("Generated unique selector:", selector);
+    }
+    
 //找bytitle
     if (this.checkUniqueByTitle(this.allAttributeInfo.title)) {
       this.playwrightObj.ByTitle.title = this.allAttributeInfo.title;
@@ -639,16 +650,22 @@ getPlaywrightRole(el, sourceWin) {
 
   }
   setInfo(el) {
-    this.allAttributeInfo.tagName = el.tagName || null;
-    this.allAttributeInfo.id = el.id || null;
-    this.allAttributeInfo.className = el.className || null;
-    this.allAttributeInfo.title = el.title || null;
-    this.allAttributeInfo.text = el.innerText.trim() || null;
-    this.allAttributeInfo.placeholder = el.placeholder || null;
-    this.allAttributeInfo.alt = el.alt || null;
-    this.allAttributeInfo.ariaLabel = el.getAttribute('aria-label') || null;
-    this.allAttributeInfo.role = el.getAttribute('role') || null;
-  }
+  this.allAttributeInfo.tagName = el.tagName || null;
+  this.allAttributeInfo.id = el.id || null;
+  this.allAttributeInfo.className = el.className || null;
+  this.allAttributeInfo.title = el.title || null;
+
+  // innerText 安全處理
+  const text = el.innerText;
+  this.allAttributeInfo.text = (typeof text === "string") ? text.trim() : null;
+
+  this.allAttributeInfo.placeholder = el.placeholder || null;
+  this.allAttributeInfo.alt = el.alt || null;
+
+  this.allAttributeInfo.ariaLabel = el.getAttribute?.('aria-label') || null;
+  this.allAttributeInfo.role = el.getAttribute?.('role') || null;
+}
+
   cleanInfo() {
     this.allAttributeInfo.tagName = null;
     this.allAttributeInfo.id = null;

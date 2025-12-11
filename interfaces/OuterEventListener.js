@@ -5,6 +5,28 @@ import { PlaywrightCommand } from '../entities/PlaywrightCommand.js';
 import { PlaywrightCodeGenerator } from '../usecases/PlaywrightCodeGenerator';
 import { ActionInterpreter } from '../usecases/ActionInterpreter.js';
 
+// ===============================
+// 🔧 MonkeyPatch addEventListener
+// ===============================
+(function () {
+  const originalAdd = EventTarget.prototype.addEventListener;
+
+  EventTarget.prototype.addEventListener = function(type, listener, options) {
+    if (type === "input") {
+      // 強制 capture，抓得到 Shadow DOM input
+      if (!options || typeof options === "boolean") {
+        options = { capture: true };
+      } else if (typeof options === "object") {
+        options.capture = true;
+      }
+
+      console.log("[MonkeyPatch] Patched input listener for:", this);
+    }
+
+    return originalAdd.call(this, type, listener, options);
+  };
+})();
+
 export class OuterEventListener {
   constructor(iframeWindow, domParserService, command, userActionDB) {
     this.iframeWindow = iframeWindow;
@@ -44,14 +66,36 @@ export class OuterEventListener {
       console.log("outer mousemove: ", e.target);
     });
     */
+
+
     document.addEventListener("click", (e) => {
+       // ⛔ 不偵測 checkbox
+      if (
+  e.target.matches("input[type='checkbox'], select") ||
+  e.target.closest("input[type='checkbox'], select")
+) {
+  return;
+}
+
+
+      // ⛔ 不偵測 select（你原本的）
+      if (e.target.tagName === "SELECT") return;
       console.log("Here is a click event! e: ", e.target);
+
+      const clickable = e.target.closest(`
+  button,
+  a,
+  [role="button"],
+  [onclick],
+  i,           /* 包含 <i> */
+  svg           /* 或直接 svg */
+`) || e.target;
 
       //新的串接方法 setting basic variable
       this.rightNowAction = this.rightNowAction + 1;
       console.log("window - rightNowAction(click): ", this.rightNowAction);
       const action_type = 'click';
-      this.currentHoveredElement = e.target;
+      this.currentHoveredElement = clickable;
       this.DOMElement.setElementData(this.currentHoveredElement, 'click');
       console.log(this.DOMElement.getAllElements());
 
@@ -77,24 +121,9 @@ export class OuterEventListener {
       this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
     },true);
 
-    document.addEventListener("drop", (e) => {
+    window.addEventListener("drop", (e) => {
       //identify the source
-
-      chrome.storage.local.get(["sourceOfDD"], (result) => {
-        const sourceDD = result.sourceOfDD;
-      });
-      try {
-        //1. from iframe
-        if (sourceDD == "iframe") {
-          console.log("drag & drop: iframe -> main");
-        }
-        //2. from mainwindow
-        else if (sourceDD == "window") {
-          console.log("drag & drop: main -> main");
-        }
-      } catch (error) {
-
-      }
+      console.log("window drop!");
 
     });
 
@@ -192,14 +221,21 @@ export class OuterEventListener {
 
 //下拉式選單偵測
 document.addEventListener("change", (e) => {
-  if (e.target.tagName !== "SELECT") return;
-  //新的串接方法 setting basic variable
- 
-      const action_type = 'change';
+  const tag = e.target.tagName;
+  const type = e.target.type;
+
+  // 只處理 SELECT 或 CHECKBOX
+  const isSelect = tag === "SELECT";
+  const isCheckbox = tag === "INPUT" && type === "checkbox";
+
+  if (!isSelect || isCheckbox) return;
+  let action_type;
+      if(isSelect){
+          action_type = 'change';
       //this.currentHoveredElement = e.target;
       let select = e.target.closest('select');
       console.log("inside change!");
-      if(select){
+    
         console.log("inside change 1!");
         let domTest = this.domParserService.getOpenSourcePath(e.target, "page");
         console.log("checked test: ",domTest);
@@ -207,6 +243,21 @@ document.addEventListener("change", (e) => {
   console.log("window - rightNowAction(change): ", this.rightNowAction);
       this.DOMElement.setElementData(e.target, 'change');
       console.log(this.DOMElement.getAllElements());
+      }
+      else if(isCheckbox){
+      action_type = 'checkBox';
+      //this.currentHoveredElement = e.target;
+      //let select = e.target.closest('select');
+      console.log("inside check box!");
+    
+        console.log("inside check box 1!");
+        let domTest = this.domParserService.getOpenSourcePath(e.target, "page");
+        console.log("checked test: ",domTest);
+        this.rightNowAction = this.rightNowAction + 1;
+  console.log("window - rightNowAction(check box): ", this.rightNowAction);
+      this.DOMElement.setElementData(e.target, 'checkBox');
+      console.log(this.DOMElement.getAllElements());
+      }
 
       //在這裡處理轉換成Playwright Code Logic
       this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
@@ -229,7 +280,7 @@ document.addEventListener("change", (e) => {
 
       //每次變更rightnowAction都要給對應的class傳訊息
       this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
-}
+
   // 你可以把 pwCode 傳回後端 / UI 顯示
 },true);
 
@@ -239,7 +290,7 @@ document.addEventListener("input", (e) => {
 
   // ✅ 僅允許文字輸入類型（input[type=text]、textarea、contenteditable）
   const isTextInput =
-    (tag === "input" && (!type || type === "text" || type === "search" || type === "email" || type === "password")) ||
+    (tag === "input" && (!type || type === "text" || type === "search" || type === "email" || type === "password" || type === "number")) ||
     tag === "textarea" ||
     e.target.isContentEditable;
 
@@ -286,7 +337,7 @@ document.addEventListener("input", (e) => {
       "*"
     );
   }, 500);
-});
+},true);
 
 /*
 

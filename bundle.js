@@ -1020,6 +1020,352 @@
     }
   });
 
+  // node_modules/trim/index.js
+  var require_trim = __commonJS({
+    "node_modules/trim/index.js"(exports, module) {
+      exports = module.exports = trim;
+      function trim(str) {
+        return str.replace(/^\s*|\s*$/g, "");
+      }
+      exports.left = function(str) {
+        return str.replace(/^\s*/, "");
+      };
+      exports.right = function(str) {
+        return str.replace(/\s*$/, "");
+      };
+    }
+  });
+
+  // node_modules/css-path/css-path.js
+  var require_css_path = __commonJS({
+    "node_modules/css-path/css-path.js"(exports, module) {
+      var trim = require_trim();
+      var classSelector = function(className) {
+        var selectors = className.split(/\s/g), array = [];
+        for (var i = 0; i < selectors.length; ++i) {
+          if (selectors[i].length > 0) {
+            array.push("." + selectors[i]);
+          }
+        }
+        return array.join("");
+      };
+      var nthChild = function(elm) {
+        var childNumber = 0, childNodes = elm.parentNode.childNodes, index = 0;
+        for (; index < childNodes.length; ++index) {
+          if (childNodes[index].nodeType === 1)
+            ++childNumber;
+          if (childNodes[index] === elm)
+            return childNumber;
+        }
+      };
+      var path = function(elm, rootNode, list) {
+        var tag = elm.tagName.toLowerCase(), selector = [tag], className = elm.getAttribute("class"), id = elm.getAttribute("id");
+        if (id) {
+          list.unshift(tag + "#" + trim(id));
+          return list;
+        }
+        if (className)
+          selector.push(classSelector(className));
+        if (tag !== "html" && tag !== "body" && elm.parentNode) {
+          selector.push(":nth-child(" + nthChild(elm) + ")");
+        }
+        list.unshift(selector.join(""));
+        if (elm.parentNode && elm.parentNode !== rootNode && elm.parentNode.tagName) {
+          path(elm.parentNode, rootNode, list);
+        }
+        return list;
+      };
+      module.exports = function(elm, rootNode) {
+        return path(elm, rootNode, []).join(" > ");
+      };
+    }
+  });
+
+  // (disabled):node_modules/css.escape/css.escape.js
+  var require_css_escape = __commonJS({
+    "(disabled):node_modules/css.escape/css.escape.js"() {
+    }
+  });
+
+  // node_modules/chrome-dompath/lib/DOMNode.js
+  var require_DOMNode = __commonJS({
+    "node_modules/chrome-dompath/lib/DOMNode.js"(exports, module) {
+      module.exports.nodeNameInCorrectCase = function nodeNameInCorrectCase(node) {
+        const shadowRootType = node.shadowRoot && node.shadowRoot.mode;
+        if (shadowRootType)
+          return "#shadow-root (" + shadowRootType + ")";
+        if (!node.localName)
+          return node.nodeName;
+        if (node.localName.length !== node.nodeName.length)
+          return node.nodeName;
+        return node.localName;
+      };
+      module.exports.shadowRootType = function(node) {
+        const ancestorShadowRoot = node.ancestorShadowRoot();
+        return ancestorShadowRoot ? ancestorShadowRoot.mode : null;
+      };
+      module.exports.NodeType = {
+        ELEMENT_NODE: 1,
+        ATTRIBUTE_NODE: 2,
+        TEXT_NODE: 3,
+        CDATA_SECTION_NODE: 4,
+        PROCESSING_INSTRUCTION_NODE: 7,
+        COMMENT_NODE: 8,
+        DOCUMENT_NODE: 9
+      };
+      module.exports.ShadowRootTypes = {
+        UserAgent: "user-agent",
+        Open: "open",
+        Closed: "closed"
+      };
+    }
+  });
+
+  // node_modules/chrome-dompath/lib/DOMPath.js
+  var require_DOMPath = __commonJS({
+    "node_modules/chrome-dompath/lib/DOMPath.js"(exports, module) {
+      require_css_escape();
+      var { ShadowRootTypes, nodeNameInCorrectCase, NodeType } = require_DOMNode();
+      var Elements = {};
+      Elements.DOMPath = {};
+      Elements.DOMPath.fullQualifiedSelector = function(node, justSelector) {
+        try {
+          if (node.nodeType !== NodeType.ELEMENT_NODE)
+            return node.localName || node.nodeName.toLowerCase();
+          return Elements.DOMPath.cssPath(node, justSelector);
+        } catch (e) {
+          return null;
+        }
+      };
+      Elements.DOMPath.cssPath = function(node, optimized) {
+        if (node.nodeType !== NodeType.ELEMENT_NODE)
+          return "";
+        const steps = [];
+        let contextNode = node;
+        while (contextNode) {
+          const step = Elements.DOMPath._cssPathStep(contextNode, !!optimized, contextNode === node);
+          if (!step)
+            break;
+          steps.push(step);
+          if (step.optimized)
+            break;
+          contextNode = contextNode.parentNode;
+        }
+        steps.reverse();
+        return steps.join(" > ");
+      };
+      Elements.DOMPath.canGetJSPath = function(node) {
+        let wp = node;
+        while (wp) {
+          if (wp.shadowRoot && wp.shadowRoot.mode !== ShadowRootTypes.Open)
+            return false;
+          wp = wp.shadowRoot && wp.shadowRoot.host;
+        }
+        return true;
+      };
+      Elements.DOMPath.jsPath = function(node, optimized) {
+        if (node.nodeType !== NodeType.ELEMENT_NODE)
+          return "";
+        const path = [];
+        let wp = node;
+        while (wp) {
+          path.push(Elements.DOMPath.cssPath(wp, optimized));
+          wp = wp.shadowRoot && wp.shadowRoot.host;
+        }
+        path.reverse();
+        let result = "";
+        for (let i = 0; i < path.length; ++i) {
+          const string = JSON.stringify(path[i]);
+          if (i)
+            result += `.shadowRoot.querySelector(${string})`;
+          else
+            result += `document.querySelector(${string})`;
+        }
+        return result;
+      };
+      Elements.DOMPath._cssPathStep = function(node, optimized, isTargetNode) {
+        if (node.nodeType !== NodeType.ELEMENT_NODE)
+          return null;
+        const id = node.getAttribute("id");
+        if (optimized) {
+          if (id)
+            return new Elements.DOMPath.Step(idSelector(id), true);
+          const nodeNameLower = node.nodeName.toLowerCase();
+          if (nodeNameLower === "body" || nodeNameLower === "head" || nodeNameLower === "html")
+            return new Elements.DOMPath.Step(nodeNameInCorrectCase(node), true);
+        }
+        const nodeName = nodeNameInCorrectCase(node);
+        if (id)
+          return new Elements.DOMPath.Step(nodeName + idSelector(id), true);
+        const parent = node.parentNode;
+        if (!parent || parent.nodeType === NodeType.DOCUMENT_NODE)
+          return new Elements.DOMPath.Step(nodeName, true);
+        function prefixedElementClassNames(node2) {
+          const classAttribute = node2.getAttribute("class");
+          if (!classAttribute)
+            return [];
+          return classAttribute.split(/\s+/g).filter(Boolean).map(function(name) {
+            return "$" + name;
+          });
+        }
+        function idSelector(id2) {
+          return "#" + CSS.escape(id2);
+        }
+        const prefixedOwnClassNamesArray = prefixedElementClassNames(node);
+        let needsClassNames = false;
+        let needsNthChild = false;
+        let ownIndex = -1;
+        let elementIndex = -1;
+        const siblings = parent.children;
+        for (let i = 0; (ownIndex === -1 || !needsNthChild) && i < siblings.length; ++i) {
+          const sibling = siblings[i];
+          if (sibling.nodeType !== NodeType.ELEMENT_NODE)
+            continue;
+          elementIndex += 1;
+          if (sibling === node) {
+            ownIndex = elementIndex;
+            continue;
+          }
+          if (needsNthChild)
+            continue;
+          if (nodeNameInCorrectCase(sibling) !== nodeName)
+            continue;
+          needsClassNames = true;
+          const ownClassNames = new Set(prefixedOwnClassNamesArray);
+          if (!ownClassNames.size) {
+            needsNthChild = true;
+            continue;
+          }
+          const siblingClassNamesArray = prefixedElementClassNames(sibling);
+          for (let j = 0; j < siblingClassNamesArray.length; ++j) {
+            const siblingClass = siblingClassNamesArray[j];
+            if (!ownClassNames.has(siblingClass))
+              continue;
+            ownClassNames.delete(siblingClass);
+            if (!ownClassNames.size) {
+              needsNthChild = true;
+              break;
+            }
+          }
+        }
+        let result = nodeName;
+        if (isTargetNode && nodeName.toLowerCase() === "input" && node.getAttribute("type") && !node.getAttribute("id") && !node.getAttribute("class"))
+          result += "[type=" + CSS.escape(node.getAttribute("type")) + "]";
+        if (needsNthChild) {
+          result += ":nth-child(" + (ownIndex + 1) + ")";
+        } else if (needsClassNames) {
+          for (const prefixedName of prefixedOwnClassNamesArray)
+            result += "." + CSS.escape(prefixedName.slice(1));
+        }
+        return new Elements.DOMPath.Step(result, false);
+      };
+      Elements.DOMPath.xPath = function(node, optimized) {
+        if (node.nodeType === NodeType.DOCUMENT_NODE)
+          return "/";
+        const steps = [];
+        let contextNode = node;
+        while (contextNode) {
+          const step = Elements.DOMPath._xPathValue(contextNode, optimized);
+          if (!step)
+            break;
+          steps.push(step);
+          if (step.optimized)
+            break;
+          contextNode = contextNode.parentNode;
+        }
+        steps.reverse();
+        return (steps.length && steps[0].optimized ? "" : "/") + steps.join("/");
+      };
+      Elements.DOMPath._xPathValue = function(node, optimized) {
+        let ownValue;
+        const ownIndex = Elements.DOMPath._xPathIndex(node);
+        if (ownIndex === -1)
+          return null;
+        switch (node.nodeType) {
+          case NodeType.ELEMENT_NODE:
+            if (optimized && node.getAttribute("id"))
+              return new Elements.DOMPath.Step('//*[@id="' + node.getAttribute("id") + '"]', true);
+            ownValue = node.localName;
+            break;
+          case NodeType.ATTRIBUTE_NODE:
+            ownValue = "@" + node.nodeName;
+            break;
+          case NodeType.TEXT_NODE:
+          case NodeType.CDATA_SECTION_NODE:
+            ownValue = "text()";
+            break;
+          case NodeType.PROCESSING_INSTRUCTION_NODE:
+            ownValue = "processing-instruction()";
+            break;
+          case NodeType.COMMENT_NODE:
+            ownValue = "comment()";
+            break;
+          case NodeType.DOCUMENT_NODE:
+            ownValue = "";
+            break;
+          default:
+            ownValue = "";
+            break;
+        }
+        if (ownIndex > 0)
+          ownValue += "[" + ownIndex + "]";
+        return new Elements.DOMPath.Step(ownValue, node.nodeType === NodeType.DOCUMENT_NODE);
+      };
+      Elements.DOMPath._xPathIndex = function(node) {
+        function areNodesSimilar(left, right) {
+          if (left === right)
+            return true;
+          if (left.nodeType === NodeType.ELEMENT_NODE && right.nodeType === NodeType.ELEMENT_NODE)
+            return left.localName === right.localName;
+          if (left.nodeType === right.nodeType)
+            return true;
+          const leftType = left.nodeType === NodeType.CDATA_SECTION_NODE ? NodeType.TEXT_NODE : left.nodeType;
+          const rightType = right.nodeType === NodeType.CDATA_SECTION_NODE ? NodeType.TEXT_NODE : right.nodeType;
+          return leftType === rightType;
+        }
+        const siblings = node.parentNode ? node.parentNode.children : null;
+        if (!siblings)
+          return 0;
+        let hasSameNamedElements;
+        for (let i = 0; i < siblings.length; ++i) {
+          if (areNodesSimilar(node, siblings[i]) && siblings[i] !== node) {
+            hasSameNamedElements = true;
+            break;
+          }
+        }
+        if (!hasSameNamedElements)
+          return 0;
+        let ownIndex = 1;
+        for (let i = 0; i < siblings.length; ++i) {
+          if (areNodesSimilar(node, siblings[i])) {
+            if (siblings[i] === node)
+              return ownIndex;
+            ++ownIndex;
+          }
+        }
+        return -1;
+      };
+      Elements.DOMPath.Step = class {
+        /**
+         * @param {string} value
+         * @param {boolean} optimized
+         */
+        constructor(value, optimized) {
+          this.value = value;
+          this.optimized = optimized || false;
+        }
+        /**
+         * @override
+         * @return {string}
+         */
+        toString() {
+          return this.value;
+        }
+      };
+      module.exports = Elements.DOMPath;
+    }
+  });
+
   // entities/DOMElement.js
   var DOMElement = class {
     constructor() {
@@ -1116,6 +1462,7 @@
 
   // usecases/DOMParserService.js
   var import_optimal_select = __toESM(require_lib());
+  var import_css_path = __toESM(require_css_path());
   var DOMParserService = class {
     constructor(iframeWindow) {
       this.iframeWindow = iframeWindow;
@@ -1164,45 +1511,53 @@
         ByDomPath: true
       };
     }
-    getOpenSourcePath(e, sourceWin) {
+    getOpenSourcePath(e, sourceWin, type) {
       this.cleanInfo();
       this.setInfo(e);
       this.clearPlaywrightObj();
       console.log("All Attribute Info: ", this.allAttributeInfo);
-      let doc = document;
-      let myBlacklist = ["style", "data-reactid"];
-      let myPri = ["id", "div"];
-      let myIgnore = {
-        id: true,
-        attribute(name, value, defaultPredicate) {
-          return /data-*/.test(name) || defaultPredicate(name, value);
-        }
-      };
-      if (sourceWin === "iframe") {
-        console.log("inside iframe!!!");
-        doc = this.iframeDoc;
-        myBlacklist = ["style", "data-reactid", "id"];
-        myPri = ["div"];
-        myIgnore = {
-          id: true,
-          attribute(name, value, defaultPredicate) {
-            return /data-*/.test(name) || defaultPredicate(name, value);
-          }
-        };
-      }
       let isUniqueObj = {
         ByTitle: false,
         ByDomPath: false,
         ByText: false
       };
-      let selector = (0, import_optimal_select.select)(e, {
-        root: doc,
-        ignore: myIgnore,
-        priority: myPri
-      });
-      isUniqueObj.ByDomPath = true;
-      this.playwrightObj.ByDomPath.csspath = selector;
-      console.log("Generated unique selector:", selector);
+      if (type === "change") {
+        const DOMPath = require_DOMPath();
+        let selector = DOMPath.fullQualifiedSelector(e, true);
+        isUniqueObj.ByDomPath = true;
+        this.playwrightObj.ByDomPath.csspath = selector;
+        console.log("Generated unique selector_change:", selector);
+      } else {
+        let doc = document;
+        let myBlacklist = ["style", "data-reactid"];
+        let myPri = ["id", "div"];
+        let myIgnore = {
+          id: true,
+          attribute(name, value, defaultPredicate) {
+            return /data-*/.test(name) || defaultPredicate(name, value);
+          }
+        };
+        if (sourceWin === "iframe") {
+          console.log("inside iframe!!!");
+          doc = this.iframeDoc;
+          myBlacklist = ["style", "data-reactid", "id"];
+          myPri = ["div"];
+          myIgnore = {
+            id: true,
+            attribute(name, value, defaultPredicate) {
+              return /data-*/.test(name) || defaultPredicate(name, value);
+            }
+          };
+        }
+        let selector = (0, import_optimal_select.select)(e, {
+          root: doc,
+          ignore: myIgnore,
+          priority: myPri
+        });
+        isUniqueObj.ByDomPath = true;
+        this.playwrightObj.ByDomPath.csspath = selector;
+        console.log("Generated unique selector:", selector);
+      }
       if (this.checkUniqueByTitle(this.allAttributeInfo.title)) {
         this.playwrightObj.ByTitle.title = this.allAttributeInfo.title;
         isUniqueObj.ByTitle = true;
@@ -1605,11 +1960,12 @@
       this.allAttributeInfo.id = el.id || null;
       this.allAttributeInfo.className = el.className || null;
       this.allAttributeInfo.title = el.title || null;
-      this.allAttributeInfo.text = el.innerText.trim() || null;
+      const text = el.innerText;
+      this.allAttributeInfo.text = typeof text === "string" ? text.trim() : null;
       this.allAttributeInfo.placeholder = el.placeholder || null;
       this.allAttributeInfo.alt = el.alt || null;
-      this.allAttributeInfo.ariaLabel = el.getAttribute("aria-label") || null;
-      this.allAttributeInfo.role = el.getAttribute("role") || null;
+      this.allAttributeInfo.ariaLabel = el.getAttribute?.("aria-label") || null;
+      this.allAttributeInfo.role = el.getAttribute?.("role") || null;
     }
     cleanInfo() {
       this.allAttributeInfo.tagName = null;
@@ -1656,8 +2012,8 @@
       let targetpath = null;
       let inputText = "default";
       let inputKey = "default";
-      let selectValue = "default";
-      sourcepath = this.domService.getOpenSourcePath(action.getSourceElement(), action.getSourceWindow());
+      let selectLabel = "default";
+      sourcepath = this.domService.getOpenSourcePath(action.getSourceElement(), action.getSourceWindow(), action.type);
       if (action.type === "dragANDdrop") {
         targetpath = this.domService.getOpenSourcePath(action.getTargetElement(), action.getTargetWindow());
         console.log("inside generate: targetpath  ", targetpath);
@@ -1670,7 +2026,7 @@
         inputKey = action.getKeyboard();
       }
       if (action.type === "change") {
-        selectValue = action.getSourceElement().value;
+        selectLabel = action.getSourceElement().options[action.getSourceElement().selectedIndex].text;
       }
       console.log("inside generate: ", this.userActionDB, rightNowAction);
       let sourceWindow = this.userActionDB[rightNowAction].getSourceWindow();
@@ -1681,7 +2037,7 @@
       console.log("source path: ", sourcepath);
       if (action.getActionType() === "dragANDdrop") {
         this.dragAndDropCodeSetter(playwrightCommand, targetpath, sourcepath, sourceWindow, targetWindow);
-      } else if (action.getActionType() === "click") {
+      } else if (action.getActionType() === "click" || action.getActionType() === "checkBox") {
         this.clickSetter(playwrightCommand, sourcepath, sourceWindow);
       } else if (action.getActionType() === "dbclick") {
         this.doubleClickSetter(playwrightCommand, sourcepath, sourceWindow);
@@ -1692,8 +2048,7 @@
       } else if (action.getActionType() === "keyboard") {
         this.keyboardSetter(playwrightCommand, inputKey);
       } else if (action.getActionType() === "change") {
-        console.log("change: sourcepath, ", sourcepath, "select value: ", selectValue);
-        this.changeSetter(playwrightCommand, sourcepath, selectValue);
+        this.changeSetter(playwrightCommand, sourcepath, selectLabel);
       }
     }
     changeSetter(playwrightCommand, sourcepath, selectedValue) {
@@ -1709,7 +2064,7 @@
       let obj = sourcepath[priMin].obj;
       console.log("funName: ", funName, "obj", obj);
       if (funName === "ByDomPath") {
-        let code = `await page.selectOption('${obj.csspath}', '${selectedValue}');`;
+        let code = `await page.selectOption('${obj.csspath}', { label:'${selectedValue}'});`;
         playwrightCommand.codeSetter(code);
       }
     }
@@ -2198,6 +2553,20 @@
   };
 
   // interfaces/OuterEventListener.js
+  (function() {
+    const originalAdd = EventTarget.prototype.addEventListener;
+    EventTarget.prototype.addEventListener = function(type, listener, options) {
+      if (type === "input") {
+        if (!options || typeof options === "boolean") {
+          options = { capture: true };
+        } else if (typeof options === "object") {
+          options.capture = true;
+        }
+        console.log("[MonkeyPatch] Patched input listener for:", this);
+      }
+      return originalAdd.call(this, type, listener, options);
+    };
+  })();
   var OuterEventListener = class {
     constructor(iframeWindow, domParserService, command, userActionDB) {
       this.iframeWindow = iframeWindow;
@@ -2216,11 +2585,23 @@
     }
     init() {
       document.addEventListener("click", (e) => {
+        if (e.target.matches("input[type='checkbox'], select") || e.target.closest("input[type='checkbox'], select")) {
+          return;
+        }
+        if (e.target.tagName === "SELECT") return;
         console.log("Here is a click event! e: ", e.target);
+        const clickable = e.target.closest(`
+  button,
+  a,
+  [role="button"],
+  [onclick],
+  i,           /* \u5305\u542B <i> */
+  svg           /* \u6216\u76F4\u63A5 svg */
+`) || e.target;
         this.rightNowAction = this.rightNowAction + 1;
         console.log("window - rightNowAction(click): ", this.rightNowAction);
         const action_type = "click";
-        this.currentHoveredElement = e.target;
+        this.currentHoveredElement = clickable;
         this.DOMElement.setElementData(this.currentHoveredElement, "click");
         console.log(this.DOMElement.getAllElements());
         this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
@@ -2239,18 +2620,8 @@
         });
         this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
       }, true);
-      document.addEventListener("drop", (e) => {
-        chrome.storage.local.get(["sourceOfDD"], (result) => {
-          const sourceDD2 = result.sourceOfDD;
-        });
-        try {
-          if (sourceDD == "iframe") {
-            console.log("drag & drop: iframe -> main");
-          } else if (sourceDD == "window") {
-            console.log("drag & drop: main -> main");
-          }
-        } catch (error) {
-        }
+      window.addEventListener("drop", (e) => {
+        console.log("window drop!");
       });
       window.addEventListener("dragstart", (e) => {
         try {
@@ -2318,11 +2689,16 @@
         }
       });
       document.addEventListener("change", (e) => {
-        if (e.target.tagName !== "SELECT") return;
-        const action_type = "change";
-        let select2 = e.target.closest("select");
-        console.log("inside change!");
-        if (select2) {
+        const tag = e.target.tagName;
+        const type = e.target.type;
+        const isSelect = tag === "SELECT";
+        const isCheckbox = tag === "INPUT" && type === "checkbox";
+        if (!isSelect || isCheckbox) return;
+        let action_type;
+        if (isSelect) {
+          action_type = "change";
+          let select2 = e.target.closest("select");
+          console.log("inside change!");
           console.log("inside change 1!");
           let domTest = this.domParserService.getOpenSourcePath(e.target, "page");
           console.log("checked test: ", domTest);
@@ -2330,27 +2706,37 @@
           console.log("window - rightNowAction(change): ", this.rightNowAction);
           this.DOMElement.setElementData(e.target, "change");
           console.log(this.DOMElement.getAllElements());
-          this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
-          this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
-          console.log("Playwright Command:", this.playwrightCommand.codeGetter());
-          console.log("useractionDB: ", this.useractionDB);
-          const generatedCode = this.playwrightCommand.codeGetter();
-          console.log("Playwright Command:", generatedCode);
-          chrome.runtime.sendMessage({
-            type: "display_code",
-            code: generatedCode
-          });
-          chrome.runtime.sendMessage({
-            type: "display_useraction",
-            action: this.useractionDB
-          });
-          this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+        } else if (isCheckbox) {
+          action_type = "checkBox";
+          console.log("inside check box!");
+          console.log("inside check box 1!");
+          let domTest = this.domParserService.getOpenSourcePath(e.target, "page");
+          console.log("checked test: ", domTest);
+          this.rightNowAction = this.rightNowAction + 1;
+          console.log("window - rightNowAction(check box): ", this.rightNowAction);
+          this.DOMElement.setElementData(e.target, "checkBox");
+          console.log(this.DOMElement.getAllElements());
         }
+        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
+        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
+        console.log("Playwright Command:", this.playwrightCommand.codeGetter());
+        console.log("useractionDB: ", this.useractionDB);
+        const generatedCode = this.playwrightCommand.codeGetter();
+        console.log("Playwright Command:", generatedCode);
+        chrome.runtime.sendMessage({
+          type: "display_code",
+          code: generatedCode
+        });
+        chrome.runtime.sendMessage({
+          type: "display_useraction",
+          action: this.useractionDB
+        });
+        this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
       }, true);
       document.addEventListener("input", (e) => {
         const tag = e.target.tagName.toLowerCase();
         const type = e.target.getAttribute("type");
-        const isTextInput = tag === "input" && (!type || type === "text" || type === "search" || type === "email" || type === "password") || tag === "textarea" || e.target.isContentEditable;
+        const isTextInput = tag === "input" && (!type || type === "text" || type === "search" || type === "email" || type === "password" || type === "number") || tag === "textarea" || e.target.isContentEditable;
         if (!isTextInput) return;
         clearTimeout(this.timer);
         this.timer = setTimeout(() => {
@@ -2381,7 +2767,7 @@
             "*"
           );
         }, 500);
-      });
+      }, true);
       window.addEventListener("message", (e) => {
         const msg = e.data;
         console.log("window get msg: ", msg);

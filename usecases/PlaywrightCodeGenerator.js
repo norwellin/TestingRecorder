@@ -18,10 +18,11 @@ export class PlaywrightCodeGenerator {
     let targetpath = null;
     let inputText = "default";
     let inputKey = "default";
-    let selectValue = "default";
+    //let selectValue = "default";
+    let selectLabel = "default";
     //if (action.type != "keyboard")
 
-    sourcepath = this.domService.getOpenSourcePath(action.getSourceElement(), action.getSourceWindow()); //取得所有方法的值
+    sourcepath = this.domService.getOpenSourcePath(action.getSourceElement(), action.getSourceWindow(), action.type); //取得所有方法的值
 
     if (action.type === "dragANDdrop") {
       targetpath = this.domService.getOpenSourcePath(action.getTargetElement(), action.getTargetWindow());
@@ -35,7 +36,8 @@ export class PlaywrightCodeGenerator {
       inputKey = action.getKeyboard();
     }
     if(action.type === "change"){
-      selectValue = action.getSourceElement().value;
+      //selectValue = action.getSourceElement().value;
+      selectLabel = action.getSourceElement().options[action.getSourceElement().selectedIndex].text;
     }
     //取得來源window (iframe || main)
     console.log("inside generate: ", this.userActionDB, rightNowAction);
@@ -50,7 +52,7 @@ export class PlaywrightCodeGenerator {
     if (action.getActionType() === 'dragANDdrop') {
       this.dragAndDropCodeSetter(playwrightCommand, targetpath, sourcepath, sourceWindow, targetWindow);
     }
-    else if (action.getActionType() === 'click') {
+    else if (action.getActionType() === 'click' || action.getActionType() === 'checkBox') {
       this.clickSetter(playwrightCommand, sourcepath, sourceWindow);
     }
     else if (action.getActionType() === 'dbclick') {
@@ -67,8 +69,10 @@ export class PlaywrightCodeGenerator {
       this.keyboardSetter(playwrightCommand, inputKey);
     }
     else if (action.getActionType() === "change"){
-      console.log("change: sourcepath, ",sourcepath, "select value: ",selectValue);
-      this.changeSetter(playwrightCommand, sourcepath, selectValue);
+      //console.log("change: sourcepath, ",sourcepath, "select value: ",selectValue);
+      //this.changeSetter(playwrightCommand, sourcepath, selectValue);
+      //console.log("change: sourcepath, ",sourcepath, "select value: ",selectValue);
+      this.changeSetter(playwrightCommand, sourcepath, selectLabel);
     }
   }
 
@@ -86,7 +90,8 @@ export class PlaywrightCodeGenerator {
     console.log("funName: ", funName, "obj", obj);
 
     if(funName === "ByDomPath"){
-      let code = `await page.selectOption('${obj.csspath}', '${selectedValue}');`;
+      let code = `await page.selectOption('${obj.csspath}', { label:'${selectedValue}'});`;
+      //{ label: 'test1.vue' }
       playwrightCommand.codeSetter(code);
     }
   }
