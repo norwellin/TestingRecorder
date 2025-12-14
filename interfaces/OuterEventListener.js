@@ -8,24 +8,6 @@ import { ActionInterpreter } from '../usecases/ActionInterpreter.js';
 // ===============================
 // 🔧 MonkeyPatch addEventListener
 // ===============================
-(function () {
-  const originalAdd = EventTarget.prototype.addEventListener;
-
-  EventTarget.prototype.addEventListener = function(type, listener, options) {
-    if (type === "input") {
-      // 強制 capture，抓得到 Shadow DOM input
-      if (!options || typeof options === "boolean") {
-        options = { capture: true };
-      } else if (typeof options === "object") {
-        options.capture = true;
-      }
-
-      console.log("[MonkeyPatch] Patched input listener for:", this);
-    }
-
-    return originalAdd.call(this, type, listener, options);
-  };
-})();
 
 export class OuterEventListener {
   constructor(iframeWindow, domParserService, command, userActionDB) {
@@ -68,58 +50,56 @@ export class OuterEventListener {
     */
 
 
-    document.addEventListener("click", (e) => {
-       // ⛔ 不偵測 checkbox
-      if (
-  e.target.matches("input[type='checkbox'], select") ||
-  e.target.closest("input[type='checkbox'], select")
-) {
-  return;
-}
+document.addEventListener("click", (e) => {
+        if (e.target.tagName === "LABEL") return;
+        if (e.target.tagName === "SELECT") return;
+         // 如果點擊到 input
+  const target = e.target;
+  let clickable;
+        if (target.tagName === "INPUT") {
+    const parent = target.parentElement;
 
+    // 1️⃣ 找同 parent 下的 label，且 label 的 for 指向這個 input
+    const label = parent?.querySelector(`label[for="${target.id}"]`);
 
-      // ⛔ 不偵測 select（你原本的）
-      if (e.target.tagName === "SELECT") return;
-      console.log("Here is a click event! e: ", e.target);
-
-      const clickable = e.target.closest(`
+    // 2️⃣ 如果找到就把 target 改成 label
+    if (label) {
+      clickable = label;
+    }
+  }
+        else{
+        console.log("Here is a click event! e: ", e.target);
+      clickable = e.target.closest(`
   button,
   a,
   [role="button"],
   [onclick],
-  i,           /* 包含 <i> */
-  svg           /* 或直接 svg */
+  i,           /* \u5305\u542B <i> */
+  svg           /* \u6216\u76F4\u63A5 svg */
 `) || e.target;
-
-      //新的串接方法 setting basic variable
-      this.rightNowAction = this.rightNowAction + 1;
-      console.log("window - rightNowAction(click): ", this.rightNowAction);
-      const action_type = 'click';
-      this.currentHoveredElement = clickable;
-      this.DOMElement.setElementData(this.currentHoveredElement, 'click');
-      console.log(this.DOMElement.getAllElements());
-
-      //在這裡處理轉換成Playwright Code Logic
-      this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
-
-      this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
-      console.log('Playwright Command:', this.playwrightCommand.codeGetter());
-      console.log('useractionDB: ', this.useractionDB);
-      // 傳送Playwright Code到背景頁面
-      const generatedCode = this.playwrightCommand.codeGetter();
-      console.log("Playwright Command:", generatedCode);
-      chrome.runtime.sendMessage({
-        type: "display_code",
-        code: generatedCode
-      });
-      chrome.runtime.sendMessage({
-        type: "display_useraction",
-        action: this.useractionDB
-      });
-
-      //每次變更rightnowAction都要給對應的class傳訊息
-      this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
-    },true);
+        }
+        this.rightNowAction = this.rightNowAction + 1;
+        console.log("window - rightNowAction(click): ", this.rightNowAction);
+        const action_type = "click";
+        this.currentHoveredElement = clickable;
+        this.DOMElement.setElementData(this.currentHoveredElement, "click");
+        console.log(this.DOMElement.getAllElements());
+        this.useractionDB.push(ActionInterpreter.interpretDrag(action_type, this.DOMElement.getAllElements().event, null, "page", ""));
+        this.generator.generate(this.useractionDB[this.rightNowAction], this.playwrightCommand, this.rightNowAction);
+        console.log("Playwright Command:", this.playwrightCommand.codeGetter());
+        console.log("useractionDB: ", this.useractionDB);
+        const generatedCode = this.playwrightCommand.codeGetter();
+        console.log("Playwright Command:", generatedCode);
+        chrome.runtime.sendMessage({
+          type: "display_code",
+          code: generatedCode
+        });
+        chrome.runtime.sendMessage({
+          type: "display_useraction",
+          action: this.useractionDB
+        });
+        this.iframeWindow.postMessage({ type: "actionPosChanged", actionPos: this.rightNowAction }, "*");
+      }, true);
 
     window.addEventListener("drop", (e) => {
       //identify the source
