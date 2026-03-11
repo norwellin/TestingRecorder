@@ -1,6 +1,7 @@
 //https://www.npmjs.com/package/css-selector-generator?utm_source=chatgpt.com
 import { getCssSelector } from "css-selector-generator";
 import { select } from 'optimal-select' // global: 'OptimalSelect'
+import unique from 'unique-selector';
 const XLSX = require("xlsx");
 // 用來存所有輸入紀錄
 const records_css = [], reocrds_opt = [], records_dom = [];
@@ -41,6 +42,7 @@ document.addEventListener("click", (e) => {
   
   if(findUnique(selector)){
     css_record = {event: "click", path: selector, unique: "yes"};
+    console.log("css selector: is unique",selector);
   }
   else{
     css_record = {event: "click", path: selector, unique: "no"};
@@ -55,20 +57,26 @@ document.addEventListener("click", (e) => {
     });
     if(findUnique(opt_selector)){
     opt_record = {event: "click", path: opt_selector, unique: "yes"};
+    console.log("opt selector: is unique",opt_selector);
   }
   else{
     opt_record = {event: "click", path: opt_selector, unique: "no"};
   }
   reocrds_opt.push(opt_record);
-  //dompath
-    const DOMPath = require('chrome-dompath');
+  //unique selector
+   // Optional Options
+options = {
+    // Array of selector types based on which the unique selector will generate
+    selectorTypes : [ 'Class', 'Attributes', 'Tag', 'NthChild' ]
+}
 
-    let dom_selector = DOMPath.fullQualifiedSelector(e, true);
+let dom_selector = unique( e.target, options ); // #test
     if(findUnique(dom_selector)){
-    dom_record = {event: "click", path: opt_selector, unique: "yes"};
+    dom_record = {event: "click", path: dom_selector, unique: "yes"};
+    console.log("unique selector: is unique",dom_selector);
   }
   else{
-    dom_record = {event: "click", path: opt_selector, unique: "no"};
+    dom_record = {event: "click", path: dom_selector, unique: "no"};
   }
   records_dom.push(dom_record);
 });
@@ -83,6 +91,7 @@ document.addEventListener("click", (e) => {
   
   if(findUnique(selector)){
     css_record = {event: "click", path: selector, unique: "yes"};
+    console.log("css selector: is unique",selector);
   }
   else{
     css_record = {event: "click", path: selector, unique: "no"};
@@ -97,26 +106,27 @@ document.addEventListener("click", (e) => {
     });
     if(findUnique(opt_selector)){
     opt_record = {event: "click", path: opt_selector, unique: "yes"};
+    console.log("opt selector: is unique",opt_selector);
   }
   else{
     opt_record = {event: "click", path: opt_selector, unique: "no"};
   }
   reocrds_opt.push(opt_record);
-  //dompath
-    const DOMPath = require('chrome-dompath');
-  try {
-    let dom_selector = DOMPath.fullQualifiedSelector(e, true);
-    console.log("dom: ",dom_selector);
+  //unique selector
+   // Optional Options
+options = {
+    // Array of selector types based on which the unique selector will generate
+    selectorTypes : [ 'Class', 'Attributes', 'Tag', 'NthChild' ]
+}
+
+let dom_selector = unique( e.target, options ); // #test
     if(findUnique(dom_selector)){
     dom_record = {event: "click", path: dom_selector, unique: "yes"};
+    console.log("unique selector: is unique",dom_selector);
   }
   else{
     dom_record = {event: "click", path: dom_selector, unique: "no"};
   }
-  } catch (error) {
-    dom_record = {event: "click", path: "not find!", unique: "no"};
-  }
-    
   records_dom.push(dom_record);
 }); 
 function findUnique(path){

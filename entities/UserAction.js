@@ -12,6 +12,8 @@ export class UserAction {
     this.keyboard = null; //only use for keyboard event - type: text
     this.selectedText = null;// only use for drop-down menu - type: text
     this.selectedValue = null;
+    this.path = null; //csspath
+    this.inputText = ""; //only use for input event - type: text 
 
   }
   setKeyboard(key){
@@ -27,7 +29,7 @@ export class UserAction {
     this.target = target;
   }
   setSourceWindow(sourceWindow){
-    this.soureWindow = sourceWindow;
+    this.sourceWindow = sourceWindow;
   }
   setTargetWindow(targetWindow){
     this.targetWindow = targetWindow;
@@ -49,6 +51,9 @@ export class UserAction {
   }
   setSelectedValue(value){
     this.selectedValue = value;
+  }
+  setInputText(text){
+    this.inputText = text;
   }
   getActionType() {
     return this.type;
@@ -85,5 +90,8 @@ export class UserAction {
   }
   getSelectedValue(){
     return this.selectedValue;
+  }
+  getInputText(){
+    return this.inputText;
   }
 }

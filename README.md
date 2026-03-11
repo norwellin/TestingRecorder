@@ -50,7 +50,10 @@ npx esbuild MainApp.js --bundle --outfile=bundle.js
 const app = new MainApp();
 app.start();
 ```
-
+✅ Step4 : Copy this command to the first line
+```bash
+window.global ||= window;
+```
 ## Usage
 
 ```bash

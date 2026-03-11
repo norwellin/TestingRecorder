@@ -39,7 +39,7 @@ export class MainApp {
     });
     
 
-    const storageManager = new StorageManager(iframeListener, outerListener, domParserService);
+    //const storageManager = new StorageManager(iframeListener, outerListener, domParserService);
   }
   init_codeSetter(){
     const iframesId = this.allwindows.getIframesId();
@@ -47,4 +47,5 @@ export class MainApp {
     
     this.command.codeWindowsSetter(codeline);
   }
+  
 }

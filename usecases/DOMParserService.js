@@ -1,8 +1,10 @@
 // usecases 負責邏輯層
 import { DOMElement } from './../entities/DOMElement.js';
-import { DIALOG_SELECTORS as ds} from './../config.js';
-import { optimize, select } from 'optimal-select' // global: 'OptimalSelect'
-import cssPath from 'css-path';
+import { DIALOG_SELECTORS as ds } from './../config.js';
+import { getCssSelector } from "css-selector-generator";
+import { select } from 'optimal-select' // global: 'OptimalSelect'
+import unique from 'unique-selector';
+
 
 export class DOMParserService {
   constructor(iframeWindow) {
@@ -50,65 +52,101 @@ export class DOMParserService {
       ByAltText: false,
       ByDomPath: true
     };
+    //function weight setting
+    this.weight = {
+        WL: 0.4,
+  Wc: 0.6,
+  Wa: 1.0,
+  Wcl: 1.0,
+   Wt: 1.0,
+   Wn: 3.0
+    }
   }
-  getOpenSourcePath(e, sourceWin, type){
+  getOpenSourcePath(e, sourceWin, type) {
     // 使用 Optimal-Select 嚴格模式參數
     //iframe部參考id
     this.cleanInfo();
     this.setInfo(e);
     this.clearPlaywrightObj();
     console.log("All Attribute Info: ", this.allAttributeInfo);
-        let isUniqueObj = {
+    let isUniqueObj = {
       ByTitle: false,
       ByDomPath: false,
       ByText: false
     };
-
-    if (type === "change"){ //<select>用別的處理
-      const DOMPath = require('chrome-dompath');
-
-      let selector = DOMPath.fullQualifiedSelector(e, true);
-      isUniqueObj.ByDomPath = true;
-      this.playwrightObj.ByDomPath.csspath = selector;
-      console.log("Generated unique selector_change:",selector);
+    let isUniqueSelector = {
+      cssSelector: false,
+      OptSelector: false,
+      uniSelector: false
+    };
+    //////////////new dom selector
+    let doc, cssatt, optPri, uniPri;
+    if (sourceWin === "iframe"){
+      doc = this.iframeDoc;
+      cssatt = ["tag", "class", 'attribute', "nthchild"];
+      optPri = ['tag', 'class','attribute'];
+      uniPri = [ 'Tag', 'Class', 'Attributes', 'NthChild' ];
     }
     else{
-        let doc = document;
-    let myBlacklist = ['style', 'data-reactid'];
-    let myPri = ['id','div'];
-    let myIgnore = {
-        id: true,
-        attribute (name, value, defaultPredicate) {
-      // exclude HTML5 data attributes
-      return (/data-*/).test(name) || defaultPredicate(name, value)
-    }
-    };
-    if (sourceWin === "iframe"){
-      console.log("inside iframe!!!");
-      doc = this.iframeDoc;
-      myBlacklist = ['style', 'data-reactid', 'id'];
-      myPri = ['div'];
-      myIgnore =  {
-        id: true,
-        attribute (name, value, defaultPredicate) {
-      // exclude HTML5 data attributes
-      return (/data-*/).test(name) || defaultPredicate(name, value)
-    }
-    };
+      doc = document;
+      cssatt = ["class", 'attribute', "tag", "nthchild"];
+      optPri = ['class','attribute','tag'];
+      uniPri = [ 'Class', 'Attributes', 'Tag', 'NthChild' ];
+    } 
+    // css selector
+    let csskey = 0, optkey = 0, unikey = 0;
+      const selector = getCssSelector(e, { 
+        selectors: cssatt,
+        blacklist: ["id"],
+        root: doc 
+
+        });
+      // do whatever you need to do with that selector,
+      console.log("selector", selector);
+      
+      if(this.findUnique(selector, doc)){
+        isUniqueSelector.cssSelector = true;
+        isUniqueObj.ByDomPath = true;
+        csskey = 1;
+      }
+  
+      //optimal select
+        let opt_selector = select(e, {
+          root: doc,
+          priority: optPri,
+          ignore: {
+            id: true
+          }
+        });
+        if(this.findUnique(opt_selector, doc)){
+        isUniqueSelector.OptSelector = true;
+        isUniqueObj.ByDomPath = true;
+        optkey = 1;
+      }
+
+      //unique selector
+   // Optional Options
+let options = {
+    // Array of selector types based on which the unique selector will generate
+    selectorTypes : uniPri
+}
+
+let dom_selector = unique( e, options ); 
+    if(this.findUnique(dom_selector, doc)){
+    isUniqueSelector.uniSelector = true;
+    isUniqueObj.ByDomPath = true;
+    unikey = 1;
   }
+let csspath =  this.analyzeCssPath(selector, csskey);
+let optpath = this.analyzeCssPath(opt_selector, optkey);
+let unipath = this.analyzeCssPath(dom_selector, unikey);
 
-let selector = select(e, {
-  root: doc,
-      ignore: myIgnore,
-      priority: myPri
-});
+let paths = [csspath, optpath, unipath];
+this.playwrightObj.ByDomPath.csspath = this.bestDomPath(paths);
 
-isUniqueObj.ByDomPath = true;
-this.playwrightObj.ByDomPath.csspath = selector;
-  console.log("Generated unique selector:", selector);
-    }
-    
-//找bytitle
+
+
+    //找bytitle
     if (this.checkUniqueByTitle(this.allAttributeInfo.title)) {
       this.playwrightObj.ByTitle.title = this.allAttributeInfo.title;
       isUniqueObj.ByTitle = true;
@@ -124,7 +162,7 @@ this.playwrightObj.ByDomPath.csspath = selector;
       isUniqueObj.ByText = false;
     }
 
-     //決定回傳物件
+    //決定回傳物件
     let newObj = {};
     // 遍歷 priority (保證按照數字順序 0 → 6)
     for (let i = 0; i < this.priSize; i++) {
@@ -133,12 +171,108 @@ this.playwrightObj.ByDomPath.csspath = selector;
         newObj[i] = { funName: key, obj: this.playwrightObj[key] };
       }
     }
-    if (Object.keys(newObj).length === 0){
-      throw new Error ("Can't find the unique path here!");
+    if (Object.keys(newObj).length === 0) {
+      throw new Error("Can't find the unique path here!");
     }
     console.log("newObj: ", newObj);
     return newObj; //return 按照優先順序排列的array path,ex: [{},{},{}]
   }
+
+ bestDomPath(paths) {
+  // 設定權重
+  const WL = this.weight.WL;
+  const Wc = this.weight.Wc;
+  const Wa = this.weight.Wa;
+  const Wcl = this.weight.Wcl;
+  const Wt = this.weight.Wt;
+  const Wn = this.weight.Wn;
+
+  let bestScore = -Infinity;
+  let bestPath = null;
+
+  for (const p of paths) {
+    const { length, a, cl, t, n, U } = p;
+
+    // 計算 Lscore
+    const Lscore = 1 / (1 + length);
+
+    // 計算 Cscore
+    const Cscore = 1 / (1 + Wa * a + Wcl * cl + Wt * t + Wn * n);
+
+    // 計算總 Score
+    const Score = U * (WL * Lscore + Wc * Cscore);
+    
+    console.log("Score - path1: ", p.path);
+    console.log("Score - score: ",Score);
+    console.log("Score - Others: LS", Lscore, " CS: ",Cscore, "wa, a, wcl, cl, wt, t, wn, n: ",Wa,a,Wcl,cl,Wt,t,Wn,n);
+
+    // 比較最大值
+    if (Score > bestScore) {
+      bestScore = Score;
+      bestPath = p.path;
+    }
+  }
+
+  return bestPath;
+}
+analyzeCssPath(cssPath, unique) {
+  const obj = {
+    path: cssPath,
+    length: 0,
+    a: 0,
+    cl: 0,
+    t: 0,
+    n: 0,
+    U: unique
+  };
+
+  // 計算 length (用 > 或空格拆層級)
+  obj.length = cssPath
+  .split(/>|\s+/)
+  .filter(Boolean).length;
+
+
+  // 計算 attribute 數量 (簡單判斷 [])
+  const attrMatches = cssPath.match(/\[[^\]]+\]/g);
+  obj.a = attrMatches ? attrMatches.length : 0;
+
+  // 計算 class 數量 (用 .)
+  const classMatches = cssPath.match(/\.[^\s\#\.\[:>]+/g);
+  obj.cl = classMatches ? classMatches.length : 0;
+
+  // 計算 tag 數量 (用正則匹配標籤名，排除 . # [])
+const cleanedForTag = cssPath
+  .replace(/:[a-zA-Z-]+\([^)]+\)/g, '') // 移除 pseudo
+  .replace(/\.[a-zA-Z0-9_-]+/g, '')     // 移除 class
+  .replace(/\[[^\]]+\]/g, '');          // 移除 attribute
+
+const tagMatches = cleanedForTag.match(/\b[a-zA-Z][a-zA-Z0-9]*\b/g);
+
+console.log("Score: tag", tagMatches);
+
+obj.t = tagMatches ? tagMatches.length : 0;
+
+// 計算 nth（nth-child + nth-of-type）
+const nthMatches = cssPath.match(/:nth-(child|of-type)\([^)]+\)/g);
+obj.n = nthMatches ? nthMatches.length : 0;
+
+
+  return obj;
+}
+
+findUnique(path, doc){
+  const element = doc.querySelectorAll(path);
+  console.log("element: ",element);
+  if(element.length === 1){  
+    console.log("This csspath is unique");
+    return true;
+}
+  else{
+    console.log("This is not unique");
+    return false;
+  }
+}
+
   getAllPath(el, sourceWin) {
     console.log("el:", el);
     this.cleanInfo();
@@ -171,8 +305,8 @@ this.playwrightObj.ByDomPath.csspath = selector;
     //找byrole
     //let roleIndex = this.getRoleNthIndex(el, this.allAttributeInfo.role, this.allAttributeInfo.tagName);
     if (this.getPlaywrightRole(el, sourceWin)) {
-      console.log("Role - attributeInfo: ", this.allAttributeInfo," obj: ", this.playwrightObj);
-      
+      console.log("Role - attributeInfo: ", this.allAttributeInfo, " obj: ", this.playwrightObj);
+
       //this.playwrightObj.ByRole.name = this.allAttributeInfo.tagName;
       //this.playwrightObj.ByRole.role = this.allAttributeInfo.role;
       isUniqueObj.ByRole = true;
@@ -207,186 +341,126 @@ this.playwrightObj.ByDomPath.csspath = selector;
         newObj[i] = { funName: key, obj: this.playwrightObj[key] };
       }
     }
-    if (Object.keys(newObj).length === 0){
-      throw new Error ("Can't find the unique path here!");
+    if (Object.keys(newObj).length === 0) {
+      throw new Error("Can't find the unique path here!");
     }
     console.log("newObj: ", newObj);
     return newObj; //return 按照優先順序排列的array path,ex: [{},{},{}]
   }
 
   inferRole(el) {
-  if (el.hasAttribute('role')) return el.getAttribute('role');
+    if (el.hasAttribute('role')) return el.getAttribute('role');
 
-  switch (el.tagName.toLowerCase()) {
-    case 'button': return 'button';
-    case 'a': return el.hasAttribute('href') ? 'link' : null;
-    case 'input': {
-      const type = el.getAttribute('type') || 'text';
-      if (type === 'checkbox') return 'checkbox';
-      if (type === 'radio') return 'radio';
-      return 'textbox';
+    switch (el.tagName.toLowerCase()) {
+      case 'button': return 'button';
+      case 'a': return el.hasAttribute('href') ? 'link' : null;
+      case 'input': {
+        const type = el.getAttribute('type') || 'text';
+        if (type === 'checkbox') return 'checkbox';
+        if (type === 'radio') return 'radio';
+        return 'textbox';
+      }
+      case 'img': return 'img';
+      case 'h1':
+      case 'h2':
+      case 'h3':
+      case 'h4':
+      case 'h5':
+      case 'h6': return 'heading';
+      default: return null;
     }
-    case 'img': return 'img';
-    case 'h1':
-    case 'h2':
-    case 'h3':
-    case 'h4':
-    case 'h5':
-    case 'h6': return 'heading';
-    default: return null;
   }
-}
-getPlaywrightRole(el, sourceWin) {
-  if (!(el instanceof Element)) return null;
+  getPlaywrightRole(el, sourceWin) {
+    if (!(el instanceof Element)) return null;
 
-  // 1️⃣ 取得角色
-  const role = el.getAttribute('role') || this.inferRole(el);
-  if (!role) return null;
+    // 1️⃣ 取得角色
+    const role = el.getAttribute('role') || this.inferRole(el);
+    if (!role) return null;
 
-  // 2️⃣ 取得名稱
-  const name =
-    el.getAttribute('aria-label') ||
-    el.getAttribute('alt') ||
-    el.getAttribute('placeholder') ||
-    el.textContent.trim();
+    // 2️⃣ 取得名稱
+    const name =
+      el.getAttribute('aria-label') ||
+      el.getAttribute('alt') ||
+      el.getAttribute('placeholder') ||
+      el.textContent.trim();
 
-  // 🔍 3️⃣ 找出要搜尋的文件對象（支援 window / iframe）
-  let targetDoc;
-  if (sourceWin === "page") {
-    targetDoc = document;
-  } else if (sourceWin === "iframe") {
-    targetDoc = this.iframeDoc;
-  } else {
-    throw new Error("❌ sourceWin must be 'page' or 'iframe'");
-  }
+    // 🔍 3️⃣ 找出要搜尋的文件對象（支援 window / iframe）
+    let targetDoc;
+    if (sourceWin === "page") {
+      targetDoc = document;
+    } else if (sourceWin === "iframe") {
+      targetDoc = this.iframeDoc;
+    } else {
+      throw new Error("❌ sourceWin must be 'page' or 'iframe'");
+    }
 
-  // 🧱 4️⃣ 嘗試找出最近的對話框 / modal 容器
-  /*
-  const DIALOG_SELECTORS = [
-    '[role="dialog"]',
-    '.modal',
-    'dialog',
-    '.gjs-mdl-container',
-    '.gjs-mdl-dialog',
-    '.ant-modal',
-    '.MuiDialog-root',
-    '.chakra-modal__content',
-    '.ion-modal',
-    '.swal2-popup'
-  ];
-*/
-  let containerEl = null;
-  for (const sel of this.DIALOG_SELECTORS) {
-    containerEl = el.closest(sel);
-    if (containerEl) break;
-  }
-  console.log("Role - container: ",containerEl);
+    // 🧱 4️⃣ 嘗試找出最近的對話框 / modal 容器
+    /*
+    const DIALOG_SELECTORS = [
+      '[role="dialog"]',
+      '.modal',
+      'dialog',
+      '.gjs-mdl-container',
+      '.gjs-mdl-dialog',
+      '.ant-modal',
+      '.MuiDialog-root',
+      '.chakra-modal__content',
+      '.ion-modal',
+      '.swal2-popup'
+    ];
+  */
+    let containerEl = null;
+    for (const sel of this.DIALOG_SELECTORS) {
+      containerEl = el.closest(sel);
+      if (containerEl) break;
+    }
+    console.log("Role - container: ", containerEl);
 
-  // 如果找到對話框，就只在該容器內搜尋；
-  // 否則 fallback 回整個 document。
-  const searchRoot = containerEl || targetDoc;
+    // 如果找到對話框，就只在該容器內搜尋；
+    // 否則 fallback 回整個 document。
+    const searchRoot = containerEl || targetDoc;
 
-  // 🧭 5️⃣ 搜尋所有相同 role + name 的元素（限制範圍在 searchRoot）
-  const allSame = Array.from(searchRoot.querySelectorAll('*')).filter(e => {
-  const style = window.getComputedStyle(e);
-  if (style.display === 'none' || style.visibility === 'hidden') return false;
+    // 🧭 5️⃣ 搜尋所有相同 role + name 的元素（限制範圍在 searchRoot）
+    const allSame = Array.from(searchRoot.querySelectorAll('*')).filter(e => {
+      const style = window.getComputedStyle(e);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
 
-  const r = e.getAttribute('role') || this.inferRole(e);
-  if (r !== role) return false;
+      const r = e.getAttribute('role') || this.inferRole(e);
+      if (r !== role) return false;
 
-  const n =
-    e.getAttribute('aria-label') ||
-    e.getAttribute('alt') ||
-    e.getAttribute('placeholder') ||
-    e.textContent.trim();
+      const n =
+        e.getAttribute('aria-label') ||
+        e.getAttribute('alt') ||
+        e.getAttribute('placeholder') ||
+        e.textContent.trim();
 
-  return n === name;
-});
+      return n === name;
+    });
 
-  const index = allSame.indexOf(el);
-  const isUnique = allSame.length === 1;
+    const index = allSame.indexOf(el);
+    const isUnique = allSame.length === 1;
 
-  // 🧾 儲存結果
-  this.playwrightObj.ByRole.index = index;
-  this.playwrightObj.ByRole.name = name;
-  this.playwrightObj.ByRole.role = role;
+    // 🧾 儲存結果
+    this.playwrightObj.ByRole.index = index;
+    this.playwrightObj.ByRole.name = name;
+    this.playwrightObj.ByRole.role = role;
 
-  // ✅ 如果唯一就回傳 true
-  console.log("Role - Dialoog Selectors: ",this.DIALOG_SELECTORS);
-  console.log("Role - AllSame: ",allSame);
-  if (isUnique) {
-    console.log(`Role - ✅ 唯一 getByRole(${role}, { name: '${name}' })`);
-    return true;
-  } else {
-    console.log(
-      `Role - ⚠️ 找到 ${allSame.length} 個相同 role/name 的元素（搜尋範圍：${containerEl ? 'dialog' : 'document'}）`
-    );
-    return false;
-  }
-}
-
-
-/*
- getPlaywrightRole(el, sourceWin) {
-  if (!(el instanceof Element)) return null;
-
-  // 1️⃣ 取得角色
-  const role = el.getAttribute('role') || this.inferRole(el);
-  if (!role) return null;
-
-  // 2️⃣ 取得名稱
-  const name =
-    el.getAttribute('aria-label') ||
-    el.getAttribute('alt') ||
-    el.getAttribute('placeholder') ||
-    el.textContent.trim();
-
-
-    
-  // 3️⃣ 找出全頁面相同 role 的元素
-  //在window找
-  let allSameRole;
-  let index = 0;
-  
-  console.log("Role - sourceWIn: ",sourceWin);
-  //console.log("Role - view: ", el.ownerDocument.defaultView);
-  if(sourceWin === "page"){
-      console.log("Role- :element inside window");
-  allSameRole = Array.from(document.querySelectorAll('*'))
-    .filter(e => (e.getAttribute('role') || this.inferRole(e)) === role);
-
-  // 4️⃣ 找出 el 在這些元素中的第幾個
-  index = allSameRole.indexOf(el);
-  console.log("Role - allSame: ",allSameRole);
-  }
-  //*******目前只支援一個iframe因此這樣寫
-  else if (sourceWin === "iframe") {
-    console.log("Role- :element inside iframe");
-      allSameRole = Array.from(this.iframeDoc.querySelectorAll('*'))
-    .filter(e => (e.getAttribute('role') || this.inferRole(e)) === role);
-
-  // 4️⃣ 找出 el 在這些元素中的第幾個
-  index = allSameRole.indexOf(el);
-  console.log("Role - allSame: ",allSameRole);
-  }
-  else{
-    throw new Error("source Window Not Exit!");
+    // ✅ 如果唯一就回傳 true
+    console.log("Role - Dialoog Selectors: ", this.DIALOG_SELECTORS);
+    console.log("Role - AllSame: ", allSame);
+    if (isUnique) {
+      console.log(`Role - ✅ 唯一 getByRole(${role}, { name: '${name}' })`);
+      return true;
+    } else {
+      console.log(
+        `Role - ⚠️ 找到 ${allSame.length} 個相同 role/name 的元素（搜尋範圍：${containerEl ? 'dialog' : 'document'}）`
+      );
+      return false;
+    }
   }
 
-  if(index < 0) index = 0;
 
-  this.playwrightObj.ByRole.index = index;
-  this.playwrightObj.ByRole.name = name;
-  this.playwrightObj.ByRole.role = role;
 
-  if(role){
-    return true;
-  }
-  return false;
-
-}
-
-*/
   getDomPath(el) {
     if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
 
@@ -433,44 +507,44 @@ getPlaywrightRole(el, sourceWin) {
     return newpath;
   }
   ///////自己寫
-  getUniquePath(el){
+  getUniquePath(el) {
     if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
     const path = [];
 
-    while (el && el.nodeType === Node.ELEMENT_NODE){
+    while (el && el.nodeType === Node.ELEMENT_NODE) {
       let tag = el.tagName.toLowerCase();
 
       const parent = el.parentElement;
-      if(parent){
-        console.log("parent children: ",Array.from(parent.children));
+      if (parent) {
+        console.log("parent children: ", Array.from(parent.children));
         const siblings = Array.from(parent.children).filter(
-        sib => sib.tagName === el.tagName
-      );
-      if (siblings.length > 1) {
-        const index = siblings.indexOf(el) + 1;
-        tag += `:nth-of-type(${index})`;
+          sib => sib.tagName === el.tagName
+        );
+        if (siblings.length > 1) {
+          const index = siblings.indexOf(el) + 1;
+          tag += `:nth-of-type(${index})`;
+        }
+        // 組成 fullPath 並檢查是否唯一
+        const fullPath = path.length ? `${tag} > ${path.join(' > ')}` : tag;
+        if (document.querySelectorAll(fullPath).length === 1) {
+          path.unshift(tag);
+          console.log("short: full path只有一個");
+          console.log("short path:", path);
+          console.log("short -----------------");
+          break;
+        }
       }
-            // 組成 fullPath 並檢查是否唯一
-      const fullPath = path.length ? `${tag} > ${path.join(' > ')}` : tag;
-      if (document.querySelectorAll(fullPath).length === 1) {
-        path.unshift(tag);
-        console.log("short: full path只有一個");
-        console.log("short path:" ,path);
-        console.log("short -----------------");
-        break;
-      }
+
+
+      path.unshift(tag);
+      el = el.parentElement;
     }
-      
-      
-    path.unshift(tag);
-    el = el.parentElement;
-    }
-    console.log("parent children path: ",path);
+    console.log("parent children path: ", path);
     return path.join(' > ');
   }
 
 
- 
+
 
   getShortUniqueDomPath(el, opts = {}) {
     if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
@@ -487,18 +561,18 @@ getPlaywrightRole(el, sourceWin) {
     let current = el;
     let depth = 0;
 
-      // ✅ Step 1: 若有 aria-labelledby 屬性，嘗試取得對應文字
-  const labelledById = el.getAttribute('aria-labelledby');
-  if (labelledById) {
-    const labelElement = document.getElementById(labelledById);
-    if (labelElement) {
-      console.log('🔹 有 aria-labelledby，對應 label 文字：', labelElement.textContent.trim());
-      // 這裡可以選擇回傳 label 內容或 selector
-      return '#'+labelledById;
-    } else {
-      console.warn('⚠️ 找不到對應的 label 元素：', labelledById);
+    // ✅ Step 1: 若有 aria-labelledby 屬性，嘗試取得對應文字
+    const labelledById = el.getAttribute('aria-labelledby');
+    if (labelledById) {
+      const labelElement = document.getElementById(labelledById);
+      if (labelElement) {
+        console.log('🔹 有 aria-labelledby，對應 label 文字：', labelElement.textContent.trim());
+        // 這裡可以選擇回傳 label 內容或 selector
+        return '#' + labelledById;
+      } else {
+        console.warn('⚠️ 找不到對應的 label 元素：', labelledById);
+      }
     }
-  }
     while (current && current.nodeType === Node.ELEMENT_NODE && depth < maxDepth) {
       depth++;
       let selector = current.tagName.toLowerCase();
@@ -521,7 +595,7 @@ getPlaywrightRole(el, sourceWin) {
       if (document.querySelectorAll(fullPath).length === 1) {
         path.unshift(selector);
         console.log("short: full path只有一個");
-        console.log("short path:" ,path);
+        console.log("short path:", path);
         console.log("short -----------------");
         break;
       }
@@ -535,9 +609,9 @@ getPlaywrightRole(el, sourceWin) {
       if (siblingIndex > 1) selector += `:nth-of-type(${siblingIndex})`;
 
       path.unshift(selector);
-      console.log("short: sibling finded siblingIndex: ",siblingIndex);
-        console.log("short path:" ,path);
-        console.log("short -----------------");
+      console.log("short: sibling finded siblingIndex: ", siblingIndex);
+      console.log("short path:", path);
+      console.log("short -----------------");
       current = current.parentElement;
     }
     console.log("short unique path: ", path.join(' > '));
@@ -584,42 +658,42 @@ getPlaywrightRole(el, sourceWin) {
   }
     */
   checkUniqueByRole(role, name, roleIndex) {
-  if (!role || !name) return { isUnique: false, total: 0 };
+    if (!role || !name) return { isUnique: false, total: 0 };
 
-  // 🔹 找出所有符合 role 的元素（含 main 和 iframe）
-  const mainElements = Array.from(document.querySelectorAll(`[role="${role}"]`));
-  const iframeElements = window.myIframeDoc
-    ? Array.from(window.myIframeDoc.querySelectorAll(`[role="${role}"]`))
-    : [];
+    // 🔹 找出所有符合 role 的元素（含 main 和 iframe）
+    const mainElements = Array.from(document.querySelectorAll(`[role="${role}"]`));
+    const iframeElements = window.myIframeDoc
+      ? Array.from(window.myIframeDoc.querySelectorAll(`[role="${role}"]`))
+      : [];
 
-  // 🔹 過濾出文字內容相符的元素
-  const matchText = (el) => el.innerText.trim() === name;
-  const matchedMain = mainElements.filter(matchText);
-  const matchedIframe = iframeElements.filter(matchText);
+    // 🔹 過濾出文字內容相符的元素
+    const matchText = (el) => el.innerText.trim() === name;
+    const matchedMain = mainElements.filter(matchText);
+    const matchedIframe = iframeElements.filter(matchText);
 
-  // 🔹 計算總數
-  const total = matchedMain.length + matchedIframe.length;
+    // 🔹 計算總數
+    const total = matchedMain.length + matchedIframe.length;
 
-  // 🔹 判斷唯一性
-  const isUnique = total === 1;
+    // 🔹 判斷唯一性
+    const isUnique = total === 1;
 
-  // 🔹 檢查傳入的 roleIndex 是否合理
-  //const isValidIndex = roleIndex >= 0 && roleIndex < total;
+    // 🔹 檢查傳入的 roleIndex 是否合理
+    //const isValidIndex = roleIndex >= 0 && roleIndex < total;
 
-  // 🔹 Debug log
-  if (total === 0) {
-    console.log(`❌ No element found for role="${role}" and name="${name}"`);
-    return false;
-  } else if (isUnique) {
-    console.log(`✅ Unique element found (${role}, "${name}")`);
-    return true;
-  } else {
-    console.log(`⚠️ ${total} elements found (${role}, "${name}"), current index: ${roleIndex}`);
-    return false;
+    // 🔹 Debug log
+    if (total === 0) {
+      console.log(`❌ No element found for role="${role}" and name="${name}"`);
+      return false;
+    } else if (isUnique) {
+      console.log(`✅ Unique element found (${role}, "${name}")`);
+      return true;
+    } else {
+      console.log(`⚠️ ${total} elements found (${role}, "${name}"), current index: ${roleIndex}`);
+      return false;
+    }
+
+
   }
-
-
-}
 
 
   checkUniqueByTitle(title) {
@@ -630,6 +704,18 @@ getPlaywrightRole(el, sourceWin) {
     if (elements.length === 1 || iframe_elements === 1) {
       return true;
     } else {
+      return false;
+    }
+  }
+  checkUniqueByDom(path) {
+    const element = document.querySelectorAll(path);
+    console.log("element: ", element);
+    if (element.length === 1) {
+      console.log("This csspath is unique");
+      return true;
+    }
+    else {
+      console.log("This is not unique");
       return false;
     }
   }
@@ -650,21 +736,21 @@ getPlaywrightRole(el, sourceWin) {
 
   }
   setInfo(el) {
-  this.allAttributeInfo.tagName = el.tagName || null;
-  this.allAttributeInfo.id = el.id || null;
-  this.allAttributeInfo.className = el.className || null;
-  this.allAttributeInfo.title = el.title || null;
+    this.allAttributeInfo.tagName = el.tagName || null;
+    this.allAttributeInfo.id = el.id || null;
+    this.allAttributeInfo.className = el.className || null;
+    this.allAttributeInfo.title = el.title || null;
 
-  // innerText 安全處理
-  const text = el.innerText;
-  this.allAttributeInfo.text = (typeof text === "string") ? text.trim() : null;
+    // innerText 安全處理
+    const text = el.innerText;
+    this.allAttributeInfo.text = (typeof text === "string") ? text.trim() : null;
 
-  this.allAttributeInfo.placeholder = el.placeholder || null;
-  this.allAttributeInfo.alt = el.alt || null;
+    this.allAttributeInfo.placeholder = el.placeholder || null;
+    this.allAttributeInfo.alt = el.alt || null;
 
-  this.allAttributeInfo.ariaLabel = el.getAttribute?.('aria-label') || null;
-  this.allAttributeInfo.role = el.getAttribute?.('role') || null;
-}
+    this.allAttributeInfo.ariaLabel = el.getAttribute?.('aria-label') || null;
+    this.allAttributeInfo.role = el.getAttribute?.('role') || null;
+  }
 
   cleanInfo() {
     this.allAttributeInfo.tagName = null;

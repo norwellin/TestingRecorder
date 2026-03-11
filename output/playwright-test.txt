@@ -1,0 +1,10 @@
+import { test, expect } from '@playwright/test'
+test('Set up', async ({page}) => {
+const iframe = page.frameLocator('iframe#gjsiframe');
+await page.goto('https://iotapp.ttu.edu.tw/SnapIonic8.1/test/');
+await page.click("[src='\\.\\/svg\\/ui\\/leftSidebar\\/新增加號\\.svg\\?v\\=202501211024']");
+await page.click(":nth-child(1) > .gjs-title");
+await page.getByText("Content", { exact: true }).click();
+await page.getByTitle("Slideshow 2", {exact: true}).dragTo(iframe.locator("ion-content"));
+await iframe.locator(".gjs-selected").click();
+});

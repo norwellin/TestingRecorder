@@ -5,6 +5,7 @@ document.addEventListener("click", (e) => {
   document.addEventListener("change", (e) => {
   console.log("selector change detected");
     const element = e.target;
+    //css selector
     const selector = getCssSelector(element);
     console.log("selecstor change: ", selector);
     console.log("selector e.target.value: ",e.target.value);
@@ -27,4 +28,7 @@ function findUnique(path){
   else{
     console.log("This is not unique");
   }
+}
+function wirteToDoc(){
+
 }

@@ -30,14 +30,16 @@ export class PlaywrightCodeGenerator {
     }
     if (action.type === "input") {
       inputText = action.getSourceElement().innerText || action.getSourceElement().value;
+      this.userActionDB[this.rightNowAction].setInputText(inputText);
       console.log("InputTEXT: ", inputText);
     }
-    if(action.type === "keyboard"){
+    if (action.type === "keyboard") {
       inputKey = action.getKeyboard();
     }
-    if(action.type === "change"){
+    if (action.type === "change") {
       //selectValue = action.getSourceElement().value;
       selectLabel = action.getSourceElement().options[action.getSourceElement().selectedIndex].text;
+      this.userActionDB[this.rightNowAction].setSelectedText(selectLabel);
     }
     //取得來源window (iframe || main)
     console.log("inside generate: ", this.userActionDB, rightNowAction);
@@ -65,10 +67,10 @@ export class PlaywrightCodeGenerator {
     else if (action.getActionType() === 'keydown') {
       playwrightCommand.codeSetter(`await page.locator('${sourcepath}').fill(${this.typedText});`);
     }
-    else if (action.getActionType() === 'keyboard'){
+    else if (action.getActionType() === 'keyboard') {
       this.keyboardSetter(playwrightCommand, inputKey);
     }
-    else if (action.getActionType() === "change"){
+    else if (action.getActionType() === "change") {
       //console.log("change: sourcepath, ",sourcepath, "select value: ",selectValue);
       //this.changeSetter(playwrightCommand, sourcepath, selectValue);
       //console.log("change: sourcepath, ",sourcepath, "select value: ",selectValue);
@@ -76,7 +78,7 @@ export class PlaywrightCodeGenerator {
     }
   }
 
-  changeSetter(playwrightCommand, sourcepath, selectedValue){
+  changeSetter(playwrightCommand, sourcepath, selectedValue) {
     let priMin = -1;
     for (let i = 0; i < this.domService.priSize; i++) {
       if (sourcepath[i]) {
@@ -89,14 +91,17 @@ export class PlaywrightCodeGenerator {
     let obj = sourcepath[priMin].obj;
     console.log("funName: ", funName, "obj", obj);
 
-    if(funName === "ByDomPath"){
+    if (funName === "ByDomPath") {
       let code = `await page.selectOption('${obj.csspath}', { label:'${selectedValue}'});`;
       //{ label: 'test1.vue' }
       playwrightCommand.codeSetter(code);
     }
+
+    //新增到useraction
+    this.updateUserActionDB(funName, obj, act);
   }
-  keyboardSetter(playwrightCommand, inputKey){    
-    if (inputKey === "Backspace"){
+  keyboardSetter(playwrightCommand, inputKey) {
+    if (inputKey === "Backspace") {
       let code = `await page.keyboard.press('Backspace');`;
       playwrightCommand.codeSetter(code);
     }
@@ -137,6 +142,11 @@ export class PlaywrightCodeGenerator {
 
     console.log("tarComnd: ", tarCommand);
     playwrightCommand.codeSetter(`${souCommand}.dragTo(${tarCommand});`);
+
+    //新增到useraction
+    console.log("souFunName: ", souFunName, " tarFunName: ", tarFunName);
+    this.updateUserActionDB(souFunName, souObj, actDrag);
+    this.updateUserActionDB(tarFunName, tarObj, actDrop);
   }
   clickSetter(playwrightCommand, sourcepath, sourceWindow) {
     //找到存在的最優先順序
@@ -157,19 +167,10 @@ export class PlaywrightCodeGenerator {
     let act = { type: "click", addConfig: "", sourceWindow: sourceWindow, targetWindow: "" };
     const command = this.playwrightCodeSetter(funName, obj, act);
     playwrightCommand.codeSetter(command);
-    
+
 
     //新增到useraction
-    this.userActionDB[this.rightNowAction].setSourceMethod(funName);
-    if(funName === "ByTitle"){
-      this.userActionDB[this.rightNowAction].setSourceData(obj.title);
-    }
-    else if(funName === "ByText"){
-      this.userActionDB[this.rightNowAction].setSourceData(obj.text);
-    }
-    else if(funName === "ByDomPath"){
-      this.userActionDB[this.rightNowAction].setSourceData(obj.csspath);
-    }
+    this.updateUserActionDB(funName, obj, act);
   }
   doubleClickSetter(playwrightCommand, sourcepath, sourceWindow) {
     console.log("inside DOUBLE CLICK SETTER: ", sourceWindow);
@@ -189,6 +190,9 @@ export class PlaywrightCodeGenerator {
     let act = { type: "dbclick", addConfig: "", sourceWindow: sourceWindow, targetWindow: "" };
     const command = this.playwrightCodeSetter(funName, obj, act);
     playwrightCommand.codeSetter(command);
+
+    //新增到useraction
+    this.updateUserActionDB(funName, obj, act);
   }
   inputSetter(playwrightCommand, sourcepath, sourceWindow, inputText) {
     console.log("inside input Setter!");
@@ -208,30 +212,41 @@ export class PlaywrightCodeGenerator {
     let act = { type: "input", addConfig: "", sourceWindow: sourceWindow, targetWindow: "", inputText: inputText };
     const command = this.playwrightCodeSetter(funName, obj, act);
     playwrightCommand.codeSetter(command);
+
+    //新增到useraction
+    this.updateUserActionDB(funName, obj, act);
   }
   keydownSetter() {
 
   }
+  //避免playwright code裡面外面都用"
+  replacePath(cssPath) {
+    return cssPath.replace(/\\/g, '\\\\')   // 先處理反斜線
+      .replace(/"/g, '\\"');   // escape 雙引號
+  }
+
   playwrightCodeSetter(funName, obj, act) {//all action have the same code setter. 
     console.log("variable in codeSetter: funName= ", funName, "obg= ", obj, "act = ", act);
     //新版寫法更清晰
     let sourceWinVar = act.sourceWindow;
     let targetWinVar = act.targetWindow;
 
-
-        const getLocator = (windowVar, winName) => {
+    if (funName === "ByDomPath") {
+      obj.csspath = this.replacePath(obj.csspath);
+    }
+    const getLocator = (windowVar, winName) => {
       switch (funName) {
         case "ByRole":
           if (obj.index <= 0)
             return `${windowVar}.getByRole("${obj.role}", { name: "${obj.name}" })`;
-          else 
+          else
             return `${windowVar}.getByRole("${obj.role}", { name: "${obj.name}" }).nth(${obj.index})`;
         case "ByTitle":
           return `${windowVar}.getByTitle("${obj.title}", {exact: true})`;
         case "ByText":
           return `${windowVar}.getByText("${obj.text}", { exact: true })`;
-          case "ByDomPath":
-          return `${windowVar}.locator('${obj.csspath}')`;
+        case "ByDomPath":
+          return `${windowVar}.locator("${obj.csspath}")`;
         default:
           return new Error(funName, " Not found!!");
       }
@@ -242,13 +257,13 @@ export class PlaywrightCodeGenerator {
       case "click":
         if (sourceWinVar === "page") {
           if (funName === "ByDomPath") {
-            return `await ${sourceWinVar}.click('${obj.csspath}');`;
+            return `await ${sourceWinVar}.click("${obj.csspath}");`;
           }
           return `await ${getLocator(sourceWinVar)}.click();`;
         }
         else if (sourceWinVar === "iframe") {
           if (funName === "ByDomPath") {
-            return `await ${sourceWinVar}.locator('${obj.csspath}').click();`;
+            return `await ${sourceWinVar}.locator("${obj.csspath}").click();`;
           }
           return `await ${getLocator(sourceWinVar)}.click();`;
         }
@@ -256,13 +271,13 @@ export class PlaywrightCodeGenerator {
       case "dbclick":
         if (sourceWinVar === "page") {
           if (funName === "ByDomPath") {
-            return `await ${sourceWinVar}.dblclick('${obj.csspath}');`;
+            return `await ${sourceWinVar}.dblclick("${obj.csspath}");`;
           }
           return `await ${getLocator(sourceWinVar)}.dblclick();`;
         }
         else if (sourceWinVar === "iframe") {
           if (funName === "ByDomPath") {
-            return `await ${sourceWinVar}.locator('${obj.csspath}'.dblclick());`;
+            return `await ${sourceWinVar}.locator("${obj.csspath}".dblclick());`;
           }
           return `await ${getLocator(sourceWinVar)}.dblclick();`;
         }
@@ -272,7 +287,7 @@ export class PlaywrightCodeGenerator {
         console.log("Inner Text: ", text);
 
         if (funName === "ByDomPath") {
-          return `await ${sourceWinVar}.locator('${obj.csspath}').fill('${text}');`;
+          return `await ${sourceWinVar}.locator("${obj.csspath}").fill('${text}');`;
         }
         else if (funName === "ByRole") {
           return `await ${sourceWinVar}.getByRole("${obj.role}", { name: "${obj.name}" }).fill('${text}')`;
@@ -283,105 +298,17 @@ export class PlaywrightCodeGenerator {
         break;
       case "dragANDdrop":
         if (act.ddConfig === "drag") {
-        return `await ${getLocator(sourceWinVar)}`;
-      }
-      if (act.ddConfig === "drop") {
-        return `${getLocator(targetWinVar)}`;
-      }
+          return `await ${getLocator(sourceWinVar)}`;
+        }
+        if (act.ddConfig === "drop") {
+          return `${getLocator(targetWinVar)}`;
+        }
         break;
       default:
         console.log("Unknown action~");
         break;
     }
 
-    /*
-    const getLocator = (windowVar) => {
-      switch(funName){
-        case "ByRole":
-          return `${windowVar}.getByRole("${obj.role}", { name: "${obj.name}" })`;
-        case "ByTitle":
-          return `${windowVar}.getByTitle("${obj.title}")`;
-        case "ByDomPath":
-          return `${windowVar}.locator('css=${obj.csspath}')`;
-        default:
-          return new Error (funName, " Not found!!");
-      }
-    };
-    if(act.type === "click"){
-      if(funName === "ByDomPath"){
-        return `await ${sourceWinVar}.click('css=${obj.csspath}');`;
-      }
-      return `await ${getLocator(sourceWinVar)}.click();`;
-    }
-    else if (act.type === "dbclick"){
-      if(funName === "ByDomPath"){
-        return `await ${sourceWinVar}.dblclick('css=${obj.csspath}');`;
-      }
-      return `await ${getLocator(sourceWinVar)}.dblclick();`;
-    }
-    else if (act.type === 'input'){
-      let text = act.inputText;
-      console.log("Inner Text: ",text);
-
-      if(funName === "ByDomPath"){
-        return `await ${sourceWinVar}.locator('${obj.csspath}').fill('${text}');`;
-      }
-      else if(funName === "ByRole"){
-        return `${sourceWinVar}.getByRole("${obj.role}", { name: "${obj.name}" }).fill('${text}')`;
-      }
-      else if (funName === "ByTitle"){
-        return `${sourceWinVar}.getByTitle("${obj.title}").fill('${text}')`;
-      }
-    }
-    else if (act.type === "dragANDdrop"){
-      if (act.ddConfig === "drag") {
-        return `await ${getLocator(sourceWinVar)}`;
-      }
-      if (act.ddConfig === "drop") {
-        return `${getLocator(targetWinVar)}`;
-      }
-    }
-      */
-    //舊版
-    /*
-    if(funName === "ByRole"){
-      if (act.type === "click")
-        return `await page.getByRole("${obj.role}", { name: "${obj.name}" }).click();`;
-      else if (act.type === "dragANDdrop"){
-        if (act.ddConfig === "drag")
-          return `await page.getByRole("${obj.role}", { name: "${obj.name}" })`;
-        else if (act.ddConfig === "drop")
-          return `page.getByRole("${obj.role}", { name: "${obj.name}" })`;
-      }
-        
-    } 
-    else if(funName === "ByTitle"){
-      if (act.type === "click")
-        return `await page.getByTitle("${obj.title}").click();`;
-      else if (act.type === "dragANDdrop"){
-        if (act.ddConfig === "drag")
-          return `await page.getByTitle("${obj.title}")`;
-        else if (act.ddConfig === "drop")
-          return `page.getByTitle("${obj.title}")`;
-      }
-        
-    }
-    else if(funName === "ByDomPath"){
-      console.log("in by dom path!!");
-      if (act.type === "click")
-        return `await page.click('css=${obj.csspath}');`;
-      else if (act.type === "dragANDdrop"){
-        if (act.ddConfig === "drag")
-          return `await page.locator('css=${obj.csspath}')`;
-        else if (act.ddConfig === "drop"){
-          console.log("in by dom path!! drop");
-          return `page.locator('css=${obj.csspath}')`;
-        }
-          
-      }
-        
-    }
-*/
   }
   static initListener() {
     window.addEventListener("message", (event) => {
@@ -394,6 +321,34 @@ export class PlaywrightCodeGenerator {
         this.typedText = data.typedText;
       }
     });
+  }
+  updateUserActionDB(funName, obj, act) {
+    //新增到useraction
+    if (act.type === "dragANDdrop" && act.ddConfig === "drop") {
+      this.userActionDB[this.rightNowAction].setTargetMethod(funName);
+      if (funName === "ByTitle") {
+        this.userActionDB[this.rightNowAction].setTargetData(obj.title);
+      }
+      else if (funName === "ByText") {
+        this.userActionDB[this.rightNowAction].setTargetData(obj.text);
+      }
+      else if (funName === "ByDomPath") {
+        this.userActionDB[this.rightNowAction].setTargetData(obj.csspath);
+      }
+    }
+    else {
+      this.userActionDB[this.rightNowAction].setSourceMethod(funName);
+      if (funName === "ByTitle") {
+        this.userActionDB[this.rightNowAction].setSourceData(obj.title);
+      }
+      else if (funName === "ByText") {
+        this.userActionDB[this.rightNowAction].setSourceData(obj.text);
+      }
+      else if (funName === "ByDomPath") {
+        this.userActionDB[this.rightNowAction].setSourceData(obj.csspath);
+      }
+    }
+    //else if(funName === )
   }
 
 }
