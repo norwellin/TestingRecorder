@@ -1,38 +1,34 @@
-import { PlaywrightCommand } from "./entities/PlaywrightCommand";
-
 export class WindowsCatcher {
-    constructor(doucumentRef = document) {
-        this.documentRef = doucumentRef;
-        this.iframeWindowsId = [];
-    }   
-    getWindows(){
-        /*
-        const iframes = this.documentRef.querySelectorAll('iframe');
-        const iframeLen = iframes.length;
-        let iframeWindows = {};
-        console.log("iframes: ",iframes);
-        if(iframeLen){
-            iframes.forEach((el,index)=>{
-                iframeWindows["iframe"+(index + 1)] = el.contentWindow;
-            });
-        }
-        else 
-            iframeWindows = null;
-        const mainWindow = window;
-        console.log("iframeWindows: ",iframeWindows);
-        //return {mainWindow, iframeWindows};
-        */
-       
-        const iframe = this.documentRef.querySelector('iframe');
-        this.iframeWindowsId.push(iframe.id);
-        const anotherIframe = this.documentRef.querySelectorAll('iframe');
+  constructor(doc = document, win = window) {
+    this.documentRef = doc;
+    this.windowRef = win;
+  }
 
-        const iframeWindows = iframe?.contentWindow || null;
-        const mainWindow = window;
+  getWindows() {
+    const iframeElement = this.documentRef.querySelector('iframe') || null;
+    const mainWindow = this.windowRef || null;
+    const iframeWindow = iframeElement?.contentWindow || null;
+    const iframeId = iframeElement?.id || null;
 
-        return {mainWindow, iframeWindows};
-    }
-    getIframesId(){
-        return this.iframeWindowsId;
-    }
+    return {
+      mainWindow,
+      iframeWindow,
+      iframeElement,
+      iframeId
+    };
+  }
+
+  getIframesId() {
+    const iframeElement = this.documentRef.querySelector('iframe') || null;
+    return iframeElement?.id || null;
+  }
+
+  hasMainWindow() {
+    return !!this.windowRef;
+  }
+
+  hasIframeWindow() {
+    const iframeElement = this.documentRef.querySelector('iframe') || null;
+    return !!iframeElement?.contentWindow;
+  }
 }

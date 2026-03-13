@@ -7,13 +7,16 @@ import { ActionInterpreter } from '../usecases/ActionInterpreter.js';
 import { UserAction } from '../entities/UserAction.js';
 
 export class IframeEventListener {
-  constructor(iframeWindow, domParserService, command, userActionDB) {
-    this.iframeWindow = iframeWindow;
+  constructor(contexts, domParserService, command, userActionDB) {
+    this.contexts = contexts;
+    this.mainWindow = contexts?.mainWindow || null;
+    this.iframeWindow = contexts?.iframeWindow || null;
+    this.iframeDocument = this.iframeWindow?.document || null;
+
     this.domParserService = domParserService;
-    this.iframeDocument = iframeWindow.document;
     this.useractionDB = userActionDB;
     this.playwrightCommand = command;
-    this.generator = new PlaywrightCodeGenerator(iframeWindow, this.useractionDB);
+    this.generator = new PlaywrightCodeGenerator(contexts, this.useractionDB);
     this.DOMElement = new DOMElement();
     //this.dragDOMElement = new DOMElement();//用來記錄drag and drop source的來源
     //
@@ -44,6 +47,11 @@ export class IframeEventListener {
   }
 
   init() {
+
+    if (!this.iframeWindow || !this.iframeDocument) {
+      console.warn('iframe 不存在，跳過 IframeEventListener.init()');
+      return;
+    }
     this.iframeDocument.addEventListener('mousemove', this.mousemoveHandler.bind(this));
     this.iframeDocument.addEventListener('mousedown', this.mousedownHandler.bind(this));
 

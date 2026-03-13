@@ -7,9 +7,10 @@ import unique from 'unique-selector';
 
 
 export class DOMParserService {
-  constructor(iframeWindow) {
-    this.iframeWindow = iframeWindow;
-    this.iframeDoc = iframeWindow.document;
+  constructor(contexts = {}) {
+    this.mainWindow = contexts?.mainWindow || window;
+  this.iframeWindow = contexts?.iframeWindow || null;
+    this.iframeDoc= this.iframeWindow?.document || null;
 
     this.DIALOG_SELECTORS = ds;
 
@@ -62,9 +63,16 @@ export class DOMParserService {
    Wn: 3.0
     }
   }
-  getOpenSourcePath(e, sourceWin, type) {
+  getDocumentByWindowType(windowType) {
+  if (windowType === 'iframe') {
+    return this.iframeWindow?.document || null;
+  }
+  return this.mainWindow?.document || document;
+}
+  getOpenSourcePath(e, sourceWin = null) {
     // 使用 Optimal-Select 嚴格模式參數
     //iframe部參考id
+    if(!e) return [null, null ,null];
     this.cleanInfo();
     this.setInfo(e);
     this.clearPlaywrightObj();
@@ -82,6 +90,7 @@ export class DOMParserService {
     //////////////new dom selector
     let doc, cssatt, optPri, uniPri;
     if (sourceWin === "iframe"){
+      if(!this.iframeDoc) return [];
       doc = this.iframeDoc;
       cssatt = ["tag", "class", 'attribute', "nthchild"];
       optPri = ['tag', 'class','attribute'];
@@ -629,7 +638,7 @@ findUnique(path, doc){
     main_findLength = document.querySelectorAll(path).length;
 
     //check iframe window
-    iframe_findLength = this.iframeDoc.querySelectorAll(path).length;
+    iframe_findLength = this.iframeDoc?.querySelectorAll(path).length || 0;
     //console.log("DOM iframe find: ",iframe_findLength);
     if (main_findLength === 1 || iframe_findLength === 1)
       return true;
@@ -698,10 +707,15 @@ findUnique(path, doc){
 
   checkUniqueByTitle(title) {
     // 找所有符合 title 的元素
+    console.log("title: ", title);
+    console.log("checkUniqueByTitle this =", this);
+    console.log("iframe: ", this.iframeDoc);
     const elements = document.querySelectorAll(`[title="${title}"]`);
-    const iframe_elements = this.iframeDoc.querySelectorAll(`[title="${title}"]`);
+    const iframe_elements = this.iframeDoc?.querySelectorAll(`[title="${title}"]`) || [];
     console.log("check title: ", elements, "check iframe title: ", iframe_elements);
-    if (elements.length === 1 || iframe_elements === 1) {
+
+    return elements.length + iframe_elements.length === 1;
+    if (elements.length === 1 || iframe_elements.length === 1) {
       return true;
     } else {
       return false;

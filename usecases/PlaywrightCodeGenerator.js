@@ -5,14 +5,43 @@ import { DOMParserService } from './DOMParserService.js';
 
 
 export class PlaywrightCodeGenerator {
-  constructor(iframeWindow, userActionDB) {
+  constructor(contexts, userActionDB) {
     this.typedText = '';
-    this.domService = new DOMParserService(iframeWindow);
+    this.domService = new DOMParserService(contexts);
     this.userActionDB = userActionDB;
-    this.rightNowAction;
+    this.rightNowAction = -1;
   }
   generate(action, playwrightCommand, rightNowAction) {
+    if (!action) {
+      console.warn("generate: action 不存在");
+      return;
+    }
+
+    if (!playwrightCommand) {
+      console.warn("generate: playwrightCommand 不存在");
+      return;
+    }
+
+    if (!this.userActionDB) {
+      console.warn("generate: userActionDB 不存在");
+      return;
+    }
     this.rightNowAction = rightNowAction;
+
+    if (!action) {
+      console.warn("generate: action 不存在");
+      return;
+    }
+
+    if (!playwrightCommand) {
+      console.warn("generate: playwrightCommand 不存在");
+      return;
+    }
+
+    if (!this.userActionDB) {
+      console.warn("generate: userActionDB 不存在");
+      return;
+    }
     console.log("action: ", action);
     let sourcepath = null;
     let targetpath = null;
@@ -29,17 +58,40 @@ export class PlaywrightCodeGenerator {
       console.log("inside generate: targetpath  ", targetpath);
     }
     if (action.type === "input") {
-      inputText = action.getSourceElement().innerText || action.getSourceElement().value;
-      this.userActionDB[this.rightNowAction].setInputText(inputText);
-      console.log("InputTEXT: ", inputText);
+      const sourceElement = action.getSourceElement?.();
+
+      if (!sourceElement) {
+        console.warn("generate(input): sourceElement 不存在");
+        return;
+      }
+
+      inputText = sourceElement.innerText || sourceElement.value || "";
+
+      if (this.userActionDB[this.rightNowAction]?.setInputText) {
+        this.userActionDB[this.rightNowAction].setInputText(inputText);
+      }
     }
     if (action.type === "keyboard") {
       inputKey = action.getKeyboard();
     }
     if (action.type === "change") {
-      //selectValue = action.getSourceElement().value;
-      selectLabel = action.getSourceElement().options[action.getSourceElement().selectedIndex].text;
-      this.userActionDB[this.rightNowAction].setSelectedText(selectLabel);
+      const sourceElement = action.getSourceElement?.();
+
+      if (!sourceElement) {
+        console.warn("generate(change): sourceElement 不存在");
+        return;
+      }
+
+      if (!sourceElement.options || sourceElement.selectedIndex == null || sourceElement.selectedIndex < 0) {
+        console.warn("generate(change): 不是有效的 select element");
+        return;
+      }
+
+      selectLabel = sourceElement.options[sourceElement.selectedIndex]?.text || "";
+
+      if (this.userActionDB[this.rightNowAction]?.setSelectedText) {
+        this.userActionDB[this.rightNowAction].setSelectedText(selectLabel);
+      }
     }
     //取得來源window (iframe || main)
     console.log("inside generate: ", this.userActionDB, rightNowAction);
@@ -90,13 +142,16 @@ export class PlaywrightCodeGenerator {
     let funName = sourcepath[priMin].funName;
     let obj = sourcepath[priMin].obj;
     console.log("funName: ", funName, "obj", obj);
-
+    let code = "";
     if (funName === "ByDomPath") {
-      let code = `await page.selectOption('${obj.csspath}', { label:'${selectedValue}'});`;
-      //{ label: 'test1.vue' }
+       if (sourceWindow === "iframe") {
+      code = `await iframe.locator('${obj.csspath}').selectOption({ label: ${JSON.stringify(selectedValue)} });`;
+    } else {
+      code = `await page.locator('${obj.csspath}').selectOption({ label: ${JSON.stringify(selectedValue)} });`;
+    }
       playwrightCommand.codeSetter(code);
     }
-
+    let act = {type: "change"};
     //新增到useraction
     this.updateUserActionDB(funName, obj, act);
   }
