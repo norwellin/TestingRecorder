@@ -127,7 +127,8 @@ export function setupRecorderBridge({ MainApp }) {
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message?.type) return;
-
+    // 🚨 關鍵修復 1：防止 iframe 接收背景指令並重複啟動
+    if (window !== window.top) return;
     if (message.type === "START_RECORDING") {
       startRecording();
       sendResponse({ ok: true });
@@ -149,10 +150,14 @@ export function setupRecorderBridge({ MainApp }) {
 
   window.addEventListener("message", (event) => {
     if (event.source !== window || !event.data || event.data.source !== "RECORDER_EXTENSION") return;
-
+    // 🚨 防止 iframe 執行
+    if (window !== window.top) return;
     if (event.data.type === "START_RECORDING") startRecording();
     if (event.data.type === "STOP_RECORDING") stopRecording();
     if (event.data.type === "CLEAR_RECORDING") clearRecording();
+  
+  
+    
   });
 
   // ==========================================
@@ -161,29 +166,40 @@ export function setupRecorderBridge({ MainApp }) {
   // ==========================================
   // 🌟 關鍵修復：新視窗載入時，自動檢查全域錄製狀態
   // ==========================================
+// ==========================================
+  // 🌟 關鍵修復：新視窗載入時，自動檢查全域錄製狀態
+  // ==========================================
   if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-    // 1. 將 isRecordingSessionActive 改為 recorderStatus
-    chrome.storage.local.get(['recorderStatus'], (result) => {
-      console.log(`🌉 [Bridge] 新視窗啟動，檢查全域狀態:`, result);
-      
-      // 2. 判斷 recorderStatus 的值是否為 "recording"
-      if (result && result.recorderStatus === "recording") {
-        console.log('🌍 [Bridge] 偵測到全域錄製狀態為 ON，準備自動呼叫 startRecording()！');
+    // 🚨 確保只有最頂層的視窗才允許自動喚醒錄製器（防止 iframe 群魔亂舞）
+    if (window === window.top) {
+      chrome.storage.local.get(['recorderStatus'], (result) => {
+        console.log(`🌉 [Bridge] 頂層視窗啟動，檢查全域狀態:`, result);
         
-        // 確保 Vue / SPA 的 DOM 已經準備好再啟動
-        const autoStart = () => {
-          console.log('⏳ [Bridge] DOM 準備完畢，強制喚醒錄製器！');
-          startRecording(); 
-        };
+        if (result && result.recorderStatus === "recording") {
+          console.log('🌍 [Bridge] 偵測到全域錄製狀態為 ON，準備自動喚醒！');
+          
+          const autoStart = () => {
+            console.log('⏳ [Bridge] DOM 準備完畢，建立 MainApp 讓它接管自動啟動！');
+            
+            // 🚨 關鍵修改 1：這裡「絕對不要」呼叫 startRecording()
+            // 我們只呼叫 ensureApp() 確保 MainApp 被建立出來。
+            // 接著 MainApp 的 constructor 就會自己去認領 popup_xxx 的名字，
+            // 並自動呼叫它內部的「無 goto 版」 autoStart() 函式。
+            ensureApp(); 
+            
+            // 🚨 關鍵修改 2：手動把 Bridge 層級的錄製開關打開，確保能監聽到點擊動作
+            isRecording = true; 
+          };
 
-        if (document.readyState === 'complete' || document.readyState === 'interactive') {
-          setTimeout(autoStart, 1000); 
+          if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            setTimeout(autoStart, 1000); 
+          } else {
+            window.addEventListener('load', () => setTimeout(autoStart, 1000));
+          }
         } else {
-          window.addEventListener('load', () => setTimeout(autoStart, 1000));
+          console.log('💤 [Bridge] 未偵測到錄製狀態，等待手動啟動。');
         }
-      } else {
-        console.log('💤 [Bridge] 未偵測到錄製狀態，等待手動啟動。');
-      }
-    });
+      });
+    }
   }
-}
+} // 結束 setupRecorderBridge 函式

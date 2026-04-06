@@ -155,39 +155,47 @@ _getContextPrefix(winVar) {
 // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
 
 declareContexts(contexts, rootAlias) {
-    if (!contexts || !Array.isArray(contexts)) return [];
-    const generatedDeclarations = [];
+      if (!contexts || !Array.isArray(contexts)) return [];
+      const generatedDeclarations = [];
 
-    // 第一階段：建立 ID 映射 (對齊名稱)
-    contexts.forEach(ctx => {
-        let alias = "";
-        if (!ctx.contextId || ctx.contextId === 'ctx_page_0') {
-            alias = rootAlias; // 通常是 'page'
-        } else {
-            alias = ctx.contextId.replace(/^ctx_/, '');
-        }
-        this.contextAliasMap.set(ctx.contextId, alias);
-    });
+      // 第一階段：建立 ID 映射 (對齊名稱)
+      contexts.forEach(ctx => {
+          let alias = "";
+          if (!ctx.contextId || ctx.contextId === 'ctx_page_0') {
+              alias = rootAlias; // 通常是 'page' 或 'popup_xxx'
+          } else {
+              // 預設去掉 ctx_ 前綴，例如 ctx_iframe_1 變成 iframe_1
+              alias = ctx.contextId.replace(/^ctx_/, '');
+              
+              // 🌟 關鍵新增邏輯：如果這個環境是 iframe，且所屬的根視窗不是 'page' (也就是它是 popup)
+              // 就把 popup 的名字當作前綴加進去，例如 popup_359793_iframe_1
+              if (ctx.type === 'iframe' && rootAlias && rootAlias !== 'page') {
+                  alias = `${rootAlias}_${alias}`;
+              }
+          }
+          this.contextAliasMap.set(ctx.contextId, alias);
+      });
 
-    // 第二階段：產生宣告
-    contexts.forEach(ctx => {
-        if (ctx.type === 'iframe') {
-            const alias = this.contextAliasMap.get(ctx.contextId);
-            const parentAlias = this.contextAliasMap.get(ctx.parentContextId) || rootAlias;
-            const selector = ctx.frameSelector || `iframe:nth-of-type(1)`;
-            
-            // 產生代碼
-            const declaration = `const ${alias} = ${parentAlias}.frameLocator('${this.replacePath(selector)}');`;
-            
-            if (this.command && typeof this.command.appendCode === 'function') {
-                this.command.appendCode(declaration);
-            }
-            generatedDeclarations.push(declaration);
-        }
-    });
+      // 第二階段：產生宣告
+      contexts.forEach(ctx => {
+          if (ctx.type === 'iframe') {
+              // 從 Map 裡面取出已經轉換好的正確名稱
+              const alias = this.contextAliasMap.get(ctx.contextId);
+              const parentAlias = this.contextAliasMap.get(ctx.parentContextId) || rootAlias;
+              const selector = ctx.frameSelector || `iframe:nth-of-type(1)`;
+              
+              // 產生代碼 (例如：const popup_123_iframe_1 = popup_123.frameLocator('...'))
+              const declaration = `const ${alias} = ${parentAlias}.frameLocator('${this.replacePath(selector)}');`;
+              
+              if (this.command && typeof this.command.appendCode === 'function') {
+                  this.command.appendCode(declaration);
+              }
+              generatedDeclarations.push(declaration);
+          }
+      });
 
-    return generatedDeclarations;
-}
+      return generatedDeclarations;
+  }
   // 4. 新增共用的 Locator 字串組裝器，統整舊版 switch 邏輯
   _buildLocatorString(winPrefix, methodObj) {
     const { funName, obj } = methodObj;

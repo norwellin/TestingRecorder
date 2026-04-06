@@ -3638,6 +3638,9 @@
           alias = rootAlias;
         } else {
           alias = ctx.contextId.replace(/^ctx_/, "");
+          if (ctx.type === "iframe" && rootAlias && rootAlias !== "page") {
+            alias = `${rootAlias}_${alias}`;
+          }
         }
         this.contextAliasMap.set(ctx.contextId, alias);
       });
@@ -4582,6 +4585,7 @@
     }
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!message?.type) return;
+      if (window !== window.top) return;
       if (message.type === "START_RECORDING") {
         startRecording();
         sendResponse({ ok: true });
@@ -4600,28 +4604,32 @@
     });
     window.addEventListener("message", (event) => {
       if (event.source !== window || !event.data || event.data.source !== "RECORDER_EXTENSION") return;
+      if (window !== window.top) return;
       if (event.data.type === "START_RECORDING") startRecording();
       if (event.data.type === "STOP_RECORDING") stopRecording();
       if (event.data.type === "CLEAR_RECORDING") clearRecording();
     });
     if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.get(["recorderStatus"], (result) => {
-        console.log(`\u{1F309} [Bridge] \u65B0\u8996\u7A97\u555F\u52D5\uFF0C\u6AA2\u67E5\u5168\u57DF\u72C0\u614B:`, result);
-        if (result && result.recorderStatus === "recording") {
-          console.log("\u{1F30D} [Bridge] \u5075\u6E2C\u5230\u5168\u57DF\u9304\u88FD\u72C0\u614B\u70BA ON\uFF0C\u6E96\u5099\u81EA\u52D5\u547C\u53EB startRecording()\uFF01");
-          const autoStart = () => {
-            console.log("\u23F3 [Bridge] DOM \u6E96\u5099\u5B8C\u7562\uFF0C\u5F37\u5236\u559A\u9192\u9304\u88FD\u5668\uFF01");
-            startRecording();
-          };
-          if (document.readyState === "complete" || document.readyState === "interactive") {
-            setTimeout(autoStart, 1e3);
+      if (window === window.top) {
+        chrome.storage.local.get(["recorderStatus"], (result) => {
+          console.log(`\u{1F309} [Bridge] \u9802\u5C64\u8996\u7A97\u555F\u52D5\uFF0C\u6AA2\u67E5\u5168\u57DF\u72C0\u614B:`, result);
+          if (result && result.recorderStatus === "recording") {
+            console.log("\u{1F30D} [Bridge] \u5075\u6E2C\u5230\u5168\u57DF\u9304\u88FD\u72C0\u614B\u70BA ON\uFF0C\u6E96\u5099\u81EA\u52D5\u559A\u9192\uFF01");
+            const autoStart = () => {
+              console.log("\u23F3 [Bridge] DOM \u6E96\u5099\u5B8C\u7562\uFF0C\u5EFA\u7ACB MainApp \u8B93\u5B83\u63A5\u7BA1\u81EA\u52D5\u555F\u52D5\uFF01");
+              ensureApp();
+              isRecording = true;
+            };
+            if (document.readyState === "complete" || document.readyState === "interactive") {
+              setTimeout(autoStart, 1e3);
+            } else {
+              window.addEventListener("load", () => setTimeout(autoStart, 1e3));
+            }
           } else {
-            window.addEventListener("load", () => setTimeout(autoStart, 1e3));
+            console.log("\u{1F4A4} [Bridge] \u672A\u5075\u6E2C\u5230\u9304\u88FD\u72C0\u614B\uFF0C\u7B49\u5F85\u624B\u52D5\u555F\u52D5\u3002");
           }
-        } else {
-          console.log("\u{1F4A4} [Bridge] \u672A\u5075\u6E2C\u5230\u9304\u88FD\u72C0\u614B\uFF0C\u7B49\u5F85\u624B\u52D5\u555F\u52D5\u3002");
-        }
-      });
+        });
+      }
     }
   }
 
