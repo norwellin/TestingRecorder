@@ -1,0 +1,321 @@
+export class ContextScanner {
+  constructor(rootDoc = document, rootWin = window, options = {}) {
+    this.options = {
+      preferTopWindow: true,
+      waitForDynamicFrames: true,
+      quietTime: 800,
+      maxWait: 8000,
+      ...options
+    };
+
+    const resolvedRoot = this.resolveRootContext(rootDoc, rootWin);
+    this.rootDocument = resolvedRoot.document;
+    this.rootWindow = resolvedRoot.window;
+    this.contextCounter = 0;
+  }
+
+  async scanAllContextsAsync() {
+    if (this.options.waitForDynamicFrames) {
+      await this.waitForFramesOrStable(this.rootDocument, {
+        quietTime: this.options.quietTime,
+        maxWait: this.options.maxWait
+      });
+    }
+
+    return this.scanAllContexts();
+  }
+
+  scanAllContexts() {
+    const rootContext = this.createPageContext();
+    const contexts = [rootContext];
+    const contextMap = {
+      [rootContext.contextId]: rootContext
+    };
+
+    this.scanChildFrames(rootContext, contexts, contextMap);
+
+    return {
+      rootContext,
+      contexts,
+      contextMap
+    };
+  }
+
+  resolveRootContext(rootDoc, rootWin) {
+    if (!this.options.preferTopWindow) {
+      return {
+        document: rootDoc || document,
+        window: rootWin || window
+      };
+    }
+
+    try {
+      if (rootWin && rootWin.top && rootWin.top !== rootWin) {
+        // 盡量提升到 top window
+        return {
+          document: rootWin.top.document,
+          window: rootWin.top
+        };
+      }
+    } catch (error) {
+      // 若無法存取 top（例如跨網域），就退回目前 window
+      console.warn('無法提升到 top window，改用目前 window', error);
+    }
+
+    return {
+      document: rootDoc || document,
+      window: rootWin || window
+    };
+  }
+
+  createPageContext() {
+    return {
+      contextId: this.createContextId('page'),
+      type: 'page',
+      name: 'page',
+      parentContextId: null,
+      openerContextId: null,
+      windowRef: this.rootWindow || null,
+      documentRef: this.rootDocument || null,
+      frameElement: null,
+      frameSelector: null,
+      url: this.safeGetUrl(this.rootWindow),
+      children: []
+    };
+  }
+
+  scanChildFrames(parentContext, contexts, contextMap) {
+    const parentDoc = parentContext?.documentRef;
+    if (!parentDoc) return;
+
+    const frameElements = this.collectFrameElementsDeep(parentDoc);
+
+    frameElements.forEach((frameEl, index) => {
+      const frameWin = this.safeGetFrameWindow(frameEl);
+      const frameDoc = this.safeGetFrameDocument(frameWin);
+
+      const frameContext = {
+        contextId: this.createContextId('iframe'),
+        type: 'iframe',
+        name: `${parentContext.name}_iframe_${index}`,
+        parentContextId: parentContext.contextId,
+        openerContextId: null,
+        windowRef: frameWin,
+        documentRef: frameDoc,
+        frameElement: frameEl,
+        frameSelector: this.buildFrameSelector(frameEl, index),
+        url: this.safeGetUrl(frameWin),
+        children: []
+      };
+
+      parentContext.children.push(frameContext.contextId);
+      contexts.push(frameContext);
+      contextMap[frameContext.contextId] = frameContext;
+
+      // 即使拿不到 frameDoc，也保留這個 context
+      if (frameDoc) {
+        this.scanChildFrames(frameContext, contexts, contextMap);
+      }
+    });
+  }
+
+  collectFrameElementsDeep(rootNode) {
+    const results = [];
+    const visitedShadowRoots = new WeakSet();
+
+    const walk = (node) => {
+      if (!node) return;
+
+      // 1. 一般 DOM 內的 iframe / frame
+      if (node.querySelectorAll) {
+        const localFrames = Array.from(node.querySelectorAll('iframe, frame'));
+        results.push(...localFrames);
+      }
+
+      // 2. 走訪所有 element，檢查 shadowRoot
+      const walker = node.ownerDocument
+        ? node.ownerDocument.createTreeWalker(
+            node,
+            NodeFilter.SHOW_ELEMENT
+          )
+        : document.createTreeWalker(node, NodeFilter.SHOW_ELEMENT);
+
+      let current = walker.currentNode;
+      while (current) {
+        if (current.shadowRoot && !visitedShadowRoots.has(current.shadowRoot)) {
+          visitedShadowRoots.add(current.shadowRoot);
+          walk(current.shadowRoot);
+        }
+        current = walker.nextNode();
+      }
+    };
+
+    walk(rootNode);
+
+    // 去重，避免重複加入
+    return Array.from(new Set(results));
+  }
+
+  buildFrameSelector(frameEl, index = 0) {
+    if (!frameEl) return null;
+
+    const escapeCss = (value) => {
+      if (globalThis.CSS?.escape) return globalThis.CSS.escape(value);
+      return String(value).replace(/"/g, '\\"');
+    };
+
+    const tagName = (frameEl.tagName || 'iframe').toLowerCase();
+
+    if (frameEl.id) {
+      return `${tagName}#${escapeCss(frameEl.id)}`;
+    }
+
+    if (frameEl.name) {
+      return `${tagName}[name="${escapeCss(frameEl.name)}"]`;
+    }
+
+    const title = frameEl.getAttribute('title');
+    if (title) {
+      return `${tagName}[title="${escapeCss(title)}"]`;
+    }
+
+    const testId = frameEl.getAttribute('data-testid');
+    if (testId) {
+      return `${tagName}[data-testid="${escapeCss(testId)}"]`;
+    }
+
+    const src = frameEl.getAttribute('src');
+    if (src) {
+      return `${tagName}[src="${escapeCss(src)}"]`;
+    }
+
+    return `${tagName}:nth-of-type(${index + 1})`;
+  }
+
+  createContextId(type) {
+    const id = `ctx_${type}_${this.contextCounter}`;
+    this.contextCounter += 1;
+    return id;
+  }
+
+  safeGetFrameWindow(frameEl) {
+    try {
+      return frameEl?.contentWindow || null;
+    } catch (error) {
+      console.warn('無法取得 iframe.contentWindow', error);
+      return null;
+    }
+  }
+
+  safeGetFrameDocument(frameWin) {
+    try {
+      return frameWin?.document || null;
+    } catch (error) {
+      console.warn('無法取得 iframe.document，可能跨網域或受限制', error);
+      return null;
+    }
+  }
+
+  safeGetUrl(win) {
+    try {
+      return win?.location?.href || null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  waitForFramesOrStable(doc, { quietTime = 800, maxWait = 8000 } = {}) {
+    return new Promise((resolve) => {
+      if (!doc) {
+        resolve();
+        return;
+      }
+
+      let quietTimer = null;
+      let maxTimer = null;
+      let resolved = false;
+
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        observer.disconnect();
+        clearTimeout(quietTimer);
+        clearTimeout(maxTimer);
+        resolve();
+      };
+
+      const hasAnyFrameNow = () => {
+        try {
+          return this.collectFrameElementsDeep(doc).length > 0;
+        } catch (error) {
+          return false;
+        }
+      };
+
+      // 如果一開始就已經有 iframe，也不要立刻 resolve，
+      // 而是等一小段 quietTime，避免載入過程又持續變動
+      const resetQuietTimer = () => {
+        clearTimeout(quietTimer);
+        quietTimer = setTimeout(() => {
+          finish();
+        }, quietTime);
+      };
+
+      const observer = new MutationObserver(() => {
+        resetQuietTimer();
+
+        // 只要已經出現 iframe，就給它 quietTime 後完成
+        if (hasAnyFrameNow()) {
+          resetQuietTimer();
+        }
+      });
+
+      observer.observe(doc, {
+        childList: true,
+        subtree: true,
+        attributes: true
+      });
+
+      // 初始檢查
+      resetQuietTimer();
+
+      // 最長等待時間
+      maxTimer = setTimeout(() => {
+        finish();
+      }, maxWait);
+    });
+  }
+
+  // 視覺化顯示目前已經建立的 Tree
+  printContextTree(rootContext, contextMap, depth = 0) {
+    const indent = '  '.repeat(depth);
+    console.log(
+      `${indent}- ${rootContext.name} [${rootContext.type}] (${rootContext.contextId})`
+    );
+
+    rootContext.children.forEach((childId) => {
+      const child = contextMap[childId];
+      if (child) {
+        this.printContextTree(child, contextMap, depth + 1);
+      }
+    });
+  }
+
+  debugTable(contexts) {
+    console.table(
+      contexts.map((ctx) => ({
+        contextId: ctx.contextId,
+        type: ctx.type,
+        name: ctx.name,
+        parentContextId: ctx.parentContextId,
+        frameSelector: ctx.frameSelector,
+        hasWindow: !!ctx.windowRef,
+        hasDocument: !!ctx.documentRef,
+        childrenCount: ctx.children.length,
+        url: ctx.url,
+        frameTitle: ctx.frameElement?.getAttribute?.('title') || null,
+        frameSrc: ctx.frameElement?.getAttribute?.('src') || null
+      }))
+    );
+  }
+}
