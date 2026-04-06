@@ -158,11 +158,16 @@ export function setupRecorderBridge({ MainApp }) {
   // ==========================================
   // 🌟 關鍵修復：新視窗載入時，自動檢查全域錄製狀態
   // ==========================================
+  // ==========================================
+  // 🌟 關鍵修復：新視窗載入時，自動檢查全域錄製狀態
+  // ==========================================
   if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(['isRecordingSessionActive'], (result) => {
+    // 1. 將 isRecordingSessionActive 改為 recorderStatus
+    chrome.storage.local.get(['recorderStatus'], (result) => {
       console.log(`🌉 [Bridge] 新視窗啟動，檢查全域狀態:`, result);
       
-      if (result && result.isRecordingSessionActive) {
+      // 2. 判斷 recorderStatus 的值是否為 "recording"
+      if (result && result.recorderStatus === "recording") {
         console.log('🌍 [Bridge] 偵測到全域錄製狀態為 ON，準備自動呼叫 startRecording()！');
         
         // 確保 Vue / SPA 的 DOM 已經準備好再啟動

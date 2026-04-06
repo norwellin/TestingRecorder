@@ -3612,19 +3612,19 @@
     }
     // 3. 解析 ContextId 為 Playwright 的操作變數前綴
     // 3. 解析 ContextId 為 Playwright 的操作變數前綴
+    // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
     _getContextPrefix(winVar) {
       if (this.contextAliasMap && this.contextAliasMap.has(winVar)) {
-        return this.contextAliasMap.get(winVar);
+        const alias = this.contextAliasMap.get(winVar);
+        return alias === "page_0" || alias === "page" ? this.pageAlias : alias;
       }
       if (typeof winVar === "string" && winVar.startsWith("ctx_")) {
         const autoAlias = winVar.replace("ctx_", "");
-        return autoAlias === "page_0" ? this.pageAlias : autoAlias;
+        return autoAlias === "page_0" || autoAlias === "page" ? this.pageAlias : autoAlias;
       }
-      if (!winVar || winVar === "page" || winVar === "ctx_page_0") {
-        return this.pageAlias;
-      }
-      return winVar;
+      return this.pageAlias;
     }
+    // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
     // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
     // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
     // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
@@ -4162,15 +4162,6 @@
       this.command = new PlaywrightCommand();
       this.pageAlias = "page";
       this.codeGenerator = new PlaywrightCodeGenerator(this.domParserService, this.command, this.pageAlias);
-      if (window.opener && typeof chrome !== "undefined" && chrome.storage) {
-        chrome.storage.local.get(["latestPopupAlias"], (result) => {
-          if (result.latestPopupAlias) {
-            this.pageAlias = result.latestPopupAlias;
-            this.codeGenerator.pageAlias = this.pageAlias;
-            console.log(`\u{1F194} [MainApp] \u8A8D\u9818\u8EAB\u5206\u6210\u529F\uFF01\u66F4\u65B0 Generator \u8B8A\u6578\u70BA: ${this.pageAlias}`);
-          }
-        });
-      }
       this.navigationTracker = new NavigationTracker({
         rootWindow: this.rootWin,
         onNavigate: (navInfo) => {
@@ -4180,12 +4171,16 @@
           this.syncToGlobalStorage(newLine, savedAction);
         }
       });
-      this.pageAlias = "page";
-      if (window.opener && typeof chrome !== "undefined" && chrome.storage) {
-        chrome.storage.local.get(["latestPopupAlias"], (result) => {
-          if (result.latestPopupAlias) {
+      if (typeof chrome !== "undefined" && chrome.storage) {
+        chrome.storage.local.get(["latestPopupAlias", "recorderStatus"], (result) => {
+          if (window.opener && result.latestPopupAlias) {
             this.pageAlias = result.latestPopupAlias;
+            this.codeGenerator.pageAlias = this.pageAlias;
             console.log(`\u{1F194} [MainApp] \u8A8D\u9818\u8EAB\u5206\u6210\u529F\uFF01\u6211\u7684 Playwright \u8B8A\u6578\u540D\u7A31\u662F: ${this.pageAlias}`);
+            chrome.storage.local.remove("latestPopupAlias");
+          }
+          if (result.recorderStatus === "recording") {
+            this.autoStart();
           }
         });
       }
@@ -4262,66 +4257,71 @@
       }
     }
     // 啟動錄製器
+    // 檔案：myrecorderRestructure/MainApp.js
     start() {
       if (this.isStarted) return this.getState();
-      if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.set({ isRecordingSessionActive: true }, () => {
-          if (chrome.runtime.lastError) {
-            console.error("\u274C [MainApp] \u5BEB\u5165\u5168\u57DF\u9304\u88FD\u72C0\u614B\u5931\u6557:", chrome.runtime.lastError);
-          } else {
-            console.log("\u{1F4BE} [MainApp] \u5DF2\u6210\u529F\u5C07\u300C\u9304\u88FD\u4E2D\u300D\u72C0\u614B\u5BEB\u5165\u5168\u57DF\u8CC7\u6599\u5EAB\uFF01(isRecordingSessionActive: true)");
-          }
-        });
-      } else {
-        console.warn("\u26A0\uFE0F [MainApp] \u627E\u4E0D\u5230 chrome.storage API\uFF0C\u7121\u6CD5\u540C\u6B65\u8DE8\u8996\u7A97\u72C0\u614B\uFF01\u8ACB\u6AA2\u67E5 manifest.json \u662F\u5426\u6709 storage \u6B0A\u9650\u3002");
-      }
       const scanner = new ContextScanner(this.rootDoc, this.rootWin);
       this.scanResult = scanner.scanAllContexts();
-      console.log("\u{1F50D} [Debug] Scanner \u6383\u63CF\u5230\u7684\u6240\u6709 Contexts:", this.scanResult.contexts);
-      this.registry.clear();
       this.registry.registerMany(this.scanResult.contexts);
       this.syncRegistryToStore();
       const allContexts = this.registry.getAllContexts();
-      console.log("\u{1F50D} [Debug] Registry \u4E2D\u7684 Contexts (\u6E96\u5099\u50B3\u7D66 Generator):", allContexts);
       const declarations = this.codeGenerator.declareContexts(allContexts, this.pageAlias);
-      console.log("\u{1F50D} [Debug] Generator \u7522\u51FA\u7684\u5BA3\u544A\u5167\u5BB9:", declarations);
+      const gotoAction = {
+        type: "navigate",
+        url: window.location.href,
+        ts: Date.now()
+      };
+      const initialBatchCode = [];
       if (declarations && declarations.length > 0) {
-        declarations.forEach((line) => {
-          this.syncToGlobalStorage({ code: line, isReplace: false }, null);
-        });
+        declarations.forEach((line) => initialBatchCode.push(line));
       }
-      console.log("\u{1F30D} [MainApp] \u9801\u9762\u6383\u63CF\u5B8C\u6210\uFF01\u7576\u524D\u7684 Context \u6A39\u72C0\u7D50\u69CB\uFF1A");
-      this.registry.printTree();
-      this.navigationTracker.start();
-      this.bindListenersToContexts(this.registry.getAllContexts());
-      this.activeListeners.forEach((l) => l.isRecording = true);
-      this.store.setRecording(true);
+      const gotoResult = this.codeGenerator.generate(gotoAction);
+      if (gotoResult) {
+        initialBatchCode.push(gotoResult);
+        this.command.appendCode(gotoResult);
+      }
+      if (initialBatchCode.length > 0) {
+        if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
+          chrome.runtime.sendMessage({
+            type: "APPEND_RECORD_DATA",
+            newCode: initialBatchCode,
+            // 傳送陣列
+            isReplace: false,
+            newAction: gotoAction
+            // 關聯最後一個動作
+          }).catch(() => {
+          });
+        }
+      }
       this.isStarted = true;
-      if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.get(["generatedCode"], (result) => {
-          if (!result.generatedCode || result.generatedCode.length === 0) {
-            const gotoAction = {
-              type: "navigate",
-              url: window.location.href,
-              ts: Date.now()
-            };
-            const newLine = this.appendGeneratedCode(gotoAction);
-            const savedAction = this.store.addAction(gotoAction);
-            this.syncToGlobalStorage(newLine, savedAction);
-          }
-        });
-      }
-      if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.get(["generatedCodeBody"], (result) => {
-          if (!result.generatedCodeBody || result.generatedCodeBody.length === 0) {
-            const gotoAction = { type: "navigate", url: window.location.href, ts: Date.now() };
-            const codeResult = this.appendGeneratedCode(gotoAction);
-            const savedAction = this.store.addAction(gotoAction);
-            this.syncToGlobalStorage(codeResult, savedAction);
-          }
-        });
-      }
+      this.store.setRecording(true);
+      this.bindListenersToContexts(allContexts);
       return this.getState();
+    }
+    // 🌟 關鍵新增：專門給新分頁(Popup)或重新整理後的頁面「自動接續錄製」使用
+    autoStart() {
+      if (this.isStarted) return;
+      console.log(`\u{1F680} [MainApp] \u5075\u6E2C\u5230\u7CFB\u7D71\u6B63\u5728\u9304\u88FD\u4E2D\uFF0C\u81EA\u52D5\u555F\u52D5\u76E3\u807D\u5668\uFF01(\u8EAB\u5206: ${this.pageAlias})`);
+      const scanner = new ContextScanner(this.rootDoc, this.rootWin);
+      this.scanResult = scanner.scanAllContexts();
+      this.registry.registerMany(this.scanResult.contexts);
+      this.syncRegistryToStore();
+      const allContexts = this.registry.getAllContexts();
+      const declarations = this.codeGenerator.declareContexts(allContexts, this.pageAlias);
+      if (declarations && declarations.length > 0) {
+        if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
+          chrome.runtime.sendMessage({
+            type: "APPEND_RECORD_DATA",
+            newCode: declarations,
+            isReplace: false,
+            newAction: null
+          }).catch(() => {
+          });
+        }
+      }
+      this.isStarted = true;
+      this.store.setRecording(true);
+      this.bindListenersToContexts(allContexts);
     }
     // 停止錄製器
     stop() {
@@ -4605,9 +4605,9 @@
       if (event.data.type === "CLEAR_RECORDING") clearRecording();
     });
     if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.get(["isRecordingSessionActive"], (result) => {
+      chrome.storage.local.get(["recorderStatus"], (result) => {
         console.log(`\u{1F309} [Bridge] \u65B0\u8996\u7A97\u555F\u52D5\uFF0C\u6AA2\u67E5\u5168\u57DF\u72C0\u614B:`, result);
-        if (result && result.isRecordingSessionActive) {
+        if (result && result.recorderStatus === "recording") {
           console.log("\u{1F30D} [Bridge] \u5075\u6E2C\u5230\u5168\u57DF\u9304\u88FD\u72C0\u614B\u70BA ON\uFF0C\u6E96\u5099\u81EA\u52D5\u547C\u53EB startRecording()\uFF01");
           const autoStart = () => {
             console.log("\u23F3 [Bridge] DOM \u6E96\u5099\u5B8C\u7562\uFF0C\u5F37\u5236\u559A\u9192\u9304\u88FD\u5668\uFF01");

@@ -21,69 +21,55 @@ export class MainApp {
     this.rootDoc = rootDoc;
     this.rootWin = rootWin;
 
-    this.isStarted = false; // 標記整體 App 是否已經啟動
-    this.scanResult = null; // 儲存初始化時掃描網頁 (ContextScanner) 的結果
-
-    // [新增] 存放所有實例化的 Listeners，以便後續啟停控制
+    this.isStarted = false;
+    this.scanResult = null;
     this.activeListeners = [];
 
-    // 🌟 貼上這段：接收來自 Background 的「上帝視角」原生 Popup 通知
     this.setupBackgroundMessageListener();
 
-    // 初始化狀態儲存與環境註冊表
     this.registry = new ContextRegistry();
     this.store = new RecorderStore();
 
-    // 初始化 DOM 解析服務，傳入主視窗物件
     this.domParserService = new DOMParserService({
       mainWindow: rootWin
     });
 
-
-    // 初始化程式碼生成器與指令儲存庫
     this.command = new PlaywrightCommand();
 
-    this.pageAlias = 'page'; // 預設
-
-    // 因為去 storage 取資料是非同步的，我們先用預設值實例化 Generator
-    // 記得把 this.pageAlias 當作第三個參數傳進去！
+    this.pageAlias = 'page'; 
     this.codeGenerator = new PlaywrightCodeGenerator(this.domParserService, this.command, this.pageAlias);
 
-    if (window.opener && typeof chrome !== "undefined" && chrome.storage) {
-      chrome.storage.local.get(['latestPopupAlias'], (result) => {
-        if (result.latestPopupAlias) {
-          this.pageAlias = result.latestPopupAlias;
-          // 🌟 認領身分成功後，務必也要更新 Generator 裡面的變數！
-          this.codeGenerator.pageAlias = this.pageAlias;
-          console.log(`🆔 [MainApp] 認領身分成功！更新 Generator 變數為: ${this.pageAlias}`);
-        }
-      });
-    }
-    
-    // 2. 導航 (網址跳轉) 追蹤器
     this.navigationTracker = new NavigationTracker({
       rootWindow: this.rootWin,
       onNavigate: (navInfo) => {
         const action = { type: "navigate", ...navInfo, ts: Date.now() };
-        // ===== 修改後 =====
         const newLine = this.appendGeneratedCode(action);
         const savedAction = this.store.addAction(action);
         this.syncToGlobalStorage(newLine, savedAction);
       },
     });
-    // 預設變數名稱為 'page' (主視窗)
-    this.pageAlias = 'page'; 
-    
-    // 🌟 關鍵修復 2：如果是新視窗，去 storage 認領自己的專屬變數名稱
-    if (window.opener && typeof chrome !== "undefined" && chrome.storage) {
-      chrome.storage.local.get(['latestPopupAlias'], (result) => {
-        if (result.latestPopupAlias) {
+
+    // 🌟 關鍵修復：統一處理身分認領與自動喚醒機制
+    if (typeof chrome !== "undefined" && chrome.storage) {
+      chrome.storage.local.get(['latestPopupAlias', 'recorderStatus'], (result) => {
+        
+        // 1. 如果是新視窗，認領自己的專屬變數名稱 (例如 popup_123456)
+        if (window.opener && result.latestPopupAlias) {
           this.pageAlias = result.latestPopupAlias;
+          this.codeGenerator.pageAlias = this.pageAlias;
           console.log(`🆔 [MainApp] 認領身分成功！我的 Playwright 變數名稱是: ${this.pageAlias}`);
+          
+          // 認領完畢後，把小本本擦掉，以免其他新視窗誤認
+          chrome.storage.local.remove('latestPopupAlias');
+        }
+
+        // 2. 如果整個系統正在錄製中，這個新視窗必須「自動開工」！
+        if (result.recorderStatus === 'recording') {
+          this.autoStart();
         }
       });
     }
-  } 
+  }
   // 🌟 貼上這個新方法：專門處理 Background 傳來的跨世界/原生 Popup 事件
   // ==================== myrecorderRestructure/MainApp1.js ====================
 // 將這段函式加在 MainApp1 類別裡面
@@ -180,100 +166,93 @@ export class MainApp {
     }
   }
   // 啟動錄製器
-  start() {
+  // 檔案：myrecorderRestructure/MainApp.js
+
+start() {
     if (this.isStarted) return this.getState();
 
-    // 🌟 關鍵修復：確保寫入全域狀態，並印出確認訊息
-    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.set({ isRecordingSessionActive: true }, () => {
-        if (chrome.runtime.lastError) {
-          console.error("❌ [MainApp] 寫入全域錄製狀態失敗:", chrome.runtime.lastError);
-        } else {
-          console.log("💾 [MainApp] 已成功將「錄製中」狀態寫入全域資料庫！(isRecordingSessionActive: true)");
-        }
-      });
-    } else {
-       console.warn("⚠️ [MainApp] 找不到 chrome.storage API，無法同步跨視窗狀態！請檢查 manifest.json 是否有 storage 權限。");
-    }
-
-    // 1. 掃描環境
+    // 1. 掃描環境並註冊
     const scanner = new ContextScanner(this.rootDoc, this.rootWin);
     this.scanResult = scanner.scanAllContexts();
-    // 🔍 加入這行：確認掃描到的原始資料
-    console.log("🔍 [Debug] Scanner 掃描到的所有 Contexts:", this.scanResult.contexts);
-    // 2. 註冊環境並同步到 Store
-    this.registry.clear();
     this.registry.registerMany(this.scanResult.contexts);
     this.syncRegistryToStore();
-     // 🌟 [新增] 將掃描到的環境交給 Generator 建立 iframe 變數
-    //this.codeGenerator.declareContexts(this.scanResult.contexts, this.pageAlias);
+
+    // 2. 產生所有環境宣告 (iframe_1, iframe_2...)
+    const allContexts = this.registry.getAllContexts();
+    const declarations = this.codeGenerator.declareContexts(allContexts, this.pageAlias);
+
+    // 3. 準備初始導航動作 (page.goto)
+    const gotoAction = { 
+        type: "navigate", 
+        url: window.location.href, 
+        ts: Date.now() 
+    };
+
+    // 🌟 關鍵修正：建立一個初始化批次陣列
+    const initialBatchCode = [];
     
-    // 🌟【關鍵修改】：在此處呼叫 declareContexts
-  // 這會確保在任何 click 發生前，iframe 的宣告 (const iframe_1 = ...) 已經進入 command 陣列
-  // 🌟 修正：獲取所有 contexts 並執行宣告
-  const allContexts = this.registry.getAllContexts(); 
-  // 🔍 加入這行：確認 Registry 整理後的資料
-    console.log("🔍 [Debug] Registry 中的 Contexts (準備傳給 Generator):", allContexts);
-  const declarations = this.codeGenerator.declareContexts(allContexts, this.pageAlias);
-  // 🔍 加入這行：確認產生器回傳了哪些宣告字串
-    console.log("🔍 [Debug] Generator 產出的宣告內容:", declarations);
-  // 🌟【關鍵修改】：將生成的宣告同步到全域儲存空間 (Background)，否則其他視窗看不到這些宣告
-  // 🌟 修正點：將所有宣告合併後一次同步
-    // 3. 【修正點】逐行同步宣告，不要合併，但確保順序
+    // 先加入宣告
     if (declarations && declarations.length > 0) {
-        declarations.forEach(line => {
-            // 直接推送到 Command 與 GlobalStorage，不要觸發 isReplace
-            this.syncToGlobalStorage({ code: line, isReplace: false }, null);
-        });
+        declarations.forEach(line => initialBatchCode.push(line));
     }
-    
-    // 🌟 新增：載入頁面並掃描完畢後，立刻印出樹狀結構供除錯
-    console.log("🌍 [MainApp] 頁面掃描完成！當前的 Context 樹狀結構：");
-    this.registry.printTree();
-    
-    // 3. 啟動 Trackers
-    //this.popupTracker.start();
-    this.navigationTracker.start();
-    //this.clickToPageTracker.start();
 
-    // 4. [修改] 為剛掃描到的所有環境綁定事件監聽器
-    this.bindListenersToContexts(this.registry.getAllContexts());
+    // 再加入 goto (透過 generator 確保格式正確)
+    const gotoResult = this.codeGenerator.generate(gotoAction);
+    if (gotoResult) {
+        initialBatchCode.push(gotoResult);
+        this.command.appendCode(gotoResult);
+    }
 
-    // 5. [修改] 啟動所有一般事件監聽器的 isRecording 開關
-    this.activeListeners.forEach(l => l.isRecording = true);
+    // 4. 🌟 一次性同步所有初始化代碼，防止多次發送導致的覆蓋問題
+    if (initialBatchCode.length > 0) {
+        if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
+            chrome.runtime.sendMessage({
+                type: "APPEND_RECORD_DATA",
+                newCode: initialBatchCode, // 傳送陣列
+                isReplace: false,
+                newAction: gotoAction // 關聯最後一個動作
+            }).catch(() => {});
+        }
+    }
 
-    // 6. 更新狀態
-    this.store.setRecording(true);
     this.isStarted = true;
-    // 🌟 新增：錄製啟動時，確認是否為全新錄製，若是則自動補上當前頁面的 goto 指令
-    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.get(['generatedCode'], (result) => {
-        // 如果 global 的程式碼為空，代表是第一步
-        if (!result.generatedCode || result.generatedCode.length === 0) {
-          const gotoAction = { 
-            type: "navigate", 
-            url: window.location.href, 
-            ts: Date.now() 
-          };
-          const newLine = this.appendGeneratedCode(gotoAction);
-          const savedAction = this.store.addAction(gotoAction);
-          this.syncToGlobalStorage(newLine, savedAction);
-        }
-      });
-    }
-    // 在 start() 函式的最後面 (return this.getState(); 之前) 加上：
-    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-      // 這裡改讀取純淨的 Body 陣列
-      chrome.storage.local.get(['generatedCodeBody'], (result) => {
-        if (!result.generatedCodeBody || result.generatedCodeBody.length === 0) {
-          const gotoAction = { type: "navigate", url: window.location.href, ts: Date.now() };
-          const codeResult = this.appendGeneratedCode(gotoAction);
-          const savedAction = this.store.addAction(gotoAction);
-          this.syncToGlobalStorage(codeResult, savedAction);
-        }
-      });
-    }
+    this.store.setRecording(true);
+    this.bindListenersToContexts(allContexts);
+    
     return this.getState();
+}
+// 🌟 關鍵新增：專門給新分頁(Popup)或重新整理後的頁面「自動接續錄製」使用
+  autoStart() {
+    if (this.isStarted) return;
+    
+    console.log(`🚀 [MainApp] 偵測到系統正在錄製中，自動啟動監聽器！(身分: ${this.pageAlias})`);
+
+    // 1. 掃描新視窗裡面的環境並註冊
+    const scanner = new ContextScanner(this.rootDoc, this.rootWin);
+    this.scanResult = scanner.scanAllContexts();
+    this.registry.registerMany(this.scanResult.contexts);
+    this.syncRegistryToStore();
+
+    // 2. 如果新視窗裡面也有 iframe，產生 iframe 宣告 
+    const allContexts = this.registry.getAllContexts();
+    const declarations = this.codeGenerator.declareContexts(allContexts, this.pageAlias);
+
+    // 3. 把宣告同步回 Background (不需要 goto)
+    if (declarations && declarations.length > 0) {
+      if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({
+          type: "APPEND_RECORD_DATA",
+          newCode: declarations, 
+          isReplace: false,
+          newAction: null
+        }).catch(() => {});
+      }
+    }
+
+    // 4. 正式啟動監聽器與狀態
+    this.isStarted = true;
+    this.store.setRecording(true);
+    this.bindListenersToContexts(allContexts);
   }
 
   // 停止錄製器

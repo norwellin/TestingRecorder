@@ -126,24 +126,26 @@ export class PlaywrightCodeGenerator {
 
   // 3. 解析 ContextId 為 Playwright 的操作變數前綴
   // 3. 解析 ContextId 為 Playwright 的操作變數前綴
-  _getContextPrefix(winVar) {
-    // 優先從 Map 尋找是否有被註冊過名稱
+  // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+
+_getContextPrefix(winVar) {
+    // 優先檢查 Map
     if (this.contextAliasMap && this.contextAliasMap.has(winVar)) {
-        return this.contextAliasMap.get(winVar);
-    }
-    // 2. 增加防禦性處理：如果 winVar 是 "ctx_iframe_1" 但 Map 沒查到，自動轉換為 "iframe_1"
-  if (typeof winVar === 'string' && winVar.startsWith('ctx_')) {
-      const autoAlias = winVar.replace('ctx_', '');
-      return autoAlias === 'page_0' ? this.pageAlias : autoAlias;
-  }
-    // 預設容錯
-    if (!winVar || winVar === "page" || winVar === "ctx_page_0") {
-        return this.pageAlias;
+        const alias = this.contextAliasMap.get(winVar);
+        // 🌟 修正：如果映射到 page_0，強制回傳 page
+        return (alias === 'page_0' || alias === 'page') ? this.pageAlias : alias;
     }
     
-    // 如果未來有支援 Iframe，可能 winVar 會傳入 iframe 的 ID，這邊可以保留彈性
-    return winVar;
-  }
+    // 自動轉換邏輯
+    if (typeof winVar === 'string' && winVar.startsWith('ctx_')) {
+        const autoAlias = winVar.replace('ctx_', '');
+        return (autoAlias === 'page_0' || autoAlias === 'page') ? this.pageAlias : autoAlias;
+    }
+
+    return this.pageAlias; // 預設回傳 'page'
+}
+// 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+
 // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
 
 // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
@@ -156,25 +158,25 @@ declareContexts(contexts, rootAlias) {
     if (!contexts || !Array.isArray(contexts)) return [];
     const generatedDeclarations = [];
 
-    // 第一階段：對照表
+    // 第一階段：建立 ID 映射 (對齊名稱)
     contexts.forEach(ctx => {
         let alias = "";
-        // 修正：如果是主頁面 ID，強制對應到 rootAlias (page)
         if (!ctx.contextId || ctx.contextId === 'ctx_page_0') {
-            alias = rootAlias;
+            alias = rootAlias; // 通常是 'page'
         } else {
             alias = ctx.contextId.replace(/^ctx_/, '');
         }
         this.contextAliasMap.set(ctx.contextId, alias);
     });
 
-    // 第二階段：產生 code
+    // 第二階段：產生宣告
     contexts.forEach(ctx => {
         if (ctx.type === 'iframe') {
             const alias = this.contextAliasMap.get(ctx.contextId);
             const parentAlias = this.contextAliasMap.get(ctx.parentContextId) || rootAlias;
             const selector = ctx.frameSelector || `iframe:nth-of-type(1)`;
             
+            // 產生代碼
             const declaration = `const ${alias} = ${parentAlias}.frameLocator('${this.replacePath(selector)}');`;
             
             if (this.command && typeof this.command.appendCode === 'function') {
