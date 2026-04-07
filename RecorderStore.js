@@ -219,16 +219,18 @@ export class RecorderStore {
   }
 
   // ===== Drag session =====
-  startDragSession({ sourceContextId = null, sourceElementInfo = null } = {}) {
-    this.state.dragSession = {
-      isDragging: true,
-      sourceContextId,
-      sourceElementInfo,
-      targetContextId: null,
-      targetElementInfo: null
-    };
-    this.notify();
-  }
+  // 修改 RecorderStore.js
+startDragSession({ sourceContextId = null, sourceElementInfo = null, sourcePath = null } = {}) {
+  this.state.dragSession = {
+    isDragging: true,
+    sourceContextId,
+    sourceElementInfo,
+    sourcePath, // <=== 必須新增這一行，把解析好的路徑存起來！
+    targetContextId: null,
+    targetElementInfo: null
+  };
+  this.notify();
+}
 
   updateDragTarget({ targetContextId = null, targetElementInfo = null } = {}) {
     if (!this.state.dragSession.isDragging) return;

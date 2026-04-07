@@ -117,33 +117,36 @@ export class MainApp {
   // 統一處理來自各個 Listener (Page/Iframe/Popup) 的互動動作
   handleUserAction(action) {
     if (!this.isStarted) return;
-    
+    console.log("[Debug MainApp] 接收到 Action:", action.type, action);
     // ===== 拖放事件 (Drag & Drop) 狀態組裝邏輯 =====
-    if (action.type === "dragANDdrop") {
-      // 1. 如果是拖曳起點
-      if (action.isDragStart) {
-        this.store.startDragSession({ 
-          sourceContextId: action.sourceWindow,
-          sourceElementInfo: action.getSourceElement()
-        });
-        return; // 起點不急著產 code，先存起來等終點
-      }
-      
-      // 2. 如果是拖曳終點 (Drop)
-      if (action.isDrop) {
-        const session = this.store.getDragSession();
-        // 如果之前沒有紀錄到起點，這可能只是個無效的 drop，直接忽略
-        if (!session.isDragging) return;
-        
-        // 將起點與終點的資料合併到同一個 action 中
-        action.setSourceWindow(session.sourceContextId);
-        action.setSourceElement(session.sourceElementInfo);
-        //action.setTargetWindow(action.sourceWindow); // 這裡的 sourceWindow 實際上是 drop 時當下的 window
-        // target element 已在 Listener 階段綁定
-        
-        this.store.endDragSession(); // 清除拖拉狀態
-      }
+if (action.type === "dragANDdrop") {
+    if (action.isDragStart) {
+      // 【修改點】在 DragStart 階段就先解析路徑
+      const sourcePath = this.domParserService.getOpenSourcePath(
+        action.getSourceElement(), 
+        action.sourceWindow
+      );
+      console.log("[Debug MainApp] 預解析完成的路徑:", sourcePath); // 檢查點 1
+      this.store.startDragSession({
+        sourceContextId: action.sourceWindow,
+        sourceElementInfo: action.getSourceElement(),
+        sourcePath: sourcePath // 預先存好解析結果
+      });
+      return;
     }
+    
+    if (action.isDrop) {
+      const session = this.store.getDragSession();
+      if (!session.isDragging) return;
+
+      action.setSourceWindow(session.sourceContextId);
+      action.setSourceElement(session.sourceElementInfo);
+      // 將預先解析好的路徑塞入 action，避免後續重複解析失敗
+      action.preParsedSourcePath = session.sourcePath; 
+      
+      this.store.endDragSession();
+    }
+  }
     // ==========================================
     
     // ===== 修改後 =====

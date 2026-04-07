@@ -1991,11 +1991,14 @@
       this.state.pendingActionTimers.clear();
     }
     // ===== Drag session =====
-    startDragSession({ sourceContextId = null, sourceElementInfo = null } = {}) {
+    // 修改 RecorderStore.js
+    startDragSession({ sourceContextId = null, sourceElementInfo = null, sourcePath = null } = {}) {
       this.state.dragSession = {
         isDragging: true,
         sourceContextId,
         sourceElementInfo,
+        sourcePath,
+        // <=== 必須新增這一行，把解析好的路徑存起來！
         targetContextId: null,
         targetElementInfo: null
       };
@@ -3076,13 +3079,23 @@
     }
     getOpenSourcePath(e, sourceWin = null) {
       if (!e) return [null, null, null];
+      const ownerDoc = e.ownerDocument;
+      if (!ownerDoc || !ownerDoc.contains(e)) {
+        console.warn("[DOMParser] \u5143\u7D20\u5DF2\u4E0D\u5728\u6240\u5C6C\u7684\u6587\u4EF6\u4E2D\uFF0C\u5617\u8A66\u89E3\u6790\u5931\u6557", e);
+        return null;
+      }
+      console.log("[Debug DOMParser] \u6B63\u5728\u89E3\u6790\u5143\u7D20:", e);
+      console.log("[Debug DOMParser] \u5143\u7D20\u6240\u5C6C Document:", e.ownerDocument);
+      console.log("[Debug DOMParser] \u50B3\u5165\u7684 sourceWin:", sourceWin);
+      console.log("[Debug DOMParser] \u7576\u524D Service \u7684 currentDoc:", this.currentDoc);
+      const realRoot = e.getRootNode();
       this.cleanInfo();
       this.setInfo(e);
       this.clearPlaywrightObj();
       let isUniqueObj = { ByTitle: false, ByDomPath: false, ByText: false };
       let doc = this.currentDoc;
       let cssatt, optPri, uniPri;
-      if (doc !== this.mainWindow.document) {
+      if (realRoot !== this.mainWindow.document) {
         cssatt = ["tag", "class", "attribute", "nthchild"];
         optPri = ["tag", "class", "attribute"];
         uniPri = ["Tag", "Class", "Attributes", "NthChild"];
@@ -3092,18 +3105,18 @@
         uniPri = ["Class", "Attributes", "Tag", "NthChild"];
       }
       let csskey = 0, optkey = 0, unikey = 0;
-      const selector = getCssSelector(e, { selectors: cssatt, blacklist: ["id"], root: doc });
-      if (this.findUnique(selector, doc)) {
+      const selector = getCssSelector(e, { selectors: cssatt, blacklist: ["id"], root: realRoot });
+      if (this.findUnique(selector, realRoot)) {
         isUniqueObj.ByDomPath = true;
         csskey = 1;
       }
-      let opt_selector = (0, import_optimal_select.select)(e, { root: doc, priority: optPri, ignore: { id: true } });
-      if (this.findUnique(opt_selector, doc)) {
+      let opt_selector = (0, import_optimal_select.select)(e, { root: realRoot, priority: optPri, ignore: { id: true } });
+      if (this.findUnique(opt_selector, realRoot)) {
         isUniqueObj.ByDomPath = true;
         optkey = 1;
       }
       let dom_selector = (0, import_unique_selector.default)(e, { selectorTypes: uniPri });
-      if (this.findUnique(dom_selector, doc)) {
+      if (this.findUnique(dom_selector, realRoot)) {
         isUniqueObj.ByDomPath = true;
         unikey = 1;
       }
@@ -3556,14 +3569,17 @@
         }
         return `const ${popupName} = await ${this.pageAlias}.waitForEvent('popup');`;
       }
-      let sourcepath = null;
+      let sourcepath = action.preParsedSourcePath || null;
       let targetpath = null;
       let inputText = action.inputText || "default";
       let inputKey = action.keyboard || "default";
       let selectLabel = action.selectedText || "default";
       if (typeof action.getSourceElement === "function") {
-        sourcepath = this.domService.getOpenSourcePath(action.getSourceElement(), action.getSourceWindow(), action.type);
-        if (action.type === "dragANDdrop" && typeof action.getTargetElement === "function") {
+        const needsSourceParsing = !sourcepath || Array.isArray(sourcepath) && sourcepath[0] === null;
+        if (needsSourceParsing && action.getSourceElement()) {
+          sourcepath = this.domService.getOpenSourcePath(action.getSourceElement(), action.getSourceWindow(), action.type);
+        }
+        if (action.type === "dragANDdrop" && typeof action.getTargetElement === "function" && action.getTargetElement()) {
           targetpath = this.domService.getOpenSourcePath(action.getTargetElement(), action.getTargetWindow());
         }
         if (action.type === "input" && !action.inputText) {
@@ -4097,10 +4113,13 @@
     }
     mouseupHandler(e) {
       if (!this.isRecording) return;
+      console.log("[Debug IframeListener] mouseup \u89F8\u767C, isDragging:", this.isDragging);
       if (this.isDragging) {
         this.isDragging = false;
         this.dragStart = { x: 0, y: 0 };
         this.currentHoveredElement = e.target;
+        this.mouseDownFlag = false;
+        this.dragStepFlag = 0;
         this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
       } else {
         this.clickFlag += 1;
@@ -4227,11 +4246,19 @@
     // 統一處理來自各個 Listener (Page/Iframe/Popup) 的互動動作
     handleUserAction(action) {
       if (!this.isStarted) return;
+      console.log("[Debug MainApp] \u63A5\u6536\u5230 Action:", action.type, action);
       if (action.type === "dragANDdrop") {
         if (action.isDragStart) {
+          const sourcePath = this.domParserService.getOpenSourcePath(
+            action.getSourceElement(),
+            action.sourceWindow
+          );
+          console.log("[Debug MainApp] \u9810\u89E3\u6790\u5B8C\u6210\u7684\u8DEF\u5F91:", sourcePath);
           this.store.startDragSession({
             sourceContextId: action.sourceWindow,
-            sourceElementInfo: action.getSourceElement()
+            sourceElementInfo: action.getSourceElement(),
+            sourcePath
+            // 預先存好解析結果
           });
           return;
         }
@@ -4240,6 +4267,7 @@
           if (!session.isDragging) return;
           action.setSourceWindow(session.sourceContextId);
           action.setSourceElement(session.sourceElementInfo);
+          action.preParsedSourcePath = session.sourcePath;
           this.store.endDragSession();
         }
       }

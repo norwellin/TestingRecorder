@@ -36,10 +36,27 @@ export class DOMParserService {
 }
   getOpenSourcePath(e, sourceWin = null) {
     if(!e) return [null, null ,null];
+    // 改良檢查方式：檢查元素是否掛載在它自己的 ownerDocument 下
+    const ownerDoc = e.ownerDocument;
+    if (!ownerDoc || !ownerDoc.contains(e)) {
+        console.warn("[DOMParser] 元素已不在所屬的文件中，嘗試解析失敗", e);
+        // 如果是 DnD 且元素剛好消失，這裡可以回傳一個標記，讓 CodeGenerator 用座標或最後已知路徑
+        return null; 
+    }
+    // 新增 Debug Console
+    console.log("[Debug DOMParser] 正在解析元素:", e);
+    console.log("[Debug DOMParser] 元素所屬 Document:", e.ownerDocument);
+    console.log("[Debug DOMParser] 傳入的 sourceWin:", sourceWin);
+    console.log("[Debug DOMParser] 當前 Service 的 currentDoc:", this.currentDoc);
+    // 【重要修復】取得元素真正的根節點 (可能是 Document 或 ShadowRoot)
+    const realRoot = e.getRootNode();
     this.cleanInfo();
     this.setInfo(e); // 這裡會同步更新 this.currentDoc
     this.clearPlaywrightObj();
 
+
+    
+    
     let isUniqueObj = { ByTitle: false, ByDomPath: false, ByText: false };
     
     // 【修改】統一使用元素自己的 Document 進行解析
@@ -47,7 +64,7 @@ export class DOMParserService {
     let cssatt, optPri, uniPri;
 
     // 簡單判斷是否為頂層主網頁，給予不同的演算法優先度
-    if (doc !== this.mainWindow.document){
+    if (realRoot !== this.mainWindow.document){
       cssatt = ["tag", "class", 'attribute', "nthchild"];
       optPri = ['tag', 'class','attribute'];
       uniPri = [ 'Tag', 'Class', 'Attributes', 'NthChild' ];
@@ -58,18 +75,18 @@ export class DOMParserService {
     } 
 
     let csskey = 0, optkey = 0, unikey = 0;
-    const selector = getCssSelector(e, { selectors: cssatt, blacklist: ["id"], root: doc });
-    if(this.findUnique(selector, doc)){
+    const selector = getCssSelector(e, { selectors: cssatt, blacklist: ["id"], root: realRoot });
+    if(this.findUnique(selector, realRoot)){
       isUniqueObj.ByDomPath = true; csskey = 1;
     }
   
-    let opt_selector = select(e, { root: doc, priority: optPri, ignore: { id: true } });
-    if(this.findUnique(opt_selector, doc)){
+    let opt_selector = select(e, { root: realRoot, priority: optPri, ignore: { id: true } });
+    if(this.findUnique(opt_selector, realRoot)){
       isUniqueObj.ByDomPath = true; optkey = 1;
     }
 
     let dom_selector = unique( e, { selectorTypes : uniPri } ); 
-    if(this.findUnique(dom_selector, doc)){
+    if(this.findUnique(dom_selector, realRoot)){
       isUniqueObj.ByDomPath = true; unikey = 1;
     }
 

@@ -132,12 +132,16 @@ export class IframeEventListener {
 
   mouseupHandler(e) {
     if (!this.isRecording) return;
-
+// 增加一個 Debug 觀察觸發次數
+    console.log("[Debug IframeListener] mouseup 觸發, isDragging:", this.isDragging);
     if (this.isDragging) {
       this.isDragging = false;
       this.dragStart = { x: 0, y: 0 };
       this.currentHoveredElement = e.target;
       
+      ///新
+      this.mouseDownFlag = false;
+      this.dragStepFlag = 0;
       // 模擬拖曳放開 (drop)
       this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
     } else {
@@ -161,6 +165,7 @@ export class IframeEventListener {
       }
     }
     this.dragStepFlag = 0;
+
   }
 
   mousedownHandler(e) {

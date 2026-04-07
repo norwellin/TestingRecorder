@@ -56,21 +56,31 @@ export class PlaywrightCodeGenerator {
     // ==========================================
     // B. 處理基於 DOM 的互動動作
     // ==========================================
-    let sourcepath = null;
+    let sourcepath = action.preParsedSourcePath || null;
     let targetpath = null;
     let inputText = action.inputText || "default";
     let inputKey = action.keyboard || "default";
     let selectLabel = action.selectedText || "default";
 
     // 從封裝好的 UserAction 實體中取得元素與視窗資訊
+    // 從封裝好的 UserAction 實體中取得元素與視窗資訊
     if (typeof action.getSourceElement === 'function') {
-       sourcepath = this.domService.getOpenSourcePath(action.getSourceElement(), action.getSourceWindow(), action.type);
        
-       if (action.type === "dragANDdrop" && typeof action.getTargetElement === 'function') {
-         targetpath = this.domService.getOpenSourcePath(action.getTargetElement(), action.getTargetWindow());
+       // 【🌟 核心修改 🌟】
+       // 判斷是否需要重新解析 source：如果預解析沒拿到東西，才去解析
+       const needsSourceParsing = !sourcepath || (Array.isArray(sourcepath) && sourcepath[0] === null);
+       
+       if (needsSourceParsing && action.getSourceElement()) {
+           // 只有一般動作 (click, input) 或是 dragStart 漏抓，才會進來這裡
+           sourcepath = this.domService.getOpenSourcePath(action.getSourceElement(), action.getSourceWindow(), action.type);
        }
        
-       // 同步補充輸入或選單的遺漏文字
+       // 【解析 target】 (Drop 的目標在放開滑鼠當下是活著的，所以現場解析沒問題)
+       if (action.type === "dragANDdrop" && typeof action.getTargetElement === "function" && action.getTargetElement()) {
+           targetpath = this.domService.getOpenSourcePath(action.getTargetElement(), action.getTargetWindow());
+       }
+       
+       // 同步補充輸入或選單的遺漏文字 (保持不變)
        if (action.type === 'input' && !action.inputText) {
            const srcEl = action.getSourceElement();
            inputText = srcEl ? (srcEl.innerText || srcEl.value || "") : "";
