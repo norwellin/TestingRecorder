@@ -183,7 +183,7 @@ chrome.tabs.onCreated.addListener(async (tab) => {
     // 找出是誰開啟了這個新分頁
     let openerId = tab.openerTabId;
     if (!openerId) {
-      // 如果 Chrome 沒給，就抓當前一般視窗的活躍分頁當作「母分頁」
+      // 如果 Chrome 沒給，就抓當前一般視窗的活躍分頁當作母分頁
       const activeTabs = await chrome.tabs.query({ active: true, windowType: "normal" });
       if (activeTabs.length > 0) openerId = activeTabs[0].id;
     }
@@ -204,14 +204,13 @@ chrome.tabs.onCreated.addListener(async (tab) => {
 });
 
 // 2. 捕捉分頁網址更新的瞬間
-// 2. 捕捉分頁網址更新的瞬間
+//用來取得在onCreate沒有取到網址的網頁
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // 如果這個分頁在我們的小本本裡，而且有網址更新的情報
-  if (pendingPopups.has(tabId) && changeInfo.url) {
+  if (pendingPopups.has(tabId) && changeInfo.url) { //url變動才觸發
     const url = changeInfo.url;
     
-    // 🚨 關鍵修復：嚴格把關！
-    // 必須不是 chrome 內部頁面，且「絕對不能是 about:blank 或空字串」
+    // 必須不是 chrome 內部頁面，且絕對不能是 about:blank 或空字串
     if (!url.startsWith('chrome://') && url !== 'about:blank' && url.trim() !== '') {
       const openerId = pendingPopups.get(tabId);
       pendingPopups.delete(tabId); // 拿到真實網址了，從本本劃掉
@@ -229,7 +228,7 @@ function sendPopupToContentScript(openerTabId, newTabId, url) {
   // 建立一個專屬的變數名稱，例如 popup_17749323
   const uniquePopupId = `popup_${Date.now().toString().slice(-6)}`;
 
-  // 🌟 關鍵修復 1：把這個變數名稱存入全域，讓即將甦醒的新視窗可以去認領！
+  // 把這個變數名稱存入全域，讓即將甦醒的新視窗可以去認領！
   chrome.storage.local.set({ latestPopupAlias: uniquePopupId });
 
   chrome.tabs.sendMessage(openerTabId, {

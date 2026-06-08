@@ -56,6 +56,8 @@ export class IframeEventListener {
     this.iframeWindow.addEventListener('drop', this.dropHandler.bind(this));
     this.iframeDocument.addEventListener("click", this.clickHandler.bind(this), true);
 
+    // 【新增】監聽 change 事件
+    this.iframeDocument.addEventListener("change", this.changeHandler.bind(this), true);
     // 必須 preventDefault 才能觸發 drop
     this.iframeDocument.addEventListener("dragover", (e) => {
       if (this.isRecording) e.preventDefault(); 
@@ -65,6 +67,20 @@ export class IframeEventListener {
     this.iframeWindow.addEventListener('message', this.messageHandler.bind(this));
   }
 
+  // 【新增】處理 SELECT 與 Checkbox 的改變
+  changeHandler(e) {
+    if (!this.isRecording || !e.isTrusted) return;
+    const tag = e.target.tagName;
+    const type = e.target.type;
+
+    const isSelect = tag === "SELECT";
+    const isCheckbox = tag === "INPUT" && type === "checkbox";
+
+    if (!isSelect && !isCheckbox) return;
+
+    const action_type = isSelect ? 'change' : 'checkBox';
+    this.dispatchAction(action_type, e.target);
+  }
   messageHandler(e) {
     const msg = e.data;
     switch (msg.type) {
@@ -121,6 +137,17 @@ export class IframeEventListener {
 
   inputHandler(e) {
     if (!this.isRecording || !e.isTrusted) return;
+    // 【新增】過濾機制：確認觸發 input 的元素是不是真的「文字輸入框」
+    const tag = e.target.tagName.toLowerCase();
+    const type = e.target.getAttribute("type");
+
+    const isTextInput =
+      (tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type))) ||
+      tag === "textarea" ||
+      e.target.isContentEditable;
+
+    // 如果不是文字輸入框（例如 select），就直接 return 跳出，不記錄 input
+    if (!isTextInput) return;
     clearTimeout(this.inputTimer);
     this.inputTimer = setTimeout(() => {
       this.currentHoveredElement = e.target;
@@ -132,6 +159,8 @@ export class IframeEventListener {
 
   mouseupHandler(e) {
     if (!this.isRecording) return;
+    // 【新增】過濾掉 SELECT 和 LABEL 的點擊，這些交由 change 事件去處理
+    if (e.target.tagName === "LABEL" || e.target.tagName === "SELECT") return;
 // 增加一個 Debug 觀察觸發次數
     console.log("[Debug IframeListener] mouseup 觸發, isDragging:", this.isDragging);
     if (this.isDragging) {

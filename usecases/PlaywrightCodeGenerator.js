@@ -316,6 +316,7 @@ declareContexts(contexts, rootAlias) {
     if (funName === "ByTitle") data = obj.title;
     else if (funName === "ByText") data = obj.text;
     else if (funName === "ByDomPath") data = obj.csspath;
+    else if (funName === "ByRole") data = `role: ${obj.role} name: "${obj.name}"`;
 
     if (targetType === "drop" || targetType === "target") {
       action.setTargetMethod(funName);

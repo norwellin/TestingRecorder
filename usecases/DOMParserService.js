@@ -2,15 +2,21 @@
 import { DOMElement } from './../entities/DOMElement.js';
 import { DIALOG_SELECTORS as ds } from './../config.js';
 import { getCssSelector } from "css-selector-generator";
-import { select } from 'optimal-select' // global: 'OptimalSelect'
+import { select } from 'optimal-select'; // global: 'OptimalSelect'
 import unique from 'unique-selector';
 
+// ====== 新增：引入 @medv/finder ======
+import { finder } from '@medv/finder';
+
+// ====== 新增：引入 Testing Library 與無障礙 API ======
+// 加入 getRoles
+import { queryAllByRole, queryAllByText, queryAllByTitle, getRoles } from '@testing-library/dom';
+import { computeAccessibleName } from 'dom-accessibility-api';
 
 export class DOMParserService {
   constructor(contexts = {}) {
     this.mainWindow = contexts?.mainWindow || window;
-    
-    // 【修改】移除舊版寫死的 iframeWindow 與 iframeDoc 依賴
+
     this.currentDoc = null; // 動態儲存當前正在處理的元素的所屬 Document
 
     this.DIALOG_SELECTORS = ds;
@@ -25,523 +31,380 @@ export class DOMParserService {
       ByRole: { name: null, role: null, index: null },
       ByLabel: {}, ByPlaceholder: {}, ByText: { text: null }, ByTitle: { title: null }, ByAltText: {}, ByDomPath: { csspath: null }
     };
-    
+
     this.weight = { WL: 0.4, Wc: 0.6, Wa: 1.0, Wcl: 1.0, Wt: 1.0, Wn: 3.0 };
   }
+
   getDocumentByWindowType(windowType) {
-  if (windowType === 'iframe') {
-    return this.iframeWindow?.document || null;
+    if (windowType === 'iframe') {
+      return this.iframeWindow?.document || null;
+    }
+    return this.mainWindow?.document || document;
   }
-  return this.mainWindow?.document || document;
-}
+
   getOpenSourcePath(e, sourceWin = null) {
-    if(!e) return [null, null ,null];
-    // 改良檢查方式：檢查元素是否掛載在它自己的 ownerDocument 下
+    if (!e) return [null, null, null];
+
     const ownerDoc = e.ownerDocument;
     if (!ownerDoc || !ownerDoc.contains(e)) {
-        console.warn("[DOMParser] 元素已不在所屬的文件中，嘗試解析失敗", e);
-        // 如果是 DnD 且元素剛好消失，這裡可以回傳一個標記，讓 CodeGenerator 用座標或最後已知路徑
-        return null; 
+      console.warn("[DOMParser] 元素已不在所屬的文件中，嘗試解析失敗", e);
+      return null;
     }
-    // 新增 Debug Console
+
     console.log("[Debug DOMParser] 正在解析元素:", e);
-    console.log("[Debug DOMParser] 元素所屬 Document:", e.ownerDocument);
-    console.log("[Debug DOMParser] 傳入的 sourceWin:", sourceWin);
-    console.log("[Debug DOMParser] 當前 Service 的 currentDoc:", this.currentDoc);
-    // 【重要修復】取得元素真正的根節點 (可能是 Document 或 ShadowRoot)
+
     const realRoot = e.getRootNode();
     this.cleanInfo();
     this.setInfo(e); // 這裡會同步更新 this.currentDoc
     this.clearPlaywrightObj();
 
+    // 狀態記錄物件，記錄各種類型的 Locator 是否能唯一找到元素
+    let isUniqueObj = { ByRole: false, ByTitle: false, ByDomPath: false, ByText: false };
 
-    
-    
-    let isUniqueObj = { ByTitle: false, ByDomPath: false, ByText: false };
-    
-    // 【修改】統一使用元素自己的 Document 進行解析
-    let doc = this.currentDoc; 
-    let cssatt, optPri, uniPri;
+    // ==========================================
+    // 1. 統一的屬性優先級設定 (保留 class，但交由我們的過濾器嚴格審查)
+    // ==========================================
+    const cssatt = ["id", "attribute", "class", "tag", "nthchild"];
+    const optPri = ['id', 'class', 'name', 'placeholder', 'data-testid', 'href', 'src']; 
+    const uniPri = ["ID", "Attributes", "Class", "Tag", "NthChild"];
 
-    // 簡單判斷是否為頂層主網頁，給予不同的演算法優先度
-    if (realRoot !== this.mainWindow.document){
-      cssatt = ["tag", "class", 'attribute', "nthchild"];
-      optPri = ['tag', 'class','attribute'];
-      uniPri = [ 'Tag', 'Class', 'Attributes', 'NthChild' ];
-    } else {
-      cssatt = ["class", 'attribute', "tag", "nthchild"];
-      optPri = ['class','attribute','tag'];
-      uniPri = [ 'Class', 'Attributes', 'Tag', 'NthChild' ];
-    } 
+    // 針對 unique-selector 製作的綜合正規表達式 (同時包含動態 ID 與不穩定 Class)
+    const dynamicIdOrClassRegex = new RegExp(
+        // 動態 ID 的特徵
+        `(#(i[a-z0-9]{3,5}|ion-(input|textarea|select|checkbox|radio|toggle|range|datetime)-\\d+(-lbl)?|[0-9a-f]{8}-.*|[a-z0-9_-]{10,}))|` + 
+        // 狀態與 Utility Class 的特徵 (如選取狀態、Tailwind 排版等)
+        `(\\.(active|focus|hover|disabled|selected|checked|hydrated|md|ios|gjs-[\\w-]+|css-[\\w-]+|sc-[\\w-]+|styled-[\\w-]+|p-\\d|m-\\d|px-\\d|py-\\d|mx-\\d|my-\\d|w-\\w+|h-\\w+|text-\\w+|bg-\\w+|flex|grid|col|row|rounded|shadow|border))`
+    , 'i');
 
-    let csskey = 0, optkey = 0, unikey = 0;
-    const selector = getCssSelector(e, { selectors: cssatt, blacklist: ["id"], root: realRoot });
-    if(this.findUnique(selector, realRoot)){
-      isUniqueObj.ByDomPath = true; csskey = 1;
+    let csskey = 0, optkey = 0, unikey = 0, finderkey = 0;
+
+    // ==========================================
+    // 2. 各大 CSS Selector 套件解析 (加入 ID 與 Class 雙重攔截機制)
+    // ==========================================
+
+    // (A) css-selector-generator
+    let selector = "";
+    try {
+        selector = getCssSelector(e, { 
+            selectors: cssatt, 
+            root: realRoot,
+            blacklist: [
+                (sel) => {
+                    if (typeof sel === 'string') {
+                        // 如果是 ID，檢查是否為動態亂碼
+                        if (sel.startsWith('#')) return this.isDynamicGeneratedId(sel.slice(1)); 
+                        // 如果是 Class，檢查是否為不穩定/純排版的 Class
+                        if (sel.startsWith('.')) return this.isDynamicOrUnstableClass(sel.slice(1)); 
+                    }
+                    return false;
+                }
+            ]
+        });
+        if (this.findUnique(selector, realRoot)) {
+            isUniqueObj.ByDomPath = true; csskey = 1;
+        }
+    } catch (err) {
+        console.warn("[DOMParser] css-selector-generator 解析失敗", err);
     }
-  
-    let opt_selector = select(e, { root: realRoot, priority: optPri, ignore: { id: true } });
-    if(this.findUnique(opt_selector, realRoot)){
-      isUniqueObj.ByDomPath = true; optkey = 1;
+
+    // (B) optimal-select
+    let opt_selector = "";
+    try {
+        opt_selector = select(e, { 
+            root: realRoot, 
+            priority: optPri, 
+            ignore: { 
+                // 讓我們的過濾函數決定這個 class 該不該用 (回傳 true 代表忽略)
+                class: (className) => this.isDynamicOrUnstableClass(className),
+                attribute: (name, value, defaultPredicate) => {
+                    if (name === 'id') return this.isDynamicGeneratedId(value);
+                    return typeof defaultPredicate === 'function' ? defaultPredicate(name, value) : false;
+                }
+            }
+        });
+        if (this.findUnique(opt_selector, realRoot)) {
+            isUniqueObj.ByDomPath = true; optkey = 1;
+        }
+    } catch (err) {
+        console.warn("[DOMParser] optimal-select 解析失敗", err);
     }
 
-    let dom_selector = unique( e, { selectorTypes : uniPri } ); 
-    if(this.findUnique(dom_selector, realRoot)){
-      isUniqueObj.ByDomPath = true; unikey = 1;
+    // (C) unique-selector
+    let dom_selector = "";
+    try {
+        dom_selector = unique(e, { 
+            selectorTypes: uniPri,
+            // 傳入我們剛剛寫好的 ID 與 Class 綜合黑名單正規表達式
+            excludeRegex: dynamicIdOrClassRegex 
+        });
+        if (this.findUnique(dom_selector, realRoot)) {
+            isUniqueObj.ByDomPath = true; unikey = 1;
+        }
+    } catch (err) {
+        console.warn("[DOMParser] unique-selector 解析失敗", err);
     }
 
+    // (D) @medv/finder
+    let finder_selector = "";
+    try {
+        finder_selector = finder(e, {
+            root: realRoot,
+            idName: (name) => !this.isDynamicGeneratedId(name),
+            // 只有「不是」不穩定 Class 的，才允許被 finder 使用
+            className: (name) => !this.isDynamicOrUnstableClass(name),
+        });
+        if (this.findUnique(finder_selector, realRoot)) {
+            isUniqueObj.ByDomPath = true; finderkey = 1;
+        }
+    } catch (err) {
+        console.warn("[DOMParser] finder 解析失敗", err);
+    }
+
+    // ==========================================
+    // 3. 評估與競爭最佳 DOM Path
+    // ==========================================
     let csspath = this.analyzeCssPath(selector, csskey);
     let optpath = this.analyzeCssPath(opt_selector, optkey);
     let unipath = this.analyzeCssPath(dom_selector, unikey);
+    let finderpath = this.analyzeCssPath(finder_selector, finderkey);
 
-    this.playwrightObj.ByDomPath.csspath = this.bestDomPath([csspath, optpath, unipath]);
-
-    if (this.checkUniqueByTitle(this.allAttributeInfo.title)) {
-      this.playwrightObj.ByTitle.title = this.allAttributeInfo.title; isUniqueObj.ByTitle = true;
-    }
-    if (this.checkUniqueByText(this.allAttributeInfo.text)) {
-      this.playwrightObj.ByText.text = this.allAttributeInfo.text; isUniqueObj.ByText = true;
-    }
-
-    let newObj = {};
-    for (let i = 0; i < this.priSize; i++) {
-      let key = this.priority[i];
-      if (isUniqueObj[key]) newObj[i] = { funName: key, obj: this.playwrightObj[key] };
-    }
-    return newObj; 
-  }
-
- bestDomPath(paths) {
-  // 設定權重
-  const WL = this.weight.WL;
-  const Wc = this.weight.Wc;
-  const Wa = this.weight.Wa;
-  const Wcl = this.weight.Wcl;
-  const Wt = this.weight.Wt;
-  const Wn = this.weight.Wn;
-
-  let bestScore = -Infinity;
-  let bestPath = null;
-
-  for (const p of paths) {
-    const { length, a, cl, t, n, U } = p;
-
-    // 計算 Lscore
-    const Lscore = 1 / (1 + length);
-
-    // 計算 Cscore
-    const Cscore = 1 / (1 + Wa * a + Wcl * cl + Wt * t + Wn * n);
-
-    // 計算總 Score
-    const Score = U * (WL * Lscore + Wc * Cscore);
+    console.log("csspath: ", csspath);
+    console.log("optpath: ", optpath);
+    console.log("unipath: ", unipath);
+    console.log("finderpath: ", finderpath);
     
-    console.log("Score - path1: ", p.path);
-    console.log("Score - score: ",Score);
-    console.log("Score - Others: LS", Lscore, " CS: ",Cscore, "wa, a, wcl, cl, wt, t, wn, n: ",Wa,a,Wcl,cl,Wt,t,Wn,n);
+    // 利用我們優化過的權重系統 (Class 最高，嚴格懲罰 [style]) 選出最後的贏家
+    this.playwrightObj.ByDomPath.csspath = this.bestDomPath([csspath, optpath, unipath, finderpath]);
 
-    // 比較最大值
-    if (Score > bestScore) {
-      bestScore = Score;
-      bestPath = p.path;
-    }
-  }
-
-  return bestPath;
-}
-analyzeCssPath(cssPath, unique) {
-  const obj = {
-    path: cssPath,
-    length: 0,
-    a: 0,
-    cl: 0,
-    t: 0,
-    n: 0,
-    U: unique
-  };
-
-  // 計算 length (用 > 或空格拆層級)
-  obj.length = cssPath
-  .split(/>|\s+/)
-  .filter(Boolean).length;
-
-
-  // 計算 attribute 數量 (簡單判斷 [])
-  const attrMatches = cssPath.match(/\[[^\]]+\]/g);
-  obj.a = attrMatches ? attrMatches.length : 0;
-
-  // 計算 class 數量 (用 .)
-  const classMatches = cssPath.match(/\.[^\s\#\.\[:>]+/g);
-  obj.cl = classMatches ? classMatches.length : 0;
-
-  // 計算 tag 數量 (用正則匹配標籤名，排除 . # [])
-const cleanedForTag = cssPath
-  .replace(/:[a-zA-Z-]+\([^)]+\)/g, '') // 移除 pseudo
-  .replace(/\.[a-zA-Z0-9_-]+/g, '')     // 移除 class
-  .replace(/\[[^\]]+\]/g, '');          // 移除 attribute
-
-const tagMatches = cleanedForTag.match(/\b[a-zA-Z][a-zA-Z0-9]*\b/g);
-
-console.log("Score: tag", tagMatches);
-
-obj.t = tagMatches ? tagMatches.length : 0;
-
-// 計算 nth（nth-child + nth-of-type）
-const nthMatches = cssPath.match(/:nth-(child|of-type)\([^)]+\)/g);
-obj.n = nthMatches ? nthMatches.length : 0;
-
-
-  return obj;
-}
-
-findUnique(path, doc){
-  const element = doc.querySelectorAll(path);
-  console.log("element: ",element);
-  if(element.length === 1){  
-    console.log("This csspath is unique");
-    return true;
-}
-  else{
-    console.log("This is not unique");
-    return false;
-  }
-}
-
-  getAllPath(el, sourceWin) {
-    console.log("el:", el);
-    this.cleanInfo();
-    this.setInfo(el);
-    this.clearPlaywrightObj();
-    console.log("All Attribute Info: ", this.allAttributeInfo);
-    let isUniqueObj = {
-      ByRole: false,
-      ByTitle: false,
-      ByDomPath: false,
-      ByText: false
-    };
-    //先找dompath
-    //const dompath = this.getShortUniqueDomPath(el);
-    //console.log("dompath inside getAllPath: ",dompath);
-    const dompath = this.getUniquePath(el);
-    if (this.checkUniqueByDompath(dompath)) {
-      console.log("DOMPATH is UNIQUE!!!!");
-      //this.playwrightObj.ByDomPath.csspath = dompath;
-      this.playwrightObj.ByDomPath.csspath = dompath;
-      console.log("dompah inside playwrightObj: ", this.playwrightObj);
-      isUniqueObj.ByDomPath = true;
-    }
-    else {
-      console.log("dompath is not unique~");
-      isUniqueObj.ByDomPath = false;
-    }
-
-
-    //找byrole
-    //let roleIndex = this.getRoleNthIndex(el, this.allAttributeInfo.role, this.allAttributeInfo.tagName);
-    if (this.getPlaywrightRole(el, sourceWin)) {
-      console.log("Role - attributeInfo: ", this.allAttributeInfo, " obj: ", this.playwrightObj);
-
-      //this.playwrightObj.ByRole.name = this.allAttributeInfo.tagName;
-      //this.playwrightObj.ByRole.role = this.allAttributeInfo.role;
+    // ==========================================
+    // 4. Playwright 特有語義定位分析 (ByRole, ByTitle, ByText)
+    // ==========================================
+    if (this.getPlaywrightRole(e, sourceWin)) {
       isUniqueObj.ByRole = true;
-    } else {
-      isUniqueObj.ByRole = false;
     }
-
-    //找bytitle
-    if (this.checkUniqueByTitle(this.allAttributeInfo.title)) {
-      this.playwrightObj.ByTitle.title = this.allAttributeInfo.title;
+    if (this.checkUniqueByTitle(e)) {
       isUniqueObj.ByTitle = true;
-    } else {
-      isUniqueObj.ByTitle = false;
     }
-
-    //find byText
-    if (this.checkUniqueByText(this.allAttributeInfo.text)) {
-      this.playwrightObj.ByText.text = this.allAttributeInfo.text;
+    if (this.checkUniqueByText(e)) {
       isUniqueObj.ByText = true;
-    } else {
-      isUniqueObj.ByText = false;
     }
 
-    //決定回傳物件
+    // ==========================================
+    // 5. 按照優先級 (Priority) 輸出結果
+    // ==========================================
     let newObj = {};
-
-
-    // 遍歷 priority (保證按照數字順序 0 → 6)
     for (let i = 0; i < this.priSize; i++) {
       let key = this.priority[i];
       if (isUniqueObj[key]) {
-        newObj[i] = { funName: key, obj: this.playwrightObj[key] };
+          newObj[i] = { funName: key, obj: this.playwrightObj[key] };
       }
     }
-    if (Object.keys(newObj).length === 0) {
-      throw new Error("Can't find the unique path here!");
-    }
-    console.log("newObj: ", newObj);
-    return newObj; //return 按照優先順序排列的array path,ex: [{},{},{}]
+    
+    return newObj;
   }
 
-  inferRole(el) {
-    if (el.hasAttribute('role')) return el.getAttribute('role');
+  bestDomPath(paths) {
+    const WL = this.weight.WL;
+    const Wc = this.weight.Wc;
+    const Wa = this.weight.Wa;
+    const Wcl = this.weight.Wcl;
+    const Wt = this.weight.Wt;
+    const Wn = this.weight.Wn;
 
-    switch (el.tagName.toLowerCase()) {
-      case 'button': return 'button';
-      case 'a': return el.hasAttribute('href') ? 'link' : null;
-      case 'input': {
-        const type = el.getAttribute('type') || 'text';
-        if (type === 'checkbox') return 'checkbox';
-        if (type === 'radio') return 'radio';
-        return 'textbox';
+    let bestScore = -Infinity;
+    let bestPath = null;
+
+    for (const p of paths) {
+      const { length, a, cl, t, n, U } = p;
+      const Lscore = 1 / (1 + length);
+      const Cscore = 1 / (1 + Wa * a + Wcl * cl + Wt * t + Wn * n);
+      const Score = U * (WL * Lscore + Wc * Cscore);
+
+      if (Score > bestScore) {
+        bestScore = Score;
+        bestPath = p.path;
       }
-      case 'img': return 'img';
-      case 'h1':
-      case 'h2':
-      case 'h3':
-      case 'h4':
-      case 'h5':
-      case 'h6': return 'heading';
-      default: return null;
+    }
+    return bestPath;
+  }
+
+  analyzeCssPath(cssPath, unique) {
+    const obj = {
+      path: cssPath || "",
+      length: 0,
+      a: 0,
+      cl: 0,
+      t: 0,
+      n: 0,
+      U: unique
+    };
+
+    if (!cssPath || typeof cssPath !== 'string') {
+      return obj;
+    }
+
+    obj.length = cssPath.split(/>|\s+/).filter(Boolean).length;
+    const attrMatches = cssPath.match(/\[[^\]]+\]/g);
+    obj.a = attrMatches ? attrMatches.length : 0;
+    const classMatches = cssPath.match(/\.[^\s\#\.\[:>]+/g);
+    obj.cl = classMatches ? classMatches.length : 0;
+
+    const cleanedForTag = cssPath
+      .replace(/:[a-zA-Z-]+\([^)]+\)/g, '')
+      .replace(/\.[a-zA-Z0-9_-]+/g, '')
+      .replace(/\[[^\]]+\]/g, '');
+
+    const tagMatches = cleanedForTag.match(/\b[a-zA-Z][a-zA-Z0-9]*\b/g);
+    obj.t = tagMatches ? tagMatches.length : 0;
+
+    const nthMatches = cssPath.match(/:nth-(child|of-type)\([^)]+\)/g);
+    obj.n = nthMatches ? nthMatches.length : 0;
+
+    return obj;
+  }
+
+  findUnique(path, doc) {
+    if (!path) return false;
+    try {
+      const element = doc.querySelectorAll(path);
+      return element.length === 1;
+    } catch (e) {
+      return false;
     }
   }
+
+  getTestingLibraryRole(el) {
+    if (!el) return null;
+
+    if (el.hasAttribute('role')) {
+      return el.getAttribute('role');
+    }
+
+    try {
+      const rolesMap = getRoles(el);
+
+      for (const [roleName, elements] of Object.entries(rolesMap)) {
+        if (elements.includes(el)) {
+          return roleName;
+        }
+      }
+    } catch (e) {
+      console.warn("[DOMParser] Testing Library getRoles 解析失敗", e);
+    }
+
+    return null;
+  }
+
   getPlaywrightRole(el, sourceWin) {
-    if (!(el instanceof Element)) return null;
-    const role = el.getAttribute('role') || this.inferRole(el);
-    if (!role) return null;
+    if (!(el instanceof Element)) return false;
+    const container = this.currentDoc.body || this.currentDoc;
 
-    const name = el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('placeholder') || el.textContent.trim();
-
-    // 【修改】直接使用元素自身的 Document，移除會導致崩潰的 throw new Error
-    let targetDoc = this.currentDoc || el.ownerDocument || document;
-
-    let containerEl = null;
-    for (const sel of this.DIALOG_SELECTORS) {
-      containerEl = el.closest(sel);
-      if (containerEl) break;
+    const role = this.getTestingLibraryRole(el);
+    
+    // 🌟 修正 1：直接在這裡排除沒有語意的 generic 與 presentation
+    if (!role || role === 'generic' || role === 'presentation') {
+        return false; 
     }
 
-    const searchRoot = containerEl || targetDoc;
+    let name = "";
+    try {
+      name = computeAccessibleName(el);
+    } catch (e) {
+      console.warn("[DOMParser] computeAccessibleName 發生錯誤", e);
+    }
 
-    const allSame = Array.from(searchRoot.querySelectorAll('*')).filter(e => {
-      const style = window.getComputedStyle(e);
-      if (style.display === 'none' || style.visibility === 'hidden') return false;
-      const r = e.getAttribute('role') || this.inferRole(e);
-      if (r !== role) return false;
-      const n = e.getAttribute('aria-label') || e.getAttribute('alt') || e.getAttribute('placeholder') || e.textContent.trim();
-      return n === name;
-    });
+    try {
+      const options = name ? { name: name, exact: true } : {};
+      const matches = queryAllByRole(container, role, options);
 
-    const index = allSame.indexOf(el);
-    const isUnique = allSame.length === 1;
+      const index = matches.indexOf(el);
 
-    this.playwrightObj.ByRole.index = index;
-    this.playwrightObj.ByRole.name = name;
-    this.playwrightObj.ByRole.role = role;
-
-    return isUnique;
+      // 🌟 修正 2：拔除嚴格的 isUnique，只要畫面上有找到 (index !== -1) 就視為成功
+      if (index !== -1) {
+        this.playwrightObj.ByRole.index = index;
+        this.playwrightObj.ByRole.name = name || null;
+        this.playwrightObj.ByRole.role = role;
+        
+        return true; // 允許回傳 true，讓後續產生器可以補上 .nth(index)
+      }
+      return false;
+      
+    } catch (error) {
+      console.warn("[DOMParser] Testing Library ByRole 解析失敗", error);
+      return false;
+    }
   }
 
-
-
-  getDomPath(el) {
-    if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
-
-    const path = [];
-
-    while (el && el.nodeType === Node.ELEMENT_NODE) {
-      let selector = el.nodeName.toLowerCase();
-
-      /*
-      // 如果有 ID，直接回傳
-      if (el.id) {
-        selector += `#${el.id}`;
-        path.unshift(selector);
-        break; // 因為 ID 已經唯一，不用再往上
-      }
-  */
-      // 如果有 class，加上 class
-      if (el.className) {
-        // 避免有多個 class，只取第一個
-        const className = el.className.split(' ')[0];
-        if (className) {
-          selector += `.${className}`;
-        }
-      }
-
-      // 檢查是否需要 nth-of-type
-      let siblingIndex = 1;
-      let sibling = el;
-      while ((sibling = sibling.previousElementSibling)) {
-        if (sibling.nodeName === el.nodeName) {
-          siblingIndex++;
-        }
-      }
-      if (siblingIndex > 1) {
-        selector += `:nth-of-type(${siblingIndex})`;
-      }
-
-      path.unshift(selector);
-      el = el.parentElement;
-    }
-    //console.log(this.isUnique(path.join('>')));
-    let newpath = path.join('>');
-    console.log("dom path: ", newpath);
-    return newpath;
-  }
-  ///////自己寫
-  getUniquePath(el) {
-    if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
-    const path = [];
-
-    while (el && el.nodeType === Node.ELEMENT_NODE) {
-      let tag = el.tagName.toLowerCase();
-
-      const parent = el.parentElement;
-      if (parent) {
-        console.log("parent children: ", Array.from(parent.children));
-        const siblings = Array.from(parent.children).filter(
-          sib => sib.tagName === el.tagName
-        );
-        if (siblings.length > 1) {
-          const index = siblings.indexOf(el) + 1;
-          tag += `:nth-of-type(${index})`;
-        }
-        // 組成 fullPath 並檢查是否唯一
-        const fullPath = path.length ? `${tag} > ${path.join(' > ')}` : tag;
-        if (document.querySelectorAll(fullPath).length === 1) {
-          path.unshift(tag);
-          console.log("short: full path只有一個");
-          console.log("short path:", path);
-          console.log("short -----------------");
-          break;
-        }
-      }
-
-
-      path.unshift(tag);
-      el = el.parentElement;
-    }
-    console.log("parent children path: ", path);
-    return path.join(' > ');
-  }
-
-
-
-
-  getShortUniqueDomPath(el, opts = {}) {
-    if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
-    const maxDepth = typeof opts.maxDepth === 'number' ? opts.maxDepth : 8;
-    //console.log("short unique: ", el);
-    /*
-    // 如果有 ID，且確定唯一，直接回傳
-    if (el.id) {
-      const escapedId = CSS.escape(el.id);
-      if (document.querySelectorAll(`#${escapedId}`).length === 1) return `#${escapedId}`;
-    }
-  */
-    const path = [];
-    let current = el;
-    let depth = 0;
-
-    // ✅ Step 1: 若有 aria-labelledby 屬性，嘗試取得對應文字
-    const labelledById = el.getAttribute('aria-labelledby');
-    if (labelledById) {
-      const labelElement = document.getElementById(labelledById);
-      if (labelElement) {
-        console.log('🔹 有 aria-labelledby，對應 label 文字：', labelElement.textContent.trim());
-        // 這裡可以選擇回傳 label 內容或 selector
-        return '#' + labelledById;
-      } else {
-        console.warn('⚠️ 找不到對應的 label 元素：', labelledById);
-      }
-    }
-    while (current && current.nodeType === Node.ELEMENT_NODE && depth < maxDepth) {
-      depth++;
-      let selector = current.tagName.toLowerCase();
-
-      // 如果有 class，嘗試用某個唯一 class（需 escape）
-      if (current.className && typeof current.className === 'string') {
-        const classList = current.className.trim().split(/\s+/).filter(Boolean);
-        for (const cls of classList) {
-          const esc = CSS.escape(cls);
-          const testSelector = `${selector}.${esc}`;
-          if (document.querySelectorAll(testSelector).length === 1) {
-            selector = testSelector;
-            break;
-          }
-        }
-      }
-
-      // 組成 fullPath 並檢查是否唯一
-      const fullPath = path.length ? `${selector} > ${path.join(' > ')}` : selector;
-      if (document.querySelectorAll(fullPath).length === 1) {
-        path.unshift(selector);
-        console.log("short: full path只有一個");
-        console.log("short path:", path);
-        console.log("short -----------------");
-        break;
-      }
-
-      // nth-of-type 作為最後手段（只在必要時加）
-      let siblingIndex = 1;
-      let sibling = current;
-      while ((sibling = sibling.previousElementSibling)) {
-        if (sibling.nodeName === current.nodeName) siblingIndex++;
-      }
-      if (siblingIndex > 1) selector += `:nth-of-type(${siblingIndex})`;
-
-      path.unshift(selector);
-      console.log("short: sibling finded siblingIndex: ", siblingIndex);
-      console.log("short path:", path);
-      console.log("short -----------------");
-      current = current.parentElement;
-    }
-    console.log("short unique path: ", path.join(' > '));
-    return path.join(' > ');
-  }
-
-
-
-checkUniqueByDompath(path) {
+  checkUniqueByText(el) {
     if (!this.currentDoc) return false;
-    return this.currentDoc.querySelectorAll(path).length === 1;
+    const container = this.currentDoc.body || this.currentDoc;
+
+    const text = (el.innerText || el.textContent || "").trim().replace(/\s+/g, ' ');
+    if (!text) return false;
+
+    try {
+      const matches = queryAllByText(container, text, { exact: true });
+      if (matches.length === 1 && matches[0] === el) {
+        this.playwrightObj.ByText.text = text;
+        return true;
+      }
+    } catch (error) {
+      console.warn("[DOMParser] Testing Library ByText 解析失敗", error);
+    }
+    return false;
   }
 
-  checkUniqueByRole(role, name, roleIndex) {
-    if (!role || !name || !this.currentDoc) return { isUnique: false, total: 0 };
-    const elements = Array.from(this.currentDoc.querySelectorAll(`[role="${role}"]`));
-    const matched = elements.filter(el => el.innerText.trim() === name);
-    return matched.length === 1;
-  }
-
-  checkUniqueByTitle(title) {
+  checkUniqueByTitle(el) {
     if (!this.currentDoc) return false;
-    const elements = this.currentDoc.querySelectorAll(`[title="${title}"]`);
-    return elements.length === 1;
-  }
+    const container = this.currentDoc.body || this.currentDoc;
+    const title = el.getAttribute('title');
 
-  checkUniqueByDom(path) {
-    if (!this.currentDoc) return false;
-    return this.currentDoc.querySelectorAll(path).length === 1;
-  }
+    if (!title) return false;
 
-  checkUniqueByText(text) {
-    if (!this.currentDoc) return false;
-    const elements = Array.from(this.currentDoc.querySelectorAll('*'));
-    const matched = elements.filter(el => el.textContent.trim() === text);
-    return matched.length === 1;
+    try {
+      const matches = queryAllByTitle(container, title, { exact: true });
+      if (matches.length === 1 && matches[0] === el) {
+        this.playwrightObj.ByTitle.title = title;
+        return true;
+      }
+    } catch (error) {
+      console.warn("[DOMParser] Testing Library ByTitle 解析失敗", error);
+    }
+    return false;
   }
-  // 設定當前解析元素的屬性，並動態綁定其所屬的 Document
+// 🌟 新增：過濾不穩定、無語意、或純狀態的 Class
+  isDynamicOrUnstableClass(className) {
+    if (typeof className !== 'string') return true;
+    const val = className.trim();
+    if (!val) return true;
+
+    // 1. 狀態與框架生命週期 Class (如選取中、載入中、特定平台)
+    const stateClasses = /^(active|focus|hover|visited|disabled|selected|checked|hydrated|md|ios|gjs-[a-zA-Z0-9_-]+)$/i;
+    
+    // 2. CSS-in-JS Hash 亂碼 (如 React Styled-components 產生的 css-1k2x3y, sc-bdVaJa)
+    const cssInJsLike = /^(css-|sc-|styled-).*[a-zA-Z0-9_-]{4,}$/i;
+    
+    // 3. Tailwind / Bootstrap 等純排版 Utility Class (如 p-4, m-2, text-center, flex, w-full)
+    const utilityClasses = /^(p|m|px|py|mx|my|w|h|text|bg|flex|grid|col|row|rounded|shadow|border)-[a-z0-9]+$/i;
+    
+    // 4. 純粹的亂碼 (例如編譯打包後出現的 8 碼以上隨機字串)
+    const pureHash = /^[a-z0-9]{8,15}$/i; 
+
+    // 如果符合任何一種「不穩定特徵」，就回傳 true (代表這是壞的 Class，應該被忽略)
+    return stateClasses.test(val) || cssInJsLike.test(val) || utilityClasses.test(val) || pureHash.test(val);
+  }
   setInfo(el) {
     if (!el) return;
-    // 【關鍵修改】讓元素自己告訴我們它屬於哪個環境的 Document！
     this.currentDoc = el.ownerDocument || document;
 
     this.allAttributeInfo.tagName = el.tagName || null;
     this.allAttributeInfo.id = el.id || null;
     this.allAttributeInfo.className = el.className || null;
     this.allAttributeInfo.title = el.title || null;
-    const text = el.innerText;
-    this.allAttributeInfo.text = (typeof text === "string") ? text.trim() : null;
+
+    const rawText = el.innerText || el.textContent || "";
+    this.allAttributeInfo.text = rawText.trim().replace(/\s+/g, ' ') || null;
+
     this.allAttributeInfo.placeholder = el.placeholder || null;
     this.allAttributeInfo.alt = el.alt || null;
     this.allAttributeInfo.ariaLabel = el.getAttribute?.('aria-label') || null;
@@ -559,9 +422,10 @@ checkUniqueByDompath(path) {
     this.allAttributeInfo.ariaLabel = null;
     this.allAttributeInfo.role = null;
   }
+
   clearPlaywrightObj() {
     this.playwrightObj = {
-      ByRole: { name: null, role: null },
+      ByRole: { name: null, role: null, index: null },
       ByLabel: {},
       ByPlaceholder: {},
       ByText: { text: null },
@@ -570,10 +434,39 @@ checkUniqueByDompath(path) {
       ByDomPath: { csspath: null }
     };
   }
+
   getPriority() {
     return this.priority;
   }
+
   getPriSize() {
     return this.priSize;
+  }
+
+  isDynamicGeneratedId(id) {
+    if (typeof id !== 'string') return false;
+
+    const value = id.trim();
+    if (!value) return false;
+
+    // 例如：ihim, iiq4k, ieq7o, i0381, idgu4
+    const grapesLikeId = /^i[a-z0-9]{3,5}$/i;
+
+    // 例如：ion-input-0-lbl, ion-textarea-0-lbl
+    const ionicGeneratedId = /^ion-(input|textarea|select|checkbox|radio|toggle|range|datetime)-\d+(-lbl)?$/i;
+
+    // 常見 UUID
+    const uuidLike =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    // 常見 hash / bundle 產生的長亂碼
+    const hashLike = /^[a-z0-9_-]{10,}$/i;
+
+    return (
+      grapesLikeId.test(value) ||
+      ionicGeneratedId.test(value) ||
+      uuidLike.test(value) ||
+      hashLike.test(value)
+    );
   }
 }
