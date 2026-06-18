@@ -1,0 +1,34 @@
+{
+  "version": "1.0",
+  "lastUpdated": "2026-06-15",
+  "dynamicIdRules": [
+    {
+      "description": "MobiWebX / GrapesJS 自動產生的短碼 ID，以 i 開頭並接 3 到 6 碼小寫英數字（例如: ijen, i5e6, iorym, i0hcyk）",
+      "pattern": "^i[a-z0-9]{3,6}$"
+    },
+    {
+      "description": "MobiWebX / GrapesJS 複製或巢狀元件後產生的短碼流水尾碼（例如: ie9yg-2-2, if7f-2, i5a7-4）",
+      "pattern": "^i[a-z0-9]{1,6}(?:-\\d+)+$"
+    },
+    {
+      "description": "功能語意型元件 ID 加上動態數字尾碼，常見於登入、註冊、錯誤訊息、社群登入按鈕（例如: username-input-4-2, error-message-container-2-2-2, google-btn-2-2）",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+-\\d+(?:-\\d+)*$"
+    },
+    {
+      "description": "Ionic ion-input 自動產生的 label 關聯 ID（例如: ion-input-2-lbl, ion-input-8-lbl）",
+      "pattern": "^ion-input-\\d+-lbl$"
+    },
+    {
+      "description": "Ionic Tabs 自動產生的 tab button 關聯 ID（例如: tab-button-tab-schedule, tab-button-tab-speaker）",
+      "pattern": "^tab-button-tab-[a-z0-9-]+$"
+    },
+    {
+      "description": "SVG 或匯入圖示複製後產生的 ID，常見於 Capa_1 後接數字尾碼（例如: Capa_1-2-2）",
+      "pattern": "^Capa_1(?:-\\d+)*$"
+    },
+    {
+      "description": "Web Component / Shadow DOM 內部固定但會重複出現的背景容器 ID（例如: background-content）",
+      "pattern": "^background-content$"
+    }
+  ]
+}

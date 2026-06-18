@@ -33,6 +33,8 @@ export class DOMParserService {
     };
 
     this.weight = { WL: 0.4, Wc: 0.6, Wa: 1.0, Wcl: 1.0, Wt: 1.0, Wn: 3.0 };
+    // 🌟 新增：用來存放從外部 (例如轉換後的 Excel JSON) 讀取到的自定義 Regex 規則
+    this.customDynamicIdPatterns = [];
   }
 
   getDocumentByWindowType(windowType) {
@@ -227,7 +229,20 @@ export class DOMParserService {
     }
     return bestPath;
   }
-
+// 🌟 新增方法：讓外部傳入解析好的動態 ID 規則
+  setCustomDynamicIdRules(rulesArray) {
+    if (!Array.isArray(rulesArray)) return;
+    
+    this.customDynamicIdPatterns = rulesArray.map(ruleStr => {
+      try {
+        // 將字串轉換為正規表達式物件，'i' 表示忽略大小寫
+        return new RegExp(ruleStr, 'i');
+      } catch (e) {
+        console.error(`[DOMParser] 無效的正則表達式規則: ${ruleStr}`, e);
+        return null;
+      }
+    }).filter(regex => regex !== null);
+  }
   analyzeCssPath(cssPath, unique) {
     const obj = {
       path: cssPath || "",
@@ -449,24 +464,45 @@ export class DOMParserService {
     const value = id.trim();
     if (!value) return false;
 
-    // 例如：ihim, iiq4k, ieq7o, i0381, idgu4
+// ==========================================
+    // 1. 檢查「自定義 Excel 規則」(如果外部有傳入設定)
+    // ==========================================
+    for (const pattern of this.customDynamicIdPatterns) {
+      if (pattern.test(value)) {
+        console.log(`[DOMParser] 攔截到符合自定義(Excel)規則的動態 ID: ${value}`);
+        return true; 
+      }
+    }
+
+    // ==========================================
+    // 2. 檢查「一般亂數與常見框架」的動態 ID 特徵
+    // ==========================================
+    
+    // 短亂碼 (如: ihim, iiq4k)
     const grapesLikeId = /^i[a-z0-9]{3,5}$/i;
 
-    // 例如：ion-input-0-lbl, ion-textarea-0-lbl
+    // Ionic 框架
     const ionicGeneratedId = /^ion-(input|textarea|select|checkbox|radio|toggle|range|datetime)-\d+(-lbl)?$/i;
 
-    // 常見 UUID
-    const uuidLike =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    // 常見 UUID (如: 123e4567-e89b-12d3-a456-426614174000)
+    const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-    // 常見 hash / bundle 產生的長亂碼
+    // 雜湊 Hash 產生的長亂碼
     const hashLike = /^[a-z0-9_-]{10,}$/i;
+
+    // 常見現代 UI 框架 (MUI, Radix, Chakra, Element Plus 等) 產生的帶數字 ID
+    const frameworkDynamic = /^(mui-|radix-|chakra-|el-|headlessui-|rc-tabs-).*\d+.*$/i;
+
+    // 純數字 ID (很多舊系統或動態表單會直接用資料庫流水號當 ID，極不穩定)
+    const pureNumbers = /^\d+$/;
 
     return (
       grapesLikeId.test(value) ||
       ionicGeneratedId.test(value) ||
       uuidLike.test(value) ||
-      hashLike.test(value)
+      hashLike.test(value) ||
+      frameworkDynamic.test(value) ||
+      pureNumbers.test(value)
     );
   }
 }

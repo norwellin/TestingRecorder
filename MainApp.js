@@ -11,6 +11,7 @@ import { PlaywrightCommand } from "./entities/PlaywrightCommand.js"; // 儲存�
 // 請確保檔案頂端有這兩行
 import { OuterEventListener } from "./interfaces/OuterEventListener.js";
 import { IframeEventListener } from "./interfaces/IframeEventListener.js";
+import customRules from './custom-rules.json';
 
 // 加在檔案最頂端，脫離所有邏輯限制
 console.log("🚀 [System] bundle.js 已經成功被 Chrome 注入到這個網頁！", window.location.href);
@@ -34,6 +35,17 @@ export class MainApp {
       mainWindow: rootWin
     });
 
+    // 🌟 2. 針對你的 JSON 格式，加入這段轉換邏輯
+    if (customRules && Array.isArray(customRules.dynamicIdRules)) {
+      // 這裡的 .map 會走訪陣列中的每一個物件，並只把 "pattern" 的值抽出來
+      // 結果會變成: ["^form-input-\\d+$", "^member_[A-Z0-9]{6}$", "^el-table_\\d+_column_\\d+$", "^\\d+$"]
+      const ruleStrings = customRules.dynamicIdRules.map(rule => rule.pattern);
+      
+      // 將純字串陣列傳給 DOMParserService
+      this.domParserService.setCustomDynamicIdRules(ruleStrings);
+      
+      console.log("✅ [MainApp] 已成功載入自定義動態 ID 規則數量：", ruleStrings.length);
+    }
     this.command = new PlaywrightCommand();
 
     this.pageAlias = 'page'; 

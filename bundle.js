@@ -7,7 +7,11 @@
   var __getProtoOf = Object.getPrototypeOf;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
   var __commonJS = (cb, mod) => function __require() {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+    try {
+      return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+    } catch (e) {
+      throw mod = 0, e;
+    }
   };
   var __copyProps = (to, from, except, desc) => {
     if (from && typeof from === "object" || typeof from === "function") {
@@ -16494,6 +16498,7 @@
         ByDomPath: { csspath: null }
       };
       this.weight = { WL: 0.4, Wc: 0.6, Wa: 1, Wcl: 1, Wt: 1, Wn: 3 };
+      this.customDynamicIdPatterns = [];
     }
     getDocumentByWindowType(windowType) {
       if (windowType === "iframe") {
@@ -16642,6 +16647,18 @@
         }
       }
       return bestPath;
+    }
+    // 🌟 新增方法：讓外部傳入解析好的動態 ID 規則
+    setCustomDynamicIdRules(rulesArray) {
+      if (!Array.isArray(rulesArray)) return;
+      this.customDynamicIdPatterns = rulesArray.map((ruleStr) => {
+        try {
+          return new RegExp(ruleStr, "i");
+        } catch (e) {
+          console.error(`[DOMParser] \u7121\u6548\u7684\u6B63\u5247\u8868\u9054\u5F0F\u898F\u5247: ${ruleStr}`, e);
+          return null;
+        }
+      }).filter((regex) => regex !== null);
     }
     analyzeCssPath(cssPath, unique3) {
       const obj = {
@@ -16812,11 +16829,19 @@
       if (typeof id !== "string") return false;
       const value = id.trim();
       if (!value) return false;
+      for (const pattern of this.customDynamicIdPatterns) {
+        if (pattern.test(value)) {
+          console.log(`[DOMParser] \u6514\u622A\u5230\u7B26\u5408\u81EA\u5B9A\u7FA9(Excel)\u898F\u5247\u7684\u52D5\u614B ID: ${value}`);
+          return true;
+        }
+      }
       const grapesLikeId = /^i[a-z0-9]{3,5}$/i;
       const ionicGeneratedId = /^ion-(input|textarea|select|checkbox|radio|toggle|range|datetime)-\d+(-lbl)?$/i;
       const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
       const hashLike = /^[a-z0-9_-]{10,}$/i;
-      return grapesLikeId.test(value) || ionicGeneratedId.test(value) || uuidLike.test(value) || hashLike.test(value);
+      const frameworkDynamic = /^(mui-|radix-|chakra-|el-|headlessui-|rc-tabs-).*\d+.*$/i;
+      const pureNumbers = /^\d+$/;
+      return grapesLikeId.test(value) || ionicGeneratedId.test(value) || uuidLike.test(value) || hashLike.test(value) || frameworkDynamic.test(value) || pureNumbers.test(value);
     }
   };
 
@@ -17517,6 +17542,42 @@
     }
   };
 
+  // custom-rules.json
+  var custom_rules_default = {
+    version: "1.0",
+    lastUpdated: "2026-06-15",
+    dynamicIdRules: [
+      {
+        description: "MobiWebX / GrapesJS \u81EA\u52D5\u7522\u751F\u7684\u77ED\u78BC ID\uFF0C\u4EE5 i \u958B\u982D\u4E26\u63A5 3 \u5230 6 \u78BC\u5C0F\u5BEB\u82F1\u6578\u5B57\uFF08\u4F8B\u5982: ijen, i5e6, iorym, i0hcyk\uFF09",
+        pattern: "^i[a-z0-9]{3,6}$"
+      },
+      {
+        description: "MobiWebX / GrapesJS \u8907\u88FD\u6216\u5DE2\u72C0\u5143\u4EF6\u5F8C\u7522\u751F\u7684\u77ED\u78BC\u6D41\u6C34\u5C3E\u78BC\uFF08\u4F8B\u5982: ie9yg-2-2, if7f-2, i5a7-4\uFF09",
+        pattern: "^i[a-z0-9]{1,6}(?:-\\d+)+$"
+      },
+      {
+        description: "\u529F\u80FD\u8A9E\u610F\u578B\u5143\u4EF6 ID \u52A0\u4E0A\u52D5\u614B\u6578\u5B57\u5C3E\u78BC\uFF0C\u5E38\u898B\u65BC\u767B\u5165\u3001\u8A3B\u518A\u3001\u932F\u8AA4\u8A0A\u606F\u3001\u793E\u7FA4\u767B\u5165\u6309\u9215\uFF08\u4F8B\u5982: username-input-4-2, error-message-container-2-2-2, google-btn-2-2\uFF09",
+        pattern: "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+-\\d+(?:-\\d+)*$"
+      },
+      {
+        description: "Ionic ion-input \u81EA\u52D5\u7522\u751F\u7684 label \u95DC\u806F ID\uFF08\u4F8B\u5982: ion-input-2-lbl, ion-input-8-lbl\uFF09",
+        pattern: "^ion-input-\\d+-lbl$"
+      },
+      {
+        description: "Ionic Tabs \u81EA\u52D5\u7522\u751F\u7684 tab button \u95DC\u806F ID\uFF08\u4F8B\u5982: tab-button-tab-schedule, tab-button-tab-speaker\uFF09",
+        pattern: "^tab-button-tab-[a-z0-9-]+$"
+      },
+      {
+        description: "SVG \u6216\u532F\u5165\u5716\u793A\u8907\u88FD\u5F8C\u7522\u751F\u7684 ID\uFF0C\u5E38\u898B\u65BC Capa_1 \u5F8C\u63A5\u6578\u5B57\u5C3E\u78BC\uFF08\u4F8B\u5982: Capa_1-2-2\uFF09",
+        pattern: "^Capa_1(?:-\\d+)*$"
+      },
+      {
+        description: "Web Component / Shadow DOM \u5167\u90E8\u56FA\u5B9A\u4F46\u6703\u91CD\u8907\u51FA\u73FE\u7684\u80CC\u666F\u5BB9\u5668 ID\uFF08\u4F8B\u5982: background-content\uFF09",
+        pattern: "^background-content$"
+      }
+    ]
+  };
+
   // MainApp.js
   console.log("\u{1F680} [System] bundle.js \u5DF2\u7D93\u6210\u529F\u88AB Chrome \u6CE8\u5165\u5230\u9019\u500B\u7DB2\u9801\uFF01", window.location.href);
   var MainApp = class {
@@ -17534,6 +17595,11 @@
       this.domParserService = new DOMParserService({
         mainWindow: rootWin
       });
+      if (custom_rules_default && Array.isArray(custom_rules_default.dynamicIdRules)) {
+        const ruleStrings = custom_rules_default.dynamicIdRules.map((rule) => rule.pattern);
+        this.domParserService.setCustomDynamicIdRules(ruleStrings);
+        console.log("\u2705 [MainApp] \u5DF2\u6210\u529F\u8F09\u5165\u81EA\u5B9A\u7FA9\u52D5\u614B ID \u898F\u5247\u6578\u91CF\uFF1A", ruleStrings.length);
+      }
       this.command = new PlaywrightCommand();
       this.pageAlias = "page";
       this.codeGenerator = new PlaywrightCodeGenerator(this.domParserService, this.command, this.pageAlias);
