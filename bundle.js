@@ -17119,9 +17119,12 @@
     _buildLocatorString(winPrefix, methodObj) {
       const { funName, obj } = methodObj;
       switch (funName) {
-        case "ByRole":
-          if (obj.index <= 0) return `${winPrefix}.getByRole("${obj.role}", { name: "${obj.name}" })`;
-          return `${winPrefix}.getByRole("${obj.role}", { name: "${obj.name}" }).nth(${obj.index})`;
+        case "ByRole": {
+          const hasName = obj.name !== null && obj.name !== void 0 && obj.name !== "";
+          const roleLocator = hasName ? `${winPrefix}.getByRole("${obj.role}", { name: "${obj.name}" })` : `${winPrefix}.getByRole("${obj.role}")`;
+          const hasIndex = obj.index !== null && obj.index !== void 0;
+          return hasIndex ? `${roleLocator}.nth(${obj.index})` : roleLocator;
+        }
         case "ByTitle":
           return `${winPrefix}.getByTitle("${obj.title}", { exact: true })`;
         case "ByText":
@@ -17201,7 +17204,16 @@
       if (funName === "ByTitle") data = obj.title;
       else if (funName === "ByText") data = obj.text;
       else if (funName === "ByDomPath") data = obj.csspath;
-      else if (funName === "ByRole") data = `role: ${obj.role} name: "${obj.name}"`;
+      else if (funName === "ByRole") {
+        const parts = [`role: ${obj.role}`];
+        if (obj.name !== null && obj.name !== void 0 && obj.name !== "") {
+          parts.push(`name: "${obj.name}"`);
+        }
+        if (obj.index !== null && obj.index !== void 0) {
+          parts.push(`index: ${obj.index}`);
+        }
+        data = parts.join(" ");
+      }
       if (targetType === "drop" || targetType === "target") {
         action.setTargetMethod(funName);
         action.setTargetData(data);
@@ -17912,11 +17924,23 @@
     // 取得錄製到的所有動作列表 (安全過濾版)
     getActions() {
       return this.store.getActions().map((act) => {
-        const safeAct = { ...act };
-        delete safeAct.source;
-        delete safeAct.target;
-        return safeAct;
+        return this.decorateActionForDisplay(act);
       });
+    }
+    decorateActionForDisplay(action) {
+      const safeAct = { ...action };
+      delete safeAct.source;
+      delete safeAct.target;
+      safeAct.displaySourceWindow = this.getDisplayContextName(safeAct.sourceWindow);
+      safeAct.displayTargetWindow = this.getDisplayContextName(safeAct.targetWindow);
+      return safeAct;
+    }
+    getDisplayContextName(contextId) {
+      if (!contextId) return "";
+      if (this.codeGenerator && typeof this.codeGenerator._getContextPrefix === "function") {
+        return this.codeGenerator._getContextPrefix(contextId);
+      }
+      return contextId;
     }
     // 取得產生的完整 Playwright 程式碼字串
     getGeneratedCode() {
@@ -18019,9 +18043,7 @@
     // 🌟 關鍵新增：統一處理增量同步到 Background 的機制
     syncToGlobalStorage(codeResult, action) {
       if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return;
-      const safeAct = { ...action };
-      delete safeAct.source;
-      delete safeAct.target;
+      const safeAct = this.decorateActionForDisplay(action);
       chrome.runtime.sendMessage({
         type: "APPEND_RECORD_DATA",
         newCode: codeResult ? codeResult.code : null,

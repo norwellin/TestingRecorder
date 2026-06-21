@@ -346,11 +346,29 @@ export class MainApp {
   getActions() {
     // 避免 chrome.runtime.sendMessage 發生 DataCloneError，必須拔除真實 DOM 節點
     return this.store.getActions().map(act => {
-      const safeAct = { ...act };
-      delete safeAct.source;  // 移除無法序列化的真實 DOM 節點
-      delete safeAct.target;  // 移除無法序列化的真實 DOM 節點
-      return safeAct;
+      return this.decorateActionForDisplay(act);
     });
+  }
+
+  decorateActionForDisplay(action) {
+    const safeAct = { ...action };
+    delete safeAct.source;  // 移除無法序列化的真實 DOM 節點
+    delete safeAct.target;  // 移除無法序列化的真實 DOM 節點
+
+    safeAct.displaySourceWindow = this.getDisplayContextName(safeAct.sourceWindow);
+    safeAct.displayTargetWindow = this.getDisplayContextName(safeAct.targetWindow);
+
+    return safeAct;
+  }
+
+  getDisplayContextName(contextId) {
+    if (!contextId) return "";
+
+    if (this.codeGenerator && typeof this.codeGenerator._getContextPrefix === "function") {
+      return this.codeGenerator._getContextPrefix(contextId);
+    }
+
+    return contextId;
   }
 
   // 取得產生的完整 Playwright 程式碼字串
@@ -477,9 +495,7 @@ export class MainApp {
   syncToGlobalStorage(codeResult, action) {
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return;
 
-    const safeAct = { ...action };
-    delete safeAct.source;
-    delete safeAct.target;
+    const safeAct = this.decorateActionForDisplay(action);
 
     chrome.runtime.sendMessage({
       type: "APPEND_RECORD_DATA",

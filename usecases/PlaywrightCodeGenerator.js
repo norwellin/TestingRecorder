@@ -282,9 +282,14 @@ declareContexts(contexts, rootAlias) {
   _buildLocatorString(winPrefix, methodObj) {
     const { funName, obj } = methodObj;
     switch (funName) {
-      case "ByRole":
-        if (obj.index <= 0) return `${winPrefix}.getByRole("${obj.role}", { name: "${obj.name}" })`;
-        return `${winPrefix}.getByRole("${obj.role}", { name: "${obj.name}" }).nth(${obj.index})`;
+      case "ByRole": {
+        const hasName = obj.name !== null && obj.name !== undefined && obj.name !== "";
+        const roleLocator = hasName
+          ? `${winPrefix}.getByRole("${obj.role}", { name: "${obj.name}" })`
+          : `${winPrefix}.getByRole("${obj.role}")`;
+        const hasIndex = obj.index !== null && obj.index !== undefined;
+        return hasIndex ? `${roleLocator}.nth(${obj.index})` : roleLocator;
+      }
       case "ByTitle":
         return `${winPrefix}.getByTitle("${obj.title}", { exact: true })`;
       case "ByText":
@@ -388,7 +393,16 @@ declareContexts(contexts, rootAlias) {
     if (funName === "ByTitle") data = obj.title;
     else if (funName === "ByText") data = obj.text;
     else if (funName === "ByDomPath") data = obj.csspath;
-    else if (funName === "ByRole") data = `role: ${obj.role} name: "${obj.name}"`;
+    else if (funName === "ByRole") {
+      const parts = [`role: ${obj.role}`];
+      if (obj.name !== null && obj.name !== undefined && obj.name !== "") {
+        parts.push(`name: "${obj.name}"`);
+      }
+      if (obj.index !== null && obj.index !== undefined) {
+        parts.push(`index: ${obj.index}`);
+      }
+      data = parts.join(" ");
+    }
 
     if (targetType === "drop" || targetType === "target") {
       action.setTargetMethod(funName);

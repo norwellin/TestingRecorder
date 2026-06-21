@@ -87,14 +87,14 @@ document.addEventListener("DOMContentLoaded", async function () {
     }
 
     function getActionSource(action) {
-        if (action.type === "navigate") return action.sourceWindow || "page";
-        if (action.type === "popup") return action.sourceWindow || action.popupId || "";
-        return action.sourceWindow || "";
+        if (action.type === "navigate") return action.displaySourceWindow || action.sourceWindow || "page";
+        if (action.type === "popup") return action.displaySourceWindow || action.sourceWindow || action.popupId || "";
+        return action.displaySourceWindow || action.sourceWindow || "";
     }
 
     function getActionTarget(action) {
-        if (action.type === "dragANDdrop") return action.targetWindow || "";
-        return action.targetWindow || "";
+        if (action.type === "dragANDdrop") return action.displayTargetWindow || action.targetWindow || "";
+        return action.displayTargetWindow || action.targetWindow || "";
     }
 
     function getActionBehavior(action) {
