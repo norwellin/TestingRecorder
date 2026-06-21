@@ -11,6 +11,7 @@ export class PlaywrightCodeGenerator {
     this.pageAlias = pageAlias;
     // 🌟 [新增] 儲存 ContextId 與對應 Playwright 變數名稱的查找表
     this.contextAliasMap = new Map();
+    this.contextMap = new Map();
   }
 
   // 2. 改為直接回傳程式碼字串，將寫入動作交還給 MainApp1 處理
@@ -139,6 +140,11 @@ export class PlaywrightCodeGenerator {
   // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
 
 _getContextPrefix(winVar) {
+    const context = this.contextMap.get(winVar);
+    if (context?.type === 'iframe') {
+        return this._buildFrameLocatorChain(context);
+    }
+
     // 優先檢查 Map
     if (this.contextAliasMap && this.contextAliasMap.has(winVar)) {
         const alias = this.contextAliasMap.get(winVar);
@@ -164,7 +170,73 @@ _getContextPrefix(winVar) {
 
 // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
 
+setContexts(contexts = [], rootAlias = this.pageAlias) {
+      if (!Array.isArray(contexts)) return;
+      const baseAlias = rootAlias || this.pageAlias;
+
+      contexts.forEach(ctx => {
+          if (!ctx?.contextId) return;
+
+          this.contextMap.set(ctx.contextId, ctx);
+
+          let alias = "";
+          if (!ctx.contextId || ctx.contextId === 'ctx_page_0') {
+              alias = baseAlias;
+          } else {
+              alias = ctx.contextId.replace(/^ctx_/, '');
+              if (ctx.type === 'iframe' && baseAlias && baseAlias !== 'page') {
+                  alias = `${baseAlias}_${alias}`;
+              }
+          }
+
+          this.contextAliasMap.set(ctx.contextId, alias);
+      });
+  }
+
+  _buildFrameLocatorChain(context) {
+      const chain = [];
+      let current = context;
+
+      while (current?.type === 'iframe') {
+          chain.unshift(current);
+          current = this.contextMap.get(current.parentContextId);
+      }
+
+      let prefix = this._getBaseContextAlias(current);
+      chain.forEach(frameContext => {
+          const selector = this._frameSelectorToLocatorSelector(frameContext.frameSelector);
+          prefix += `.locator('${this.replacePath(selector)}').contentFrame()`;
+      });
+
+      return prefix;
+  }
+
+  _getBaseContextAlias(context) {
+      if (!context) return this.pageAlias;
+
+      if (this.contextAliasMap.has(context.contextId)) {
+          const alias = this.contextAliasMap.get(context.contextId);
+          return (alias === 'page_0' || alias === 'page') ? this.pageAlias : alias;
+      }
+
+      if (context.type === 'page') return this.pageAlias;
+      return context.contextId?.replace(/^ctx_/, '') || this.pageAlias;
+  }
+
+  _frameSelectorToLocatorSelector(frameSelector) {
+      if (!frameSelector) return 'iframe';
+
+      const idMatch = String(frameSelector).match(/^(iframe|frame)#(.+)$/);
+      if (idMatch) {
+          return `#${idMatch[2]}`;
+      }
+
+      return frameSelector;
+  }
+
 declareContexts(contexts, rootAlias) {
+      this.setContexts(contexts, rootAlias);
+      return [];
       if (!contexts || !Array.isArray(contexts)) return [];
       const generatedDeclarations = [];
 
@@ -276,7 +348,7 @@ declareContexts(contexts, rootAlias) {
     this.updateUserActionDB(action, best.funName, best.obj, "source");
     
     if (best.funName === "ByDomPath") {
-        return `await ${winPrefix}.click("${this.replacePath(best.obj.csspath)}");`;
+        return `await ${winPrefix}.locator('${this.replacePath(best.obj.csspath)}').click();`;
     }
     return `await ${locator}.click();`;
   }
@@ -291,7 +363,7 @@ declareContexts(contexts, rootAlias) {
     this.updateUserActionDB(action, best.funName, best.obj, "source");
     
     if (best.funName === "ByDomPath") {
-        return `await ${winPrefix}.dblclick("${this.replacePath(best.obj.csspath)}");`;
+        return `await ${winPrefix}.locator('${this.replacePath(best.obj.csspath)}').dblclick();`;
     }
     return `await ${locator}.dblclick();`;
   }
@@ -321,9 +393,15 @@ declareContexts(contexts, rootAlias) {
     if (targetType === "drop" || targetType === "target") {
       action.setTargetMethod(funName);
       action.setTargetData(data);
+      if (funName === "ByDomPath" && Array.isArray(obj.options)) {
+        action.targetDomPathOptions = obj.options;
+      }
     } else {
       action.setSourceMethod(funName);
       action.setSourceData(data);
+      if (funName === "ByDomPath" && Array.isArray(obj.options)) {
+        action.sourceDomPathOptions = obj.options;
+      }
     }
   }
 

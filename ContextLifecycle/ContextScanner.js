@@ -91,8 +91,11 @@ export class ContextScanner {
     const frameElements = this.collectFrameElementsDeep(parentDoc);
 
     frameElements.forEach((frameEl, index) => {
+      const frameSelector = this.buildFrameSelector(frameEl, index);
+      console.log('[Debug ContextScanner] scanning iframe', this.getFrameDebugInfo(frameEl, index, frameSelector));
+
       const frameWin = this.safeGetFrameWindow(frameEl);
-      const frameDoc = this.safeGetFrameDocument(frameWin);
+      const frameDoc = this.safeGetFrameDocument(frameWin, frameEl, index, frameSelector);
 
       const frameContext = {
         contextId: this.createContextId('iframe'),
@@ -103,7 +106,7 @@ export class ContextScanner {
         windowRef: frameWin,
         documentRef: frameDoc,
         frameElement: frameEl,
-        frameSelector: this.buildFrameSelector(frameEl, index),
+        frameSelector,
         url: this.safeGetUrl(frameWin),
         children: []
       };
@@ -207,13 +210,34 @@ export class ContextScanner {
     }
   }
 
-  safeGetFrameDocument(frameWin) {
+  safeGetFrameDocument(frameWin, frameEl = null, index = 0, frameSelector = null) {
     try {
       return frameWin?.document || null;
     } catch (error) {
-      console.warn('無法取得 iframe.document，可能跨網域或受限制', error);
+      console.warn('[Debug ContextScanner] Failed to access iframe.document', {
+        frame: this.getFrameDebugInfo(frameEl, index, frameSelector),
+        frameUrl: this.safeGetUrl(frameWin),
+        errorName: error?.name,
+        errorMessage: error?.message,
+        error
+      });
       return null;
     }
+  }
+
+  getFrameDebugInfo(frameEl, index = 0, frameSelector = null) {
+    if (!frameEl) return null;
+
+    return {
+      index,
+      id: frameEl.id || null,
+      name: frameEl.name || null,
+      title: frameEl.getAttribute?.('title') || null,
+      src: frameEl.getAttribute?.('src') || null,
+      resolvedSrc: frameEl.src || null,
+      selector: frameSelector || this.buildFrameSelector(frameEl, index),
+      tagName: frameEl.tagName || null
+    };
   }
 
   safeGetUrl(win) {

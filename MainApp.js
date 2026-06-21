@@ -1,4 +1,4 @@
-// 匯入各個獨立功能的模組 (依賴注入的來源)
+﻿// 匯入各個獨立功能的模組 (依賴注入的來源)
 import { ContextScanner } from "./ContextLifecycle/ContextScanner.js"; // 負責掃描網頁中的執行環境 (如 iframe, popup)
 import { ContextRegistry } from "./ContextLifecycle/ContextRegistry.js"; // 負責註冊與管理掃描到的執行環境
 import { RecorderStore } from "./RecorderStore.js"; // 狀態管理中心 (儲存動作紀錄、錄製狀態)
@@ -28,6 +28,8 @@ export class MainApp {
 
     this.setupBackgroundMessageListener();
 
+
+    
     this.registry = new ContextRegistry();
     this.store = new RecorderStore();
 
@@ -40,15 +42,15 @@ export class MainApp {
       // 這裡的 .map 會走訪陣列中的每一個物件，並只把 "pattern" 的值抽出來
       // 結果會變成: ["^form-input-\\d+$", "^member_[A-Z0-9]{6}$", "^el-table_\\d+_column_\\d+$", "^\\d+$"]
       const ruleStrings = customRules.dynamicIdRules.map(rule => rule.pattern);
-      
+
       // 將純字串陣列傳給 DOMParserService
       this.domParserService.setCustomDynamicIdRules(ruleStrings);
-      
+
       console.log("✅ [MainApp] 已成功載入自定義動態 ID 規則數量：", ruleStrings.length);
     }
     this.command = new PlaywrightCommand();
 
-    this.pageAlias = 'page'; 
+    this.pageAlias = 'page';
     this.codeGenerator = new PlaywrightCodeGenerator(this.domParserService, this.command, this.pageAlias);
 
     this.navigationTracker = new NavigationTracker({
@@ -64,13 +66,13 @@ export class MainApp {
     // 🌟 關鍵修復：統一處理身分認領與自動喚醒機制
     if (typeof chrome !== "undefined" && chrome.storage) {
       chrome.storage.local.get(['latestPopupAlias', 'recorderStatus'], (result) => {
-        
+
         // 1. 如果是新視窗，認領自己的專屬變數名稱 (例如 popup_123456)
         if (window.opener && result.latestPopupAlias) {
           this.pageAlias = result.latestPopupAlias;
           this.codeGenerator.pageAlias = this.pageAlias;
           console.log(`🆔 [MainApp] 認領身分成功！我的 Playwright 變數名稱是: ${this.pageAlias}`);
-          
+
           // 認領完畢後，把小本本擦掉，以免其他新視窗誤認
           chrome.storage.local.remove('latestPopupAlias');
         }
@@ -84,7 +86,7 @@ export class MainApp {
   }
   // 🌟 貼上這個新方法：專門處理 Background 傳來的跨世界/原生 Popup 事件
   // ==================== myrecorderRestructure/MainApp1.js ====================
-// 將這段函式加在 MainApp1 類別裡面
+  // 將這段函式加在 MainApp1 類別裡面
 
   // 接收 Background 傳來的原生 Popup 通知
   setupBackgroundMessageListener() {
@@ -104,7 +106,7 @@ export class MainApp {
         };
 
         // ===== 修改後 =====
-        const newLine = this.appendGeneratedCode(action); 
+        const newLine = this.appendGeneratedCode(action);
         const savedAction = this.store.addAction(action);
         this.syncToGlobalStorage(newLine, savedAction);
 
@@ -113,12 +115,12 @@ export class MainApp {
           chrome.runtime.sendMessage({
             type: "display_code",
             code: this.command.codeGetter ? this.command.codeGetter() : this.getGeneratedCode()
-          }).catch(() => {});
-          
+          }).catch(() => { });
+
           chrome.runtime.sendMessage({
             type: "display_useraction",
             action: this.getActions()
-          }).catch(() => {});
+          }).catch(() => { });
         } catch (e) {
           console.warn("[MainApp] UI 同步失敗:", e);
         }
@@ -131,59 +133,59 @@ export class MainApp {
     if (!this.isStarted) return;
     console.log("[Debug MainApp] 接收到 Action:", action.type, action);
     // ===== 拖放事件 (Drag & Drop) 狀態組裝邏輯 =====
-if (action.type === "dragANDdrop") {
-    if (action.isDragStart) {
-      // 【修改點】在 DragStart 階段就先解析路徑
-      const sourcePath = this.domParserService.getOpenSourcePath(
-        action.getSourceElement(), 
-        action.sourceWindow
-      );
-      console.log("[Debug MainApp] 預解析完成的路徑:", sourcePath); // 檢查點 1
-      this.store.startDragSession({
-        sourceContextId: action.sourceWindow,
-        sourceElementInfo: action.getSourceElement(),
-        sourcePath: sourcePath // 預先存好解析結果
-      });
-      return;
-    }
-    
-    if (action.isDrop) {
-      const session = this.store.getDragSession();
-      if (!session.isDragging) return;
+    if (action.type === "dragANDdrop") {
+      if (action.isDragStart) {
+        // 【修改點】在 DragStart 階段就先解析路徑
+        const sourcePath = this.domParserService.getOpenSourcePath(
+          action.getSourceElement(),
+          action.sourceWindow
+        );
+        console.log("[Debug MainApp] 預解析完成的路徑:", sourcePath); // 檢查點 1
+        this.store.startDragSession({
+          sourceContextId: action.sourceWindow,
+          sourceElementInfo: action.getSourceElement(),
+          sourcePath: sourcePath // 預先存好解析結果
+        });
+        return;
+      }
 
-      action.setSourceWindow(session.sourceContextId);
-      action.setSourceElement(session.sourceElementInfo);
-      // 將預先解析好的路徑塞入 action，避免後續重複解析失敗
-      action.preParsedSourcePath = session.sourcePath; 
-      
-      this.store.endDragSession();
+      if (action.isDrop) {
+        const session = this.store.getDragSession();
+        if (!session.isDragging) return;
+
+        action.setSourceWindow(session.sourceContextId);
+        action.setSourceElement(session.sourceElementInfo);
+        // 將預先解析好的路徑塞入 action，避免後續重複解析失敗
+        action.preParsedSourcePath = session.sourcePath;
+
+        this.store.endDragSession();
+      }
     }
-  }
     // ==========================================
-    
+
     // ===== 修改後 =====
     const newLine = this.appendGeneratedCode(action);
     const savedAction = this.store.addAction(action);
     this.syncToGlobalStorage(newLine, savedAction);
-    
+
 
     // 把最新的狀態發送給擴充功能 UI
     if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
       chrome.runtime.sendMessage({
         type: "display_code",
         code: this.command.codeGetter ? this.command.codeGetter() : this.getGeneratedCode()
-      }).catch(() => {});
-      
+      }).catch(() => { });
+
       chrome.runtime.sendMessage({
         type: "display_useraction",
         action: this.getActions()
-      }).catch(() => {});
+      }).catch(() => { });
     }
   }
   // 啟動錄製器
   // 檔案：myrecorderRestructure/MainApp.js
 
-start() {
+  start() {
     if (this.isStarted) return this.getState();
 
     // 1. 掃描環境並註冊
@@ -192,54 +194,48 @@ start() {
     this.registry.registerMany(this.scanResult.contexts);
     this.syncRegistryToStore();
 
-    // 2. 產生所有環境宣告 (iframe_1, iframe_2...)
     const allContexts = this.registry.getAllContexts();
-    const declarations = this.codeGenerator.declareContexts(allContexts, this.pageAlias);
+    this.codeGenerator.setContexts(allContexts, this.pageAlias);
 
     // 3. 準備初始導航動作 (page.goto)
-    const gotoAction = { 
-        type: "navigate", 
-        url: window.location.href, 
-        ts: Date.now() 
+    const gotoAction = {
+      type: "navigate",
+      url: window.location.href,
+      ts: Date.now()
     };
 
     // 🌟 關鍵修正：建立一個初始化批次陣列
     const initialBatchCode = [];
-    
-    // 先加入宣告
-    if (declarations && declarations.length > 0) {
-        declarations.forEach(line => initialBatchCode.push(line));
-    }
 
-    // 再加入 goto (透過 generator 確保格式正確)
+    // 加入 goto (透過 generator 確保格式正確)
     const gotoResult = this.codeGenerator.generate(gotoAction);
     if (gotoResult) {
-        initialBatchCode.push(gotoResult);
-        this.command.appendCode(gotoResult);
+      initialBatchCode.push(gotoResult);
+      this.command.appendCode(gotoResult);
     }
 
     // 4. 🌟 一次性同步所有初始化代碼，防止多次發送導致的覆蓋問題
     if (initialBatchCode.length > 0) {
-        if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
-            chrome.runtime.sendMessage({
-                type: "APPEND_RECORD_DATA",
-                newCode: initialBatchCode, // 傳送陣列
-                isReplace: false,
-                newAction: gotoAction // 關聯最後一個動作
-            }).catch(() => {});
-        }
+      if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({
+          type: "APPEND_RECORD_DATA",
+          newCode: initialBatchCode, // 傳送陣列
+          isReplace: false,
+          newAction: gotoAction // 關聯最後一個動作
+        }).catch(() => { });
+      }
     }
 
     this.isStarted = true;
     this.store.setRecording(true);
     this.bindListenersToContexts(allContexts);
-    
+
     return this.getState();
-}
-// 🌟 關鍵新增：專門給新分頁(Popup)或重新整理後的頁面「自動接續錄製」使用
+  }
+  // 🌟 關鍵新增：專門給新分頁(Popup)或重新整理後的頁面「自動接續錄製」使用
   autoStart() {
     if (this.isStarted) return;
-    
+
     console.log(`🚀 [MainApp] 偵測到系統正在錄製中，自動啟動監聽器！(身分: ${this.pageAlias})`);
 
     // 1. 掃描新視窗裡面的環境並註冊
@@ -248,23 +244,10 @@ start() {
     this.registry.registerMany(this.scanResult.contexts);
     this.syncRegistryToStore();
 
-    // 2. 如果新視窗裡面也有 iframe，產生 iframe 宣告 
     const allContexts = this.registry.getAllContexts();
-    const declarations = this.codeGenerator.declareContexts(allContexts, this.pageAlias);
+    this.codeGenerator.setContexts(allContexts, this.pageAlias);
 
-    // 3. 把宣告同步回 Background (不需要 goto)
-    if (declarations && declarations.length > 0) {
-      if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage({
-          type: "APPEND_RECORD_DATA",
-          newCode: declarations, 
-          isReplace: false,
-          newAction: null
-        }).catch(() => {});
-      }
-    }
-
-    // 4. 正式啟動監聽器與狀態
+    // 2. 正式啟動監聽器與狀態
     this.isStarted = true;
     this.store.setRecording(true);
     this.bindListenersToContexts(allContexts);
@@ -317,22 +300,6 @@ start() {
   // 處理新彈出的視窗 (Popup)
   handleNewPopup(popupData) {
     console.log("[pop up detected]");
-    // 🚨 修正屬性名稱：Tracker 傳來的是 popupDocument 與 popupWindow
-    const popupDoc = popupData?.popupDocument;
-    const popupWin = popupData?.popupWindow;
-    
-    // 至少要有 window 物件才算有效的彈出視窗
-    //if (!popupWin) return;
-
-    // 🌟 關鍵修復：只有在「同網域」且拿得到 document 的情況下，才去掃描裡面的 iframe
-    if (popupDoc) {
-      const scanner = new ContextScanner(popupDoc, popupWin, { rootType: "popup" });
-      const result = scanner.scanAllContexts(); 
-      this.registry.registerMany(result.contexts);
-      this.syncRegistryToStore();
-      this.bindListenersToContexts(result.contexts);
-    }
-
     // 🌟 關鍵修復：無論是不是跨網域，都「必須」把開啟 Popup 的動作記錄下來產出程式碼！
     const action = {
       type: "popup",
@@ -342,23 +309,25 @@ start() {
     };
 
     this.store.setPendingPopup(popupData);
-    
+
     // ===== 修改後 =====
-    const newLine = this.appendGeneratedCode(action); 
+    const newLine = this.appendGeneratedCode(action);
     const savedAction = this.store.addAction(action);
     this.syncToGlobalStorage(newLine, savedAction);
+
+    // popup 內部由新視窗自己的 MainApp.autoStart() 註冊，避免父視窗重複綁定並產生 contextId 撞名。
 
     // 同步更新 UI
     if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
       chrome.runtime.sendMessage({
         type: "display_code",
         code: this.command.codeGetter ? this.command.codeGetter() : this.getGeneratedCode()
-      }).catch(() => {});
-      
+      }).catch(() => { });
+
       chrome.runtime.sendMessage({
         type: "display_useraction",
         action: this.getActions()
-      }).catch(() => {});
+      }).catch(() => { });
     }
   }
 
@@ -418,8 +387,20 @@ start() {
       // 🚨 修正 1：使用 ctx.contextId 而不是 ctx.id
       if (this.store.hasListener(ctx.contextId)) return;
 
+      if (ctx.type === "iframe" && !ctx.documentRef) {
+        console.warn("[Debug MainApp] skip iframe listener because documentRef is null", {
+          contextId: ctx.contextId,
+          locator: ctx.frameSelector,
+          url: ctx.url,
+          frameId: ctx.frameElement?.id || null,
+          frameSrc: ctx.frameElement?.getAttribute?.("src") || null,
+          resolvedSrc: ctx.frameElement?.src || null
+        });
+        return;
+      }
+
       let listener = null;
-      
+
       // 🚨 修正 2：使用 ctx.windowRef 而不是 ctx.window
       const listenerContexts = {
         contextId: ctx.contextId,
@@ -432,14 +413,14 @@ start() {
       // 根據環境類型實例化對應的 Listener
       if (ctx.type === 'page' || ctx.type === 'popup') {
         listener = new OuterEventListener(
-          listenerContexts, 
-          this.domParserService, 
+          listenerContexts,
+          this.domParserService,
           (action) => this.handleUserAction(action)
         );
       } else if (ctx.type === 'iframe') {
         listener = new IframeEventListener(
-          listenerContexts, 
-          this.domParserService, 
+          listenerContexts,
+          this.domParserService,
           (action) => this.handleUserAction(action)
         );
       }
@@ -447,11 +428,24 @@ start() {
       // 如果成功建立，則初始化並記錄起來
       if (listener) {
         listener.init();
-        listener.isRecording = this.isStarted; 
+        listener.isRecording = this.isStarted;
         this.activeListeners.push(listener);
         this.store.registerListener(ctx.contextId);
       }
     });
+
+    // Debug: 顯示目前已掛上監聽器的所有 iframe contextId / locator
+    const activeIframes = this.registry
+      .getContextsByType("iframe")
+      .filter((iframeCtx) => this.store.hasListener(iframeCtx.contextId))
+      .map((iframeCtx) => ({
+        contextId: iframeCtx.contextId,
+        locator: iframeCtx.frameSelector,
+        url: iframeCtx.url,
+        hasDocument: !!iframeCtx.documentRef
+      }));
+
+    console.table(activeIframes);
   }
 
   appendGeneratedCode(action) {
@@ -463,19 +457,19 @@ start() {
 
     // 處理 Generator 要求覆寫上一行的情況
     if (typeof result === 'object' && result.isReplace) {
-        codeToReturn = result.code;
-        isReplace = true;
-        // 替換本地 Command 的最後一行
-        this.command.code.pop(); 
-        if (Array.isArray(codeToReturn)) {
-            codeToReturn.forEach(l => this.command.codeSetter(l));
-        }
+      codeToReturn = result.code;
+      isReplace = true;
+      // 替換本地 Command 的最後一行
+      this.command.code.pop();
+      if (Array.isArray(codeToReturn)) {
+        codeToReturn.forEach(l => this.command.codeSetter(l));
+      }
     } else {
-        if (typeof this.command.codeSetter === 'function') {
-            this.command.codeSetter(codeToReturn);
-        } else {
-            this.command.appendCode(codeToReturn);
-        }
+      if (typeof this.command.codeSetter === 'function') {
+        this.command.codeSetter(codeToReturn);
+      } else {
+        this.command.appendCode(codeToReturn);
+      }
     }
     return { code: codeToReturn, isReplace };
   }
@@ -492,7 +486,7 @@ start() {
       newCode: codeResult ? codeResult.code : null,
       isReplace: codeResult ? codeResult.isReplace : false, // 傳遞覆寫訊號
       newAction: safeAct
-    }).catch(() => {});
+    }).catch(() => { });
   }
-  
+
 }

@@ -1,41 +1,47 @@
-
 <html>
+
 <head>
+    <meta charset="UTF-8">
     <title>Playwright Recorder</title>
     <link rel="stylesheet" href="styles/a11y-dark.min.css">
     <script src="source/highlight.min.js"></script>
     <script src="test.js"></script>
     <style>
-.script-preview-container {
-    height: 300px;          /* 固定高度，超過會出現滾動 */
-    border: 1px solid #ddd;
-    background-color: white;
-    overflow: hidden;       /* 先隱藏外層溢出 */
-}
+        .script-preview-container {
+            height: 300px;
+            /* ?箏?擃漲嚗????箇皛曉? */
+            border: 1px solid #ddd;
+            background-color: white;
+            overflow: hidden;
+            /* ???撅斗滯??*/
+        }
 
-.script-preview-container pre {
-     margin: 0;
-      padding: 10px;
-      height: 100%;
-      overflow-y: auto;          /* 🔥 垂直滾動 */
-      overflow-x: auto;          /* 🔥 水平滾動 */
-      font-family: monospace;
-      white-space: pre;          /* 保留換行和空格 */
-      box-sizing: border-box;
-}
+        .script-preview-container pre {
+            margin: 0;
+            padding: 10px;
+            height: 100%;
+            overflow-y: auto;
+            /* ? ?皛曉? */
+            overflow-x: auto;
+            /* ? 瘞游像皛曉? */
+            font-family: monospace;
+            white-space: pre;
+            /* 靽????征??*/
+            box-sizing: border-box;
+        }
 
 
-.code-block {
-    font-family: "Fira Code", Consolas, monospace;
-    font-size: 12px;
-    line-height: 1.5;
-    white-space: pre;
-    /* 不要指定 color，讓 highlight.js 控制顏色 */
-}
+        .code-block {
+            font-family: "Fira Code", Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            white-space: pre;
+            /* 銝??? color嚗? highlight.js ?批憿 */
+        }
 
-.code-block:focus {
-  outline: none;
-}
+        .code-block:focus {
+            outline: none;
+        }
 
         body {
             font-family: Arial, sans-serif;
@@ -43,6 +49,7 @@
             margin: 0;
             background-color: #f5f5f5;
         }
+
         .header {
             display: flex;
             justify-content: space-between;
@@ -51,15 +58,18 @@
             padding-bottom: 10px;
             border-bottom: 1px solid #ccc;
         }
+
         .title {
             margin: 0;
             color: #333;
         }
+
         .controls {
             display: flex;
             gap: 10px;
             margin-bottom: 15px;
         }
+
         button {
             padding: 8px 12px;
             cursor: pointer;
@@ -69,26 +79,32 @@
             opacity: 1;
             transition: opacity 0.2s;
         }
+
         button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
         }
+
         #start-recording {
             background-color: #4CAF50;
             color: white;
         }
+
         #stop-recording {
             background-color: #f44336;
             color: white;
         }
+
         #clear-recording {
             background-color: #ff9800;
             color: white;
         }
+
         #export-script {
             background-color: #2196F3;
             color: white;
         }
+
         .status-bar {
             display: flex;
             align-items: center;
@@ -98,6 +114,7 @@
             margin-bottom: 15px;
             background-color: #e8e8e8;
         }
+
         .recording-indicator {
             width: 12px;
             height: 12px;
@@ -105,75 +122,194 @@
             background-color: #ccc;
             display: inline-block;
         }
+
         .recording-indicator.active {
             background-color: #f44336;
             animation: pulse 1.5s infinite;
         }
+
         @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
+            0% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+
+            100% {
+                opacity: 1;
+            }
         }
-        /* Enhanced scrollable actions container */
-        #actions-container {
-            background-color: white;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            height: 250px; /* Fixed initial height */
-            margin-bottom: 15px;
-        }
-        .actions-header {
-            padding: 10px;
-            background-color: #f5f5f5;
-            border-bottom: 1px solid #ddd;
-            font-weight: bold;
-            display: flex;
-            justify-content: space-between;
-        }
-        #recorded-actions {
-            overflow-y: auto;
-            flex-grow: 1;
-            padding: 10px;
-        }
-        .action-item {
-            padding: 6px 10px;
-            border-bottom: 1px solid #eee;
-            display: flex;
-            align-items: center;
-        }
-        .action-item:nth-child(odd) {
-            background-color: #f9f9f9;
-        }
-        .action-number {
-            display: inline-block;
-            width: 24px;
-            height: 24px;
-            background-color: #2196F3;
-            color: white;
-            border-radius: 50%;
-            text-align: center;
-            line-height: 24px;
-            margin-right: 10px;
-            flex-shrink: 0;
-        }
-        .action-type {
-            font-weight: bold;
-            margin-right: 5px;
-        }
-        .action-details {
-            color: #555;
-            margin-left: 5px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .action-value {
-            color: #0066cc;
-            font-style: italic;
-        }
+
+        
+/* =========================
+   Recorded Actions ?憛?
+   ========================= */
+
+#actions-container {
+    background-color: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+
+    /*
+      ???250px??
+      ??曉甈?霈?嚗?蝑???賣???嚗?
+      撱箄降隤輸?銝暺?
+    */
+    height: 320px;
+
+    margin-bottom: 15px;
+}
+
+/* 銝璅???Recorded Actions + actions count */
+.actions-header {
+    padding: 10px;
+    background-color: #f5f5f5;
+    border-bottom: 1px solid #ddd;
+    font-weight: bold;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* 甈?璅???*/
+.actions-table-header {
+    display: grid;
+
+    /*
+      ?ㄐ摰儔 6 甈?
+      1. 摨?
+      2. 靘?
+      3. ?格?
+      4. 雿輻????
+      5. 摰??寞?
+      6. ?拐辣??
+
+      minmax(220px, 1fr) 隞?”?敺?甈隡貊葬嚗?
+      霈?domPath?elector??摮摰寞?頛末憿舐內??
+    */
+    grid-template-columns: 45px 110px 110px 110px 130px minmax(220px, 1fr);
+
+    gap: 8px;
+    padding: 8px 10px;
+    background-color: #eeeeee;
+    border-bottom: 1px solid #ddd;
+
+    font-size: 12px;
+    font-weight: bold;
+    color: #333;
+}
+
+/* ???”?祇? */
+#recorded-actions {
+    overflow-y: auto;
+    overflow-x: auto;
+
+    /*
+      ???padding: 10px;
+      雿?冽?銝?撌望? padding??
+      憒??ㄐ銋?padding嚗”?剖??批捆??銝???
+    */
+    padding: 0;
+
+    flex-grow: 1;
+}
+
+/* 瘥?蝑?action */
+.action-item {
+    display: grid;
+    grid-template-columns: 45px 110px 110px 110px 130px minmax(220px, 1fr);
+    gap: 8px;
+
+    padding: 8px 10px;
+    border-bottom: 1px solid #eee;
+
+    font-size: 12px;
+    line-height: 1.4;
+    align-items: start;
+
+    /*
+      ??敺?閬?
+      憒? popup 撖砍漲銝?嚗??游?蝬剜?銵冽撖砍漲嚗?
+      ?剝? #recorded-actions ??overflow-x: auto ?Ｙ?璈怠??脣???
+    */
+    min-width: 760px;
+}
+
+.action-item:nth-child(odd) {
+    background-color: #f9f9f9;
+}
+
+.action-item:nth-child(even) {
+    background-color: #ffffff;
+}
+
+/* 瘥??澆?見撘?*/
+.action-cell {
+    color: #444;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+/* 摨? */
+.action-index {
+    font-weight: bold;
+    color: #2196F3;
+}
+
+/* 雿輻???綽?靘? click / input / popup */
+.action-behavior {
+    font-weight: bold;
+    color: #333;
+}
+
+/* 摰??寞?嚗?憒?ByRole / ByText / ByDomPath */
+.action-method {
+    color: #7c3aed;
+    font-family: Consolas, monospace;
+}
+
+/* ?拐辣??嚗?憒?selector??摮omPath */
+.action-element {
+    color: #0066cc;
+    font-family: Consolas, monospace;
+}
+
+.dompath-select {
+    width: 100%;
+    max-width: 100%;
+    padding: 4px 6px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background-color: #fff;
+    color: #0066cc;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+}
+
+/* 憭?domPath ??銵?*/
+.dompath-list {
+    margin: 0;
+    padding-left: 16px;
+}
+
+.dompath-list li {
+    margin-bottom: 4px;
+    word-break: break-all;
+}
+
+/* 蝛箇?????*/
+.empty-message {
+    padding: 20px;
+    color: #666;
+    text-align: center;
+}
+
         /* Add a resizer for actions container */
         .actions-resizer {
             height: 8px;
@@ -184,8 +320,9 @@
             position: relative;
             text-align: center;
         }
+
         .actions-resizer::before {
-            content: "⋯";
+            content: "??";
             position: absolute;
             left: 50%;
             top: 50%;
@@ -193,6 +330,7 @@
             color: #999;
             font-size: 14px;
         }
+
         .language-selector {
             display: flex;
             align-items: center;
@@ -202,10 +340,12 @@
             border-radius: 4px;
             padding: 10px;
         }
+
         .language-selector label {
             margin-right: 10px;
             font-weight: bold;
         }
+
         #language-select {
             padding: 6px 10px;
             border-radius: 4px;
@@ -213,12 +353,14 @@
             background-color: white;
             min-width: 150px;
         }
+
         .preview-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 8px;
         }
+
         .language-indicator {
             font-size: 14px;
             padding: 4px 8px;
@@ -226,17 +368,20 @@
             border-radius: 4px;
             color: #555;
         }
+
         .footer {
             margin-top: 15px;
             color: #666;
             font-size: 12px;
             text-align: center;
         }
+
         .empty-message {
             padding: 20px;
             color: #666;
             text-align: center;
         }
+
         .export-controls {
             margin-top: 10px;
             margin-bottom: 15px;
@@ -248,15 +393,16 @@
             border-radius: 4px;
             padding: 10px;
         }
-        
+
         /* Enhanced script preview with better scrolling */
         .script-preview {
             margin-top: 15px;
             display: flex;
             flex-direction: column;
-            height: 200px; /* Fixed height to ensure scrollability */
+            height: 200px;
+            /* Fixed height to ensure scrollability */
         }
-        
+
         .script-preview-container {
             display: flex;
             flex-direction: column;
@@ -264,22 +410,27 @@
             position: relative;
             border: 1px solid #ddd;
             border-radius: 4px;
-            overflow: hidden; /* Ensures content doesn't overflow */
+            overflow: hidden;
+            /* Ensures content doesn't overflow */
             background-color: white;
         }
-        
+
         #script-textarea {
             width: 100%;
-            height: 100%; /* Fill the container */
+            height: 100%;
+            /* Fill the container */
             font-family: monospace;
             padding: 10px;
-            resize: none; /* Disable manual resize */
-            border: none; /* The container already has a border */
-            overflow-y: auto; /* Enable vertical scrolling */
+            resize: none;
+            /* Disable manual resize */
+            border: none;
+            /* The container already has a border */
+            overflow-y: auto;
+            /* Enable vertical scrolling */
             box-sizing: border-box;
             background-color: white;
         }
-        
+
         /* Add a resizer handle */
         .script-resizer {
             height: 8px;
@@ -291,10 +442,10 @@
             position: relative;
             text-align: center;
         }
-        
+
         /* Add a grip indicator to make the resizer more obvious */
         .script-resizer::before {
-            content: "⋯";
+            content: "??";
             position: absolute;
             left: 50%;
             top: 50%;
@@ -304,57 +455,71 @@
         }
     </style>
 </head>
+
 <body>
-<div class="header">
-    <h1 class="title">Playwright Recorder</h1>
-    <div>v1.1</div>
-</div>
+    <div class="header">
+        <h1 class="title">Playwright Recorder</h1>
+        <div>v1.1</div>
+    </div>
 
-<div class="controls">
-    <button id="start-recording">Start Recording</button>
-    <button id="stop-recording">Stop Recording</button>
-    <button id="clear-recording">Clear Recording</button>
-    <button id="export-script">Export Script</button>
-</div>
+    <div class="controls">
+        <button id="start-recording">Start Recording</button>
+        <button id="stop-recording">Stop Recording</button>
+        <button id="clear-recording">Clear Recording</button>
+        <button id="export-script">Export Script</button>
+    </div>
 
-<div class="status-bar">
-    <div id="recording-indicator" class="recording-indicator"></div>
-    <div id="status">Not recording</div>
-</div>
+    <div class="status-bar">
+        <div id="recording-indicator" class="recording-indicator"></div>
+        <div id="status">Not recording</div>
+    </div>
 
-<div class="language-selector">
-    <label for="language-select">Output language:</label>
-    <select id="language-select">
-        <option value="javascript">JavaScript</option>
+    <div class="language-selector">
+        <label for="language-select">Output language:</label>
+        <select id="language-select">
+            <option value="javascript">JavaScript</option>
 
-    </select>
-</div>
+        </select>
+    </div>
 
-<div id="actions-container">
+ <div id="actions-container">
     <div class="actions-header">
         <span>Recorded Actions</span>
         <span id="actions-count">0 actions</span>
     </div>
+
+    <div class="actions-table-header">
+        <div>#</div>
+        <div>來源</div>
+        <div>目標</div>
+        <div>使用者行為</div>
+        <div>定位方法</div>
+        <div>物件元素</div>
+    </div>
+
     <div id="recorded-actions"></div>
 </div>
-<div class="actions-resizer" id="actions-resizer"></div>
+    <div class="actions-resizer" id="actions-resizer"></div>
 
-<div class="script-preview">
-    <div class="preview-header">
-        <h3>Script Preview</h3>
-        <div id="language-indicator" class="language-indicator">JavaScript</div>
+    <div class="script-preview">
+        <div class="preview-header">
+            <h3>Script Preview</h3>
+            <div id="language-indicator" class="language-indicator">JavaScript</div>
+        </div>
+        <div class="script-preview-container">
+            <pre
+                class="code-block"><code id="code-view" contenteditable="true" class="language-javascript"></code></pre>
+        </div>
+
+        <div class="script-resizer" id="script-resizer"></div>
     </div>
-<div class="script-preview-container">
-  <pre class="code-block"><code id="code-view" contenteditable="true" class="language-javascript"></code></pre>
-</div>
 
-    <div class="script-resizer" id="script-resizer"></div>
-</div>
-
-<div class="footer">
-    <p>Click "Start Recording" and interact with your web page. Your actions will be recorded and converted to code in your selected language.</p>
-</div>
+    <div class="footer">
+        <p>Click "Start Recording" and interact with your web page. Your actions will be recorded and converted to code
+            in your selected language.</p>
+    </div>
 
 
 </body>
+
 </html>

@@ -1,40 +1,40 @@
-// 確保整個 HTML 文件的 DOM 元素都載入完成後，才開始執行內部的 JavaScript
+﻿// 蝣箔??游?HTML ?辣??DOM ???質??亙???嚗????瑁??折??JavaScript
 document.addEventListener("DOMContentLoaded", async function () {
-    // 1. 取得畫面上各種控制元件的 DOM 節點
-    const startButton = document.getElementById("start-recording"); // 開始錄製按鈕
-    const stopButton = document.getElementById("stop-recording");   // 停止錄製按鈕
-    const clearButton = document.getElementById("clear-recording"); // 清除紀錄按鈕
-    const exportButton = document.getElementById("export-script");  // 匯出腳本按鈕
-    const statusDiv = document.getElementById("status");            // 狀態文字顯示區塊
-    const recordingIndicator = document.getElementById("recording-indicator"); // 錄製中的紅點指示燈
-    const actionsDiv = document.getElementById("recorded-actions"); // 顯示使用者動作紀錄的清單區塊
-    const codeView = document.getElementById("code-view");          // 顯示生成的程式碼區塊
-    const actionsCountSpan = document.getElementById("actions-count"); // 顯示動作總數的標籤
+    // 1. ???恍銝?蝔格?嗅?隞嗥? DOM 蝭暺?
+    const startButton = document.getElementById("start-recording"); // ???ˊ??
+    const stopButton = document.getElementById("stop-recording");   // ?迫?ˊ??
+    const clearButton = document.getElementById("clear-recording"); // 皜蝝????
+    const exportButton = document.getElementById("export-script");  // ?臬?單??
+    const statusDiv = document.getElementById("status");            // ???摮＊蝷箏?憛?
+    const recordingIndicator = document.getElementById("recording-indicator"); // ?ˊ銝剔?蝝??內??
+    const actionsDiv = document.getElementById("recorded-actions"); // 憿舐內雿輻??雿???皜?憛?
+    const codeView = document.getElementById("code-view");          // 憿舐內????撘Ⅳ?憛?
+    const actionsCountSpan = document.getElementById("actions-count"); // 憿舐內??蝮賣??蝐?
 
-    let actions = []; // 儲存在記憶體中的動作陣列
+    let actions = []; // ?脣??刻??園?銝剔??????
 
-    // 2. 輔助函式：將不同格式的程式碼資料正規化為單一字串
-    function normalizeCode(value) {
-        if (Array.isArray(value)) return value.join("\n"); // 如果是陣列，用換行符號組合起來
-        if (value && typeof value === "object") return Object.values(value).join("\n"); // 如果是物件，取其值組合
-        if (typeof value === "string") return value; // 如果已經是字串，直接回傳
-        return "// No code has been generated yet"; // 預設的空狀態文字
+    // 2. 頛?賢?嚗?銝??澆???撘Ⅳ鞈?甇????桐?摮葡
+    function normalizeCode(value) { 
+        if (Array.isArray(value)) return value.join("\n"); // 憒??舫???冽?銵泵???絲靘?
+        if (value && typeof value === "object") return Object.values(value).join("\n"); // 憒??舐隞塚???潛???
+        if (typeof value === "string") return value; // 憒?撌脩??臬?銝莎??湔?
+        return "// No code has been generated yet"; // ?身?征???摮?
     }
 
-    // 3. 輔助函式：更新畫面上的程式碼顯示區塊，並套用語法高亮 (Highlight.js)
+    // 3. 頛?賢?嚗?啁?Ｖ???撘Ⅳ憿舐內?憛?銝血??刻?瘜?鈭?(Highlight.js)
     function setCodeView(code) {
         codeView.textContent = code || "// No code has been generated yet";
-        delete codeView.dataset.highlighted; // 清除舊的高亮標記，強制重新渲染
-        hljs.highlightElement(codeView); // 呼叫 Highlight.js 進行程式碼上色
+        delete codeView.dataset.highlighted; // 皜??擃漁璅?嚗撥?園??唳葡??
+        hljs.highlightElement(codeView); // ?澆 Highlight.js ?脰?蝔?蝣潔???
     }
 
-    // 4. UI 狀態更新函式：根據「是否正在錄製」，切換按鈕的可用狀態與視覺指示
+    // 4. UI ???啣撘??寞???行迤?券?鋆賬???????函???閬死?內
     function updateUI(isRecording) {
-        startButton.disabled = isRecording; // 錄製中不可按開始
-        stopButton.disabled = !isRecording; // 非錄製中不可按停止
+        startButton.disabled = isRecording; // ?ˊ銝凋??舀???
+        stopButton.disabled = !isRecording; // ??鋆賭葉銝??甇?
         statusDiv.textContent = isRecording ? "Recording..." : "Not recording";
 
-        // 切換錄製紅點指示燈的 CSS 類別
+        // ???ˊ蝝??內?? CSS 憿
         if (isRecording) {
             recordingIndicator.classList.add("active");
         } else {
@@ -42,130 +42,342 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
     }
 
-    // 5. 畫面渲染函式：將動作紀錄陣列轉化為畫面上的 HTML 列表
+    // 5. ?恍皜脫??賢?嚗???蝝?????恍銝? HTML ?”
     function updateActionsList(actions) {
-        actionsDiv.innerHTML = ""; // 先清空目前的列表
-        actionsCountSpan.textContent = `${actions.length} ${actions.length === 1 ? "action" : "actions"}`; // 更新總數文字
+        actionsDiv.innerHTML = ""; // ??蝛箇???”
+        actionsCountSpan.textContent = `${actions.length} ${actions.length === 1 ? "action" : "actions"}`; // ?湔蝮賣??
 
-        // 如果沒有任何動作，顯示空狀態提示
+        // 憒?瘝?隞颱???嚗＊蝷箇征???蝷?
         if (!actions.length) {
             const emptyMessage = document.createElement("div");
             emptyMessage.className = "empty-message";
             emptyMessage.textContent = "No actions recorded yet.";
             actionsDiv.appendChild(emptyMessage);
-            clearButton.disabled = true;  // 沒資料時禁用清除按鈕
-            exportButton.disabled = false; // 但仍允許匯出（匯出空腳本）
+            clearButton.disabled = true;  // 瘝???蝳皜??
+            exportButton.disabled = false; // 雿??迂?臬嚗?箇征?單嚗?
             return;
         }
 
         clearButton.disabled = false;
         exportButton.disabled = false;
 
-        // 走訪每一個動作紀錄，建立對應的 DOM 元素
+        // 韏啗赤瘥???雿???撱箇?撠???DOM ??
         actions.forEach((action, index) => {
             const actionElement = document.createElement("div");
             actionElement.className = "action-item";
 
-            // 建立序號
-            const numberSpan = document.createElement("span");
-            numberSpan.className = "action-number";
-            numberSpan.textContent = index + 1;
-
-            // 建立目標視窗標籤 (例如：發生在哪個頁面)
-            const windowSpan = document.createElement("span");
-            windowSpan.className = "action-window";
-            windowSpan.style.color = "#888";
-            windowSpan.style.marginRight = "10px";
-
-            // 針對拖放動作特殊處理，顯示來源到目標的視窗；否則顯示單一視窗
-            if (action.type === "dragANDdrop") {
-                windowSpan.textContent = `[${action.sourceWindow || "unknown"} to ${action.targetWindow || "unknown"}]`;
-            } else {
-                windowSpan.textContent = `[${action.targetWindow || action.sourceWindow || "unknown"}]`;
-            }
-
-            // 建立詳細資訊區塊，依據不同的動作類型 (navigate, input, change, dragANDdrop) 給予不同的文字排版
-            const detailsSpan = document.createElement("span");
-            detailsSpan.className = "action-details";
-
-            if (action.type === "navigate") {
-                // 網址跳轉紀錄
-                detailsSpan.textContent = `Maps: ${action.url || action.value || ""}`;
-            }else if (action.type === "popup") {
-                // 🌟 新增：讓 UI 顯示 Popup 動作
-                detailsSpan.textContent = `Popup: ${action.url || ""}`;
-                detailsSpan.style.color = "#d97706"; // 給它一個特別的顏色 (橘黃色)
-            } 
-            else if (action.type === "input") {
-                // 文字輸入紀錄
-                detailsSpan.textContent = `INPUT: ${action.sourceMethod || ""}`;
-                if (action.sourceData) {
-                    const valueSpan = document.createElement("span");
-                    valueSpan.className = "action-value";
-                    valueSpan.textContent = ` "${action.sourceData}"`;
-                    detailsSpan.appendChild(valueSpan);
-
-                    detailsSpan.appendChild(document.createElement("br"));
-
-                    const inputSpan = document.createElement("span");
-                    inputSpan.textContent = ` input: ${action.inputText || ""}`;
-                    detailsSpan.appendChild(inputSpan);
-                }
-            } else if (action.type === "change") {
-                // 下拉選單或選項變更紀錄
-                detailsSpan.textContent = `SELECT: ${action.sourceMethod || ""}`;
-                if (action.sourceData) {
-                    const valueSpan = document.createElement("span");
-                    valueSpan.className = "action-value";
-                    valueSpan.textContent = ` "${action.sourceData}"`;
-                    detailsSpan.appendChild(valueSpan);
-
-                    detailsSpan.appendChild(document.createElement("br"));
-
-                    const inputSpan = document.createElement("span");
-                    inputSpan.textContent = ` selected element: ${action.selectedText || ""}`;
-                    detailsSpan.appendChild(inputSpan);
-                }
-            } else if (action.type === "dragANDdrop") {
-                // 拖曳與放置紀錄
-                detailsSpan.textContent = `DRAG&DROP: ${action.sourceMethod || ""}`;
-                if (action.sourceData) {
-                    const valueSpan = document.createElement("span");
-                    valueSpan.className = "action-value";
-                    valueSpan.textContent = ` source - "${action.sourceData}"`;
-                    detailsSpan.appendChild(valueSpan);
-
-                    detailsSpan.appendChild(document.createElement("br"));
-
-                    const inputSpan = document.createElement("span");
-                    inputSpan.className = "action-value";
-                    inputSpan.textContent = `${action.targetMethod || ""} target - ${action.targetData || ""}`;
-                    detailsSpan.appendChild(inputSpan);
-                }
-            } else {
-                // 其他未定義或泛用的點擊動作
-                detailsSpan.textContent = `${(action.type || "unknown").toUpperCase()}: ${action.sourceMethod || ""}`;
-                if (action.sourceData) {
-                    const valueSpan = document.createElement("span");
-                    valueSpan.className = "action-value";
-                    valueSpan.textContent = ` "${action.sourceData}"`;
-                    detailsSpan.appendChild(valueSpan);
-                }
-            }
-
-            // 將所有資訊組裝進該動作的容器中
-            actionElement.appendChild(numberSpan);
-            actionElement.appendChild(windowSpan);
-            actionElement.appendChild(detailsSpan);
+            actionElement.appendChild(createCell(index + 1, "action-index"));
+            actionElement.appendChild(createCell(getActionSource(action)));
+            actionElement.appendChild(createCell(getActionTarget(action)));
+            actionElement.appendChild(createCell(getActionBehavior(action), "action-behavior"));
+            actionElement.appendChild(createMethodCell(action));
+            actionElement.appendChild(createElementCell(action, index));
 
             actionsDiv.appendChild(actionElement);
         });
 
-        // 讓清單自動捲動到最底部（最新的一筆）
+        // 霈??株???摨嚗??啁?銝蝑?
         actionsDiv.scrollTop = actionsDiv.scrollHeight;
     }
+    function createCell(text, className = "") {
+        const div = document.createElement("div");
+        div.className = `action-cell ${className}`;
+        div.textContent = text ?? "";
+        return div;
+    }
 
-    // 6. 從 Storage 中取得最新的程式碼
+    function getActionSource(action) {
+        if (action.type === "navigate") return action.sourceWindow || "page";
+        if (action.type === "popup") return action.sourceWindow || action.popupId || "";
+        return action.sourceWindow || "";
+    }
+
+    function getActionTarget(action) {
+        if (action.type === "dragANDdrop") return action.targetWindow || "";
+        return action.targetWindow || "";
+    }
+
+    function getActionBehavior(action) {
+        return action.type || "unknown";
+    }
+
+    function getActionValue(action) {
+        if (action.type === "navigate" || action.type === "popup") return action.url || "";
+        if (action.type === "input") return action.inputText || action.sourceData || "";
+        if (action.type === "change") return action.selectedText || action.selectedValue || action.sourceData || "";
+        if (action.type === "keyboard") return action.keyboard || "";
+        return action.sourceData || "";
+    }
+
+    function formatActionMethod(action) {
+        if (action.type === "dragANDdrop") {
+            return `來源: ${action.sourceMethod || ""}\n目標: ${action.targetMethod || ""}`;
+        }
+        return action.sourceMethod || "";
+    }
+
+    function createMethodCell(action) {
+        return createCell(formatActionMethod(action), "action-method");
+    }
+
+    function createElementCell(action, index) {
+        const cell = createCell("", "action-element");
+
+        if (action.type === "dragANDdrop") {
+            appendLabeledElement(cell, "來源", action.sourceData, action.sourceMethod, action.sourceDomPathOptions, index, "source");
+            appendLabeledElement(cell, "目標", action.targetData, action.targetMethod, action.targetDomPathOptions, index, "target");
+            return cell;
+        }
+
+        if (action.type === "navigate" || action.type === "popup") {
+            cell.textContent = action.url || "";
+            return cell;
+        }
+
+        appendDomPathOrText(cell, action.sourceData || getActionValue(action), action.sourceMethod, action.sourceDomPathOptions, index, "source");
+        return cell;
+    }
+
+    function appendLabeledElement(parent, label, value, method, options, actionIndex, field) {
+        const wrapper = document.createElement("div");
+        const prefix = document.createElement("span");
+        prefix.textContent = `${label}: `;
+        wrapper.appendChild(prefix);
+        appendDomPathOrText(wrapper, value, method, options, actionIndex, field);
+        parent.appendChild(wrapper);
+    }
+
+    function appendDomPathOrText(parent, value, method, options, actionIndex, field) {
+        if (method === "ByDomPath" && Array.isArray(options) && options.length) {
+            const select = document.createElement("select");
+            select.className = "dompath-select";
+            options.forEach((option, optionIndex) => {
+                const path = typeof option === "string" ? option : option.path;
+                if (!path) return;
+
+                const item = document.createElement("option");
+                item.value = path;
+                item.textContent = `${optionIndex + 1}. ${path}`;
+                item.selected = path === value;
+                select.appendChild(item);
+            });
+
+            select.addEventListener("change", async () => {
+                const key = field === "target" ? "targetData" : "sourceData";
+                const oldValue = actions[actionIndex][key];
+                actions[actionIndex][key] = select.value;
+                await updateDomPathSelection(actionIndex, field, oldValue, select.value);
+            });
+
+            parent.appendChild(select);
+            return;
+        }
+
+        const span = document.createElement("span");
+        span.textContent = value || "";
+        parent.appendChild(span);
+    }
+
+    function wrapPlaywrightCode(codeBody) {
+        const orderedBody = orderPlaywrightCodeBody(codeBody);
+        return [
+            "import { test, expect } from '@playwright/test';",
+            "",
+            "test('test', async ({ page }) => {",
+            ...orderedBody.map(line => "  " + line),
+            "});"
+        ];
+    }
+
+    function parseFrameDeclaration(line) {
+        const match = String(line || "").match(/^const\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\.frameLocator\(/);
+        if (!match) return null;
+        return { line, alias: match[1], parentAlias: match[2] };
+    }
+
+    function containsAlias(line, alias) {
+        return new RegExp(`\\b${alias}\\b`).test(String(line || ""));
+    }
+
+    function collectUsedFrameDeclarations(declarations, executableLines) {
+        const byAlias = new Map(declarations.map(declaration => [declaration.alias, declaration]));
+        const usedAliases = new Set();
+
+        for (const line of executableLines) {
+            for (const declaration of declarations) {
+                if (containsAlias(line, declaration.alias)) usedAliases.add(declaration.alias);
+            }
+        }
+
+        let changed = true;
+        while (changed) {
+            changed = false;
+            for (const alias of [...usedAliases]) {
+                const declaration = byAlias.get(alias);
+                if (!declaration) continue;
+                if (byAlias.has(declaration.parentAlias) && !usedAliases.has(declaration.parentAlias)) {
+                    usedAliases.add(declaration.parentAlias);
+                    changed = true;
+                }
+            }
+        }
+
+        return declarations.filter(declaration => usedAliases.has(declaration.alias));
+    }
+
+    function appendDeclarationsForParent(parentAlias, declarationsByParent, insertedParents, output) {
+        if (insertedParents.has(parentAlias)) return;
+        insertedParents.add(parentAlias);
+
+        for (const declaration of declarationsByParent.get(parentAlias) || []) {
+            output.push(declaration.line);
+            appendDeclarationsForParent(declaration.alias, declarationsByParent, insertedParents, output);
+        }
+    }
+
+    function orderPlaywrightCodeBody(codeBody) {
+        const lines = Array.isArray(codeBody) ? codeBody.filter(Boolean) : [];
+        const declarations = [];
+        const executableLines = [];
+
+        for (const line of lines) {
+            const declaration = parseFrameDeclaration(line);
+            if (declaration) declarations.push(declaration);
+            else executableLines.push(line);
+        }
+
+        const usedDeclarations = collectUsedFrameDeclarations(declarations, executableLines);
+        const declarationsByParent = new Map();
+        for (const declaration of usedDeclarations) {
+            const siblings = declarationsByParent.get(declaration.parentAlias) || [];
+            siblings.push(declaration);
+            declarationsByParent.set(declaration.parentAlias, siblings);
+        }
+
+        const output = [];
+        const insertedParents = new Set();
+        const firstGotoIndex = executableLines.findIndex(line => /\.goto\(/.test(String(line)));
+
+        if (firstGotoIndex >= 0) {
+            output.push(executableLines[firstGotoIndex]);
+            appendDeclarationsForParent("page", declarationsByParent, insertedParents, output);
+        }
+
+        executableLines.forEach((line, index) => {
+            if (index === firstGotoIndex) return;
+            output.push(line);
+
+            const popupMatch = String(line).match(/const\s+\[([A-Za-z_$][\w$]*)\]\s*=\s*await\s+Promise\.all/);
+            if (popupMatch) appendDeclarationsForParent(popupMatch[1], declarationsByParent, insertedParents, output);
+        });
+
+        if (firstGotoIndex < 0) appendDeclarationsForParent("page", declarationsByParent, insertedParents, output);
+        return output;
+    }
+
+    function escapePathForCode(cssPath) {
+        return String(cssPath || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    }
+
+    function matchesActionCodeLine(action, line) {
+        const text = String(line || "");
+        if (!action) return false;
+        if (action.type === "navigate") return text.includes(".goto(");
+        if (action.type === "dragANDdrop") return text.includes(".dragTo(");
+        if (action.type === "input") return text.includes(".fill(");
+        if (action.type === "change") return text.includes(".selectOption(");
+        if (action.type === "dbclick") return text.includes(".dblclick(");
+        if (action.type === "popup") return text.includes("waitForEvent('popup')");
+        if (action.type === "click" || action.type === "checkBox") return text.includes(".click(");
+        return text.trim().startsWith("await ");
+    }
+
+    function findCodeBodyIndexForAction(codeBody, actionIndex) {
+        let matchedActionIndex = 0;
+
+        for (let codeIndex = 0; codeIndex < codeBody.length; codeIndex++) {
+            const action = actions[matchedActionIndex];
+            if (!action) break;
+
+            if (!matchesActionCodeLine(action, codeBody[codeIndex])) continue;
+
+            if (matchedActionIndex === actionIndex) return codeIndex;
+            matchedActionIndex++;
+        }
+
+        return -1;
+    }
+
+    function replaceDomPathInCodeLine(line, field, oldPath, newPath) {
+        const escapedOldPath = escapePathForCode(oldPath);
+        const escapedNewPath = escapePathForCode(newPath);
+
+        if (escapedOldPath && line.includes(escapedOldPath)) {
+            return line.replace(escapedOldPath, escapedNewPath);
+        }
+
+        if (field === "target" && line.includes(".dragTo(")) {
+            return line.replace(/(\.dragTo\([\s\S]*?locator\(")([^"]*)("\))/, `$1${escapedNewPath}$3`);
+        }
+
+        if (field === "source" && line.includes(".dragTo(")) {
+            return line.replace(/^(.*?locator\(")([^"]*)("\)[\s\S]*?\.dragTo\([\s\S]*)$/, `$1${escapedNewPath}$3`);
+        }
+
+        return line.replace(/(locator|click|dblclick)\("([^"]*)"\)/, `$1("${escapedNewPath}")`);
+    }
+
+    async function updateDomPathSelection(actionIndex, field, oldPath, newPath) {
+        const storage = await chrome.storage.local.get(["generatedCodeBody", "generatedCode"]);
+        const codeBody = Array.isArray(storage.generatedCodeBody) ? [...storage.generatedCodeBody] : [];
+        const codeIndex = findCodeBodyIndexForAction(codeBody, actionIndex);
+
+        if (codeIndex >= 0) {
+            codeBody[codeIndex] = replaceDomPathInCodeLine(codeBody[codeIndex], field, oldPath, newPath);
+        }
+
+        const generatedCode = wrapPlaywrightCode(codeBody);
+        await chrome.storage.local.set({
+            generatedAction: actions,
+            generatedCodeBody: codeBody,
+            generatedCode
+        });
+        setCodeView(normalizeCode(generatedCode));
+    }
+
+    async function syncGeneratedCodeWithActions() {
+        const storage = await chrome.storage.local.get(["generatedCodeBody"]);
+        const codeBody = Array.isArray(storage.generatedCodeBody) ? [...storage.generatedCodeBody] : [];
+        let changed = false;
+
+        actions.forEach((action, actionIndex) => {
+            const codeIndex = findCodeBodyIndexForAction(codeBody, actionIndex);
+            if (codeIndex < 0) return;
+
+            let nextLine = codeBody[codeIndex];
+            if (action.sourceMethod === "ByDomPath" && action.sourceData) {
+                nextLine = replaceDomPathInCodeLine(nextLine, "source", null, action.sourceData);
+            }
+            if (action.targetMethod === "ByDomPath" && action.targetData) {
+                nextLine = replaceDomPathInCodeLine(nextLine, "target", null, action.targetData);
+            }
+
+            if (nextLine !== codeBody[codeIndex]) {
+                codeBody[codeIndex] = nextLine;
+                changed = true;
+            }
+        });
+
+        if (!changed) return;
+
+        const generatedCode = wrapPlaywrightCode(codeBody);
+        await chrome.storage.local.set({
+            generatedCodeBody: codeBody,
+            generatedCode
+        });
+        setCodeView(normalizeCode(generatedCode));
+    }
+    // 6. 敺?Storage 銝剖?敺??啁?蝔?蝣?
     function getJSCode() {
         return new Promise((resolve) => {
             chrome.storage.local.get(["generatedCode"], (result) => {
@@ -174,11 +386,11 @@ document.addEventListener("DOMContentLoaded", async function () {
         });
     }
 
-    // 7. 初始化狀態：當介面剛開啟時，向背景腳本索取目前的狀態並更新畫面
+    // 7. ???????嗡??Ｗ????????航?祉揣?????蒂?湔?恍
     async function loadInitialState() {
         const response = await chrome.runtime.sendMessage({ type: "GET_RECORDER_STATE" });
 
-        // 如果背景腳本沒回應，進入錯誤狀態
+        // 憒???單瘝????脣?航炊???
         if (!response?.ok) {
             setCodeView("// Failed to load recorder state");
             updateActionsList([]);
@@ -188,12 +400,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 
         const { generatedCode, generatedAction, recorderStatus } = response.state;
         actions = generatedAction || [];
-        setCodeView(normalizeCode(generatedCode)); // 顯示程式碼
-        updateActionsList(actions); // 顯示動作列表
-        updateUI(recorderStatus === "recording"); // 切換按鈕狀態
+        setCodeView(normalizeCode(generatedCode)); // 憿舐內蝔?蝣?
+        updateActionsList(actions); // 憿舐內???”
+        updateUI(recorderStatus === "recording"); // ???????
+        await syncGeneratedCodeWithActions();
     }
 
-    // 8. 即時響應：監聽 Storage 的變化。如果背景腳本有寫入新資料，介面會即時自動更新，這就是為什麼錄製時畫面會同步跳動的原因
+    // 8. ?單??踵?嚗??Storage ???????航?祆?撖怠?啗???隞????堆??停?舐隞暻潮?鋆賣??恍??甇亥歲????
     chrome.storage.onChanged.addListener((changes) => {
         if (changes.generatedCode) {
             setCodeView(normalizeCode(changes.generatedCode.newValue));
@@ -202,6 +415,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         if (changes.generatedAction) {
             actions = changes.generatedAction.newValue || [];
             updateActionsList(actions);
+            syncGeneratedCodeWithActions();
         }
 
         if (changes.recorderStatus) {
@@ -209,9 +423,9 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
     });
 
-    // 9. 按鈕事件綁定：發送指令給背景腳本處理 (Background Script)
+    // 9. ??鈭辣蝬?嚗??隞斤策??單?? (Background Script)
     
-    // 點擊「開始錄製」
+    // 暺???憪?鋆賬?
     startButton.addEventListener("click", async () => {
         const response = await chrome.runtime.sendMessage({ type: "START_RECORDING" });
         if (!response?.ok) {
@@ -221,7 +435,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         updateUI(true);
     });
 
-    // 點擊「停止錄製」
+    // 暺???甇ａ?鋆賬?
     stopButton.addEventListener("click", async () => {
         const response = await chrome.runtime.sendMessage({ type: "STOP_RECORDING" });
         if (!response?.ok) {
@@ -231,9 +445,9 @@ document.addEventListener("DOMContentLoaded", async function () {
         updateUI(false);
     });
 
-    // 點擊「清除紀錄」
+    // 暺????斤???
     clearButton.addEventListener("click", async () => {
-        if (!confirm("Are you sure you want to clear all recorded actions?")) return; // 防呆確認
+        if (!confirm("Are you sure you want to clear all recorded actions?")) return; // ?脣?蝣箄?
 
         const response = await chrome.runtime.sendMessage({ type: "CLEAR_RECORDING" });
         if (!response?.ok) {
@@ -241,35 +455,35 @@ document.addEventListener("DOMContentLoaded", async function () {
             return;
         }
 
-        // 成功後重置本地變數與畫面
+        // ??敺?蝵格?啗??貉??恍
         actions = [];
         updateActionsList(actions);
         setCodeView("// No code has been generated yet");
         updateUI(false);
     });
 
-    // 點擊「匯出腳本」：將生成的程式碼下載成實體檔案
+    // 暺???箄?研?撠???蝔?蝣潔?頛?撖阡?瑼?
     exportButton.addEventListener("click", async () => {
         const filenameInput = document.getElementById("filename-input");
         let customFilename = filenameInput ? filenameInput.value.trim() : "playwright-test";
         if (!customFilename) customFilename = "playwright-test";
 
-        // 確保副檔名為 .spec.js (標準的 Playwright 測試檔格式)
+        // 蝣箔??舀?? .spec.js (璅???Playwright 皜祈岫瑼撘?
         const finalFilename = customFilename.replace(/\.\w+$/, "") + ".spec.js";
         const scriptContent = await getJSCode();
 
-        // 利用 Blob 將字串轉換成可下載的二進位檔案物件
+        // ?拍 Blob 撠?銝脰????臭?頛?鈭脖?瑼??拐辣
         const blob = new Blob([scriptContent], { type: "text/javascript" });
         const url = URL.createObjectURL(blob);
 
-        // 呼叫 Chrome 內建的下載 API
+        // ?澆 Chrome ?批遣??頛?API
         chrome.downloads.download({
             url,
             filename: finalFilename,
-            saveAs: true // 詢問使用者要存到哪裡
+            saveAs: true // 閰Ｗ?雿輻??摮?芾ㄐ
         });
     });
 
-    // 10. 執行初始化：腳本載入完畢後立刻向 Background 拿資料
+    // 10. ?瑁??????單頛摰敺??餃? Background ?輯???
     await loadInitialState();
 });

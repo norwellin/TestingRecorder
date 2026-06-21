@@ -1,4 +1,4 @@
-(() => {
+﻿(() => {
   window.global ||= window;
   var __create = Object.create;
   var __defProp = Object.defineProperty;
@@ -10541,8 +10541,10 @@
       if (!parentDoc) return;
       const frameElements = this.collectFrameElementsDeep(parentDoc);
       frameElements.forEach((frameEl, index) => {
+        const frameSelector = this.buildFrameSelector(frameEl, index);
+        console.log("[Debug ContextScanner] scanning iframe", this.getFrameDebugInfo(frameEl, index, frameSelector));
         const frameWin = this.safeGetFrameWindow(frameEl);
-        const frameDoc = this.safeGetFrameDocument(frameWin);
+        const frameDoc = this.safeGetFrameDocument(frameWin, frameEl, index, frameSelector);
         const frameContext = {
           contextId: this.createContextId("iframe"),
           type: "iframe",
@@ -10552,7 +10554,7 @@
           windowRef: frameWin,
           documentRef: frameDoc,
           frameElement: frameEl,
-          frameSelector: this.buildFrameSelector(frameEl, index),
+          frameSelector,
           url: this.safeGetUrl(frameWin),
           children: []
         };
@@ -10629,13 +10631,32 @@
         return null;
       }
     }
-    safeGetFrameDocument(frameWin) {
+    safeGetFrameDocument(frameWin, frameEl = null, index = 0, frameSelector = null) {
       try {
         return frameWin?.document || null;
       } catch (error) {
-        console.warn("\u7121\u6CD5\u53D6\u5F97 iframe.document\uFF0C\u53EF\u80FD\u8DE8\u7DB2\u57DF\u6216\u53D7\u9650\u5236", error);
+        console.warn("[Debug ContextScanner] Failed to access iframe.document", {
+          frame: this.getFrameDebugInfo(frameEl, index, frameSelector),
+          frameUrl: this.safeGetUrl(frameWin),
+          errorName: error?.name,
+          errorMessage: error?.message,
+          error
+        });
         return null;
       }
+    }
+    getFrameDebugInfo(frameEl, index = 0, frameSelector = null) {
+      if (!frameEl) return null;
+      return {
+        index,
+        id: frameEl.id || null,
+        name: frameEl.name || null,
+        title: frameEl.getAttribute?.("title") || null,
+        src: frameEl.getAttribute?.("src") || null,
+        resolvedSrc: frameEl.src || null,
+        selector: frameSelector || this.buildFrameSelector(frameEl, index),
+        tagName: frameEl.tagName || null
+      };
     }
     safeGetUrl(win) {
       try {
@@ -16495,7 +16516,7 @@
         ByText: { text: null },
         ByTitle: { title: null },
         ByAltText: {},
-        ByDomPath: { csspath: null }
+        ByDomPath: { csspath: null, options: [] }
       };
       this.weight = { WL: 0.4, Wc: 0.6, Wa: 1, Wcl: 1, Wt: 1, Wn: 3 };
       this.customDynamicIdPatterns = [];
@@ -16608,7 +16629,9 @@
       console.log("optpath: ", optpath);
       console.log("unipath: ", unipath);
       console.log("finderpath: ", finderpath);
-      this.playwrightObj.ByDomPath.csspath = this.bestDomPath([csspath, optpath, unipath, finderpath]);
+      const domPathOptions = this.rankDomPaths([csspath, optpath, unipath, finderpath]);
+      this.playwrightObj.ByDomPath.csspath = domPathOptions[0]?.path || "";
+      this.playwrightObj.ByDomPath.options = domPathOptions;
       if (this.getPlaywrightRole(e, sourceWin)) {
         isUniqueObj.ByRole = true;
       }
@@ -16628,25 +16651,27 @@
       return newObj;
     }
     bestDomPath(paths) {
+      return this.rankDomPaths(paths)[0]?.path || null;
+    }
+    rankDomPaths(paths) {
       const WL = this.weight.WL;
       const Wc = this.weight.Wc;
       const Wa = this.weight.Wa;
       const Wcl = this.weight.Wcl;
       const Wt = this.weight.Wt;
       const Wn = this.weight.Wn;
-      let bestScore = -Infinity;
-      let bestPath = null;
+      const ranked = [];
+      const seen = /* @__PURE__ */ new Set();
       for (const p of paths) {
+        if (!p || !p.path || seen.has(p.path)) continue;
         const { length, a, cl, t, n, U } = p;
         const Lscore = 1 / (1 + length);
         const Cscore = 1 / (1 + Wa * a + Wcl * cl + Wt * t + Wn * n);
         const Score = U * (WL * Lscore + Wc * Cscore);
-        if (Score > bestScore) {
-          bestScore = Score;
-          bestPath = p.path;
-        }
+        seen.add(p.path);
+        ranked.push({ ...p, score: Score });
       }
-      return bestPath;
+      return ranked.sort((a, b) => b.score - a.score);
     }
     // 🌟 新增方法：讓外部傳入解析好的動態 ID 規則
     setCustomDynamicIdRules(rulesArray) {
@@ -16816,7 +16841,7 @@
         ByText: { text: null },
         ByTitle: { title: null },
         ByAltText: {},
-        ByDomPath: { csspath: null }
+        ByDomPath: { csspath: null, options: [] }
       };
     }
     getPriority() {
@@ -16898,6 +16923,7 @@
       this.typedText = "";
       this.pageAlias = pageAlias;
       this.contextAliasMap = /* @__PURE__ */ new Map();
+      this.contextMap = /* @__PURE__ */ new Map();
     }
     // 2. 改為直接回傳程式碼字串，將寫入動作交還給 MainApp1 處理
     generate(action) {
@@ -16990,6 +17016,10 @@
     // 3. 解析 ContextId 為 Playwright 的操作變數前綴
     // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
     _getContextPrefix(winVar) {
+      const context = this.contextMap.get(winVar);
+      if (context?.type === "iframe") {
+        return this._buildFrameLocatorChain(context);
+      }
       if (this.contextAliasMap && this.contextAliasMap.has(winVar)) {
         const alias = this.contextAliasMap.get(winVar);
         return alias === "page_0" || alias === "page" ? this.pageAlias : alias;
@@ -17005,7 +17035,58 @@
     // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
     // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
     // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    setContexts(contexts = [], rootAlias = this.pageAlias) {
+      if (!Array.isArray(contexts)) return;
+      const baseAlias = rootAlias || this.pageAlias;
+      contexts.forEach((ctx) => {
+        if (!ctx?.contextId) return;
+        this.contextMap.set(ctx.contextId, ctx);
+        let alias = "";
+        if (!ctx.contextId || ctx.contextId === "ctx_page_0") {
+          alias = baseAlias;
+        } else {
+          alias = ctx.contextId.replace(/^ctx_/, "");
+          if (ctx.type === "iframe" && baseAlias && baseAlias !== "page") {
+            alias = `${baseAlias}_${alias}`;
+          }
+        }
+        this.contextAliasMap.set(ctx.contextId, alias);
+      });
+    }
+    _buildFrameLocatorChain(context) {
+      const chain = [];
+      let current = context;
+      while (current?.type === "iframe") {
+        chain.unshift(current);
+        current = this.contextMap.get(current.parentContextId);
+      }
+      let prefix = this._getBaseContextAlias(current);
+      chain.forEach((frameContext) => {
+        const selector2 = this._frameSelectorToLocatorSelector(frameContext.frameSelector);
+        prefix += `.locator('${this.replacePath(selector2)}').contentFrame()`;
+      });
+      return prefix;
+    }
+    _getBaseContextAlias(context) {
+      if (!context) return this.pageAlias;
+      if (this.contextAliasMap.has(context.contextId)) {
+        const alias = this.contextAliasMap.get(context.contextId);
+        return alias === "page_0" || alias === "page" ? this.pageAlias : alias;
+      }
+      if (context.type === "page") return this.pageAlias;
+      return context.contextId?.replace(/^ctx_/, "") || this.pageAlias;
+    }
+    _frameSelectorToLocatorSelector(frameSelector) {
+      if (!frameSelector) return "iframe";
+      const idMatch = String(frameSelector).match(/^(iframe|frame)#(.+)$/);
+      if (idMatch) {
+        return `#${idMatch[2]}`;
+      }
+      return frameSelector;
+    }
     declareContexts(contexts, rootAlias) {
+      this.setContexts(contexts, rootAlias);
+      return [];
       if (!contexts || !Array.isArray(contexts)) return [];
       const generatedDeclarations = [];
       contexts.forEach((ctx) => {
@@ -17090,7 +17171,7 @@
       const locator = this._buildLocatorString(winPrefix, best);
       this.updateUserActionDB(action, best.funName, best.obj, "source");
       if (best.funName === "ByDomPath") {
-        return `await ${winPrefix}.click("${this.replacePath(best.obj.csspath)}");`;
+        return `await ${winPrefix}.locator('${this.replacePath(best.obj.csspath)}').click();`;
       }
       return `await ${locator}.click();`;
     }
@@ -17101,7 +17182,7 @@
       const locator = this._buildLocatorString(winPrefix, best);
       this.updateUserActionDB(action, best.funName, best.obj, "source");
       if (best.funName === "ByDomPath") {
-        return `await ${winPrefix}.dblclick("${this.replacePath(best.obj.csspath)}");`;
+        return `await ${winPrefix}.locator('${this.replacePath(best.obj.csspath)}').dblclick();`;
       }
       return `await ${locator}.dblclick();`;
     }
@@ -17124,9 +17205,15 @@
       if (targetType === "drop" || targetType === "target") {
         action.setTargetMethod(funName);
         action.setTargetData(data);
+        if (funName === "ByDomPath" && Array.isArray(obj.options)) {
+          action.targetDomPathOptions = obj.options;
+        }
       } else {
         action.setSourceMethod(funName);
         action.setSourceData(data);
+        if (funName === "ByDomPath" && Array.isArray(obj.options)) {
+          action.sourceDomPathOptions = obj.options;
+        }
       }
     }
     static initListener() {
@@ -17715,16 +17802,13 @@
       this.registry.registerMany(this.scanResult.contexts);
       this.syncRegistryToStore();
       const allContexts = this.registry.getAllContexts();
-      const declarations = this.codeGenerator.declareContexts(allContexts, this.pageAlias);
+      this.codeGenerator.setContexts(allContexts, this.pageAlias);
       const gotoAction = {
         type: "navigate",
         url: window.location.href,
         ts: Date.now()
       };
       const initialBatchCode = [];
-      if (declarations && declarations.length > 0) {
-        declarations.forEach((line) => initialBatchCode.push(line));
-      }
       const gotoResult = this.codeGenerator.generate(gotoAction);
       if (gotoResult) {
         initialBatchCode.push(gotoResult);
@@ -17757,18 +17841,7 @@
       this.registry.registerMany(this.scanResult.contexts);
       this.syncRegistryToStore();
       const allContexts = this.registry.getAllContexts();
-      const declarations = this.codeGenerator.declareContexts(allContexts, this.pageAlias);
-      if (declarations && declarations.length > 0) {
-        if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
-          chrome.runtime.sendMessage({
-            type: "APPEND_RECORD_DATA",
-            newCode: declarations,
-            isReplace: false,
-            newAction: null
-          }).catch(() => {
-          });
-        }
-      }
+      this.codeGenerator.setContexts(allContexts, this.pageAlias);
       this.isStarted = true;
       this.store.setRecording(true);
       this.bindListenersToContexts(allContexts);
@@ -17806,15 +17879,6 @@
     // 處理新彈出的視窗 (Popup)
     handleNewPopup(popupData) {
       console.log("[pop up detected]");
-      const popupDoc = popupData?.popupDocument;
-      const popupWin = popupData?.popupWindow;
-      if (popupDoc) {
-        const scanner = new ContextScanner(popupDoc, popupWin, { rootType: "popup" });
-        const result = scanner.scanAllContexts();
-        this.registry.registerMany(result.contexts);
-        this.syncRegistryToStore();
-        this.bindListenersToContexts(result.contexts);
-      }
       const action = {
         type: "popup",
         popupId: popupData.popupId,
@@ -17884,6 +17948,17 @@
     bindListenersToContexts(contexts) {
       contexts.forEach((ctx) => {
         if (this.store.hasListener(ctx.contextId)) return;
+        if (ctx.type === "iframe" && !ctx.documentRef) {
+          console.warn("[Debug MainApp] skip iframe listener because documentRef is null", {
+            contextId: ctx.contextId,
+            locator: ctx.frameSelector,
+            url: ctx.url,
+            frameId: ctx.frameElement?.id || null,
+            frameSrc: ctx.frameElement?.getAttribute?.("src") || null,
+            resolvedSrc: ctx.frameElement?.src || null
+          });
+          return;
+        }
         let listener = null;
         const listenerContexts = {
           contextId: ctx.contextId,
@@ -17912,6 +17987,13 @@
           this.store.registerListener(ctx.contextId);
         }
       });
+      const activeIframes = this.registry.getContextsByType("iframe").filter((iframeCtx) => this.store.hasListener(iframeCtx.contextId)).map((iframeCtx) => ({
+        contextId: iframeCtx.contextId,
+        locator: iframeCtx.frameSelector,
+        url: iframeCtx.url,
+        hasDocument: !!iframeCtx.documentRef
+      }));
+      console.table(activeIframes);
     }
     appendGeneratedCode(action) {
       const result = this.codeGenerator.generate(action);

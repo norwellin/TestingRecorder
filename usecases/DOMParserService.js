@@ -29,7 +29,7 @@ export class DOMParserService {
     };
     this.playwrightObj = {
       ByRole: { name: null, role: null, index: null },
-      ByLabel: {}, ByPlaceholder: {}, ByText: { text: null }, ByTitle: { title: null }, ByAltText: {}, ByDomPath: { csspath: null }
+      ByLabel: {}, ByPlaceholder: {}, ByText: { text: null }, ByTitle: { title: null }, ByAltText: {}, ByDomPath: { csspath: null, options: [] }
     };
 
     this.weight = { WL: 0.4, Wc: 0.6, Wa: 1.0, Wcl: 1.0, Wt: 1.0, Wn: 3.0 };
@@ -176,7 +176,9 @@ export class DOMParserService {
     console.log("finderpath: ", finderpath);
     
     // 利用我們優化過的權重系統 (Class 最高，嚴格懲罰 [style]) 選出最後的贏家
-    this.playwrightObj.ByDomPath.csspath = this.bestDomPath([csspath, optpath, unipath, finderpath]);
+    const domPathOptions = this.rankDomPaths([csspath, optpath, unipath, finderpath]);
+    this.playwrightObj.ByDomPath.csspath = domPathOptions[0]?.path || "";
+    this.playwrightObj.ByDomPath.options = domPathOptions;
 
     // ==========================================
     // 4. Playwright 特有語義定位分析 (ByRole, ByTitle, ByText)
@@ -206,6 +208,10 @@ export class DOMParserService {
   }
 
   bestDomPath(paths) {
+    return this.rankDomPaths(paths)[0]?.path || null;
+  }
+
+  rankDomPaths(paths) {
     const WL = this.weight.WL;
     const Wc = this.weight.Wc;
     const Wa = this.weight.Wa;
@@ -213,21 +219,22 @@ export class DOMParserService {
     const Wt = this.weight.Wt;
     const Wn = this.weight.Wn;
 
-    let bestScore = -Infinity;
-    let bestPath = null;
+    const ranked = [];
+    const seen = new Set();
 
     for (const p of paths) {
+      if (!p || !p.path || seen.has(p.path)) continue;
+
       const { length, a, cl, t, n, U } = p;
       const Lscore = 1 / (1 + length);
       const Cscore = 1 / (1 + Wa * a + Wcl * cl + Wt * t + Wn * n);
       const Score = U * (WL * Lscore + Wc * Cscore);
 
-      if (Score > bestScore) {
-        bestScore = Score;
-        bestPath = p.path;
-      }
+      seen.add(p.path);
+      ranked.push({ ...p, score: Score });
     }
-    return bestPath;
+
+    return ranked.sort((a, b) => b.score - a.score);
   }
 // 🌟 新增方法：讓外部傳入解析好的動態 ID 規則
   setCustomDynamicIdRules(rulesArray) {
@@ -446,7 +453,7 @@ export class DOMParserService {
       ByText: { text: null },
       ByTitle: { title: null },
       ByAltText: {},
-      ByDomPath: { csspath: null }
+      ByDomPath: { csspath: null, options: [] }
     };
   }
 

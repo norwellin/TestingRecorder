@@ -1,4 +1,4 @@
-chrome.action.onClicked.addListener(() => {
+﻿chrome.action.onClicked.addListener(() => {
   chrome.windows.create({
     url: chrome.runtime.getURL("popup.html"),
     type: "popup",
@@ -8,11 +8,12 @@ chrome.action.onClicked.addListener(() => {
   });
 });
 
+//取得目前的主網頁
 async function getTargetTab() {
   // 將 lastFocusedWindow 替換為 windowType: "normal"
   const tabs = await chrome.tabs.query({
     active: true,
-    windowType: "normal" // 🚨 關鍵修改：只找一般的瀏覽器視窗，忽略 popup 視窗
+    windowType: "normal" 
   });
 
   // 找出該視窗中，不是擴充功能、不是 chrome 內建頁面的合法分頁
@@ -177,6 +178,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // 用來暫存剛建立、但還沒拿到真實網址的新分頁 (Key: tabId, Value: openerTabId)
 const pendingPopups = new Map();
 
+
 // 1. 捕捉新分頁誕生的瞬間
 chrome.tabs.onCreated.addListener(async (tab) => {
   try {
@@ -219,8 +221,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-// 3. 專門負責發送情報給 MainApp1 的通訊員
-// 在 background.js 裡面
+// 3. 專門負責發送情報給 MainApp 的通訊員
 
 function sendPopupToContentScript(openerTabId, newTabId, url) {
   console.log(`[Background] 完美捕捉新視窗！URL: ${url}`);
