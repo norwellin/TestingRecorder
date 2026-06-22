@@ -75,6 +75,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     // 🌟 新增這個區塊：負責處理「增量附加」動作與程式碼
     if (message.type === "APPEND_RECORD_DATA") {
+      console.log("[Debug background] APPEND_RECORD_DATA received:", {
+        newCode: message.newCode,
+        isReplace: message.isReplace,
+        newActionType: message.newAction?.type,
+        newActionSourceWindow: message.newAction?.sourceWindow
+      });
       // 分離儲存：generatedCodeBody 存純動作，generatedCode 存含外框的完整字串
       const data = await chrome.storage.local.get(["generatedCodeBody", "generatedAction"]);
       
@@ -109,6 +115,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           generatedCode: fullCode, // 讓 UI 直接拿這包顯示
           generatedAction: currentAction
       });
+      console.log("[Debug background] APPEND_RECORD_DATA stored:", {
+        codeBody,
+        fullCode
+      });
       
       sendResponse({ ok: true });
       return;
@@ -127,6 +137,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
     if (message.type === "RECORDER_CODE_UPDATE" || message.type === "display_code") {
+      console.log("[Debug background] code overwrite received:", {
+        type: message.type,
+        code: message.code
+      });
       await chrome.storage.local.set({
         generatedCode: Array.isArray(message.code) ? message.code : [String(message.code ?? "")]
       });

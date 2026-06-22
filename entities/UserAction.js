@@ -7,8 +7,12 @@ export class UserAction {
     this.targetWindow = targetWindow;
     this.sourceMethod = null;
     this.sourceData = null;
+    this.sourceDomPathChain = [];
+    this.sourceDomPathOptions = [];
     this.targetMethod = null;
     this.targetData = null;
+    this.targetDomPathChain = [];
+    this.targetDomPathOptions = [];
     this.keyboard = null; //only use for keyboard event - type: text
     this.selectedText = null;// only use for drop-down menu - type: text
     this.selectedValue = null;

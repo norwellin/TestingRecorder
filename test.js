@@ -156,17 +156,24 @@ document.addEventListener("DOMContentLoaded", async function () {
                 if (!path) return;
 
                 const item = document.createElement("option");
-                item.value = path;
+                item.value = String(optionIndex);
                 item.textContent = `${optionIndex + 1}. ${path}`;
                 item.selected = path === value;
                 select.appendChild(item);
             });
 
             select.addEventListener("change", async () => {
+                const selectedOption = options[Number(select.value)];
+                const nextPath = typeof selectedOption === "string" ? selectedOption : selectedOption?.path;
+                const nextChain = typeof selectedOption === "string" ? [] : selectedOption?.shadowChain || [];
+                if (!nextPath) return;
+
                 const key = field === "target" ? "targetData" : "sourceData";
+                const chainKey = field === "target" ? "targetDomPathChain" : "sourceDomPathChain";
                 const oldValue = actions[actionIndex][key];
-                actions[actionIndex][key] = select.value;
-                await updateDomPathSelection(actionIndex, field, oldValue, select.value);
+                actions[actionIndex][key] = nextPath;
+                actions[actionIndex][chainKey] = nextChain;
+                await updateDomPathSelection(actionIndex, field, oldValue, nextPath, nextChain);
             });
 
             parent.appendChild(select);
@@ -279,6 +286,36 @@ document.addEventListener("DOMContentLoaded", async function () {
         return String(cssPath || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     }
 
+    function buildDomPathLocatorChain(newPath, shadowChain = []) {
+        const selectors = [
+            ...(Array.isArray(shadowChain) ? shadowChain.map(step => step?.hostSelector).filter(Boolean) : []),
+            newPath
+        ].filter(Boolean);
+
+        return selectors.map(selector => `.locator("${escapePathForCode(selector)}")`).join("");
+    }
+
+    function replaceLastLocatorChain(line, locatorChain) {
+        const locatorChainPattern = /(?:\.locator\("((?:\\.|[^"\\])*)"\))+/g;
+        let match = null;
+        let lastMatch = null;
+
+        while ((match = locatorChainPattern.exec(line)) !== null) {
+            lastMatch = {
+                start: match.index,
+                end: locatorChainPattern.lastIndex
+            };
+        }
+
+        if (!lastMatch) return line;
+
+        return [
+            line.slice(0, lastMatch.start),
+            locatorChain,
+            line.slice(lastMatch.end)
+        ].join("");
+    }
+
     function matchesActionCodeLine(action, line) {
         const text = String(line || "");
         if (!action) return false;
@@ -308,9 +345,24 @@ document.addEventListener("DOMContentLoaded", async function () {
         return -1;
     }
 
-    function replaceDomPathInCodeLine(line, field, oldPath, newPath) {
+    function replaceDomPathInCodeLine(line, field, oldPath, newPath, newChain = []) {
         const escapedOldPath = escapePathForCode(oldPath);
         const escapedNewPath = escapePathForCode(newPath);
+        const hasShadowChain = Array.isArray(newChain) && newChain.length > 0;
+
+        if (hasShadowChain) {
+            const locatorChain = buildDomPathLocatorChain(newPath, newChain);
+
+            if (line.includes(".dragTo(")) {
+                const dragIndex = line.indexOf(".dragTo(");
+                if (field === "source") {
+                    return replaceLastLocatorChain(line.slice(0, dragIndex), locatorChain) + line.slice(dragIndex);
+                }
+                return line.slice(0, dragIndex) + replaceLastLocatorChain(line.slice(dragIndex), locatorChain);
+            }
+
+            return replaceLastLocatorChain(line, locatorChain);
+        }
 
         if (escapedOldPath && line.includes(escapedOldPath)) {
             return line.replace(escapedOldPath, escapedNewPath);
@@ -324,16 +376,37 @@ document.addEventListener("DOMContentLoaded", async function () {
             return line.replace(/^(.*?locator\(")([^"]*)("\)[\s\S]*?\.dragTo\([\s\S]*)$/, `$1${escapedNewPath}$3`);
         }
 
-        return line.replace(/(locator|click|dblclick)\("([^"]*)"\)/, `$1("${escapedNewPath}")`);
+        return replaceLastLocatorPath(line, escapedNewPath);
     }
 
-    async function updateDomPathSelection(actionIndex, field, oldPath, newPath) {
+    function replaceLastLocatorPath(line, escapedNewPath) {
+        const locatorPattern = /\.locator\("((?:\\.|[^"\\])*)"\)/g;
+        let match = null;
+        let lastMatch = null;
+
+        while ((match = locatorPattern.exec(line)) !== null) {
+            lastMatch = {
+                start: match.index,
+                end: locatorPattern.lastIndex
+            };
+        }
+
+        if (!lastMatch) return line;
+
+        return [
+            line.slice(0, lastMatch.start),
+            `.locator("${escapedNewPath}")`,
+            line.slice(lastMatch.end)
+        ].join("");
+    }
+
+    async function updateDomPathSelection(actionIndex, field, oldPath, newPath, newChain = []) {
         const storage = await chrome.storage.local.get(["generatedCodeBody", "generatedCode"]);
         const codeBody = Array.isArray(storage.generatedCodeBody) ? [...storage.generatedCodeBody] : [];
         const codeIndex = findCodeBodyIndexForAction(codeBody, actionIndex);
 
         if (codeIndex >= 0) {
-            codeBody[codeIndex] = replaceDomPathInCodeLine(codeBody[codeIndex], field, oldPath, newPath);
+            codeBody[codeIndex] = replaceDomPathInCodeLine(codeBody[codeIndex], field, oldPath, newPath, newChain);
         }
 
         const generatedCode = wrapPlaywrightCode(codeBody);
@@ -356,10 +429,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 
             let nextLine = codeBody[codeIndex];
             if (action.sourceMethod === "ByDomPath" && action.sourceData) {
-                nextLine = replaceDomPathInCodeLine(nextLine, "source", null, action.sourceData);
+                nextLine = replaceDomPathInCodeLine(nextLine, "source", null, action.sourceData, action.sourceDomPathChain || []);
             }
             if (action.targetMethod === "ByDomPath" && action.targetData) {
-                nextLine = replaceDomPathInCodeLine(nextLine, "target", null, action.targetData);
+                nextLine = replaceDomPathInCodeLine(nextLine, "target", null, action.targetData, action.targetDomPathChain || []);
             }
 
             if (nextLine !== codeBody[codeIndex]) {

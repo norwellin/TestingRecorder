@@ -29,6 +29,10 @@ export class IframeEventListener {
     // 輸入判定的計時器與狀態
     this.inputTimer = 0;
     this.INPUT_DELAY = 500;
+    this.initialInputValues = new WeakMap();
+    this.lastUserTypedAt = new WeakMap();
+    this.userEditedInputs = new WeakSet();
+    this.lastColorInput = new WeakMap();
 
     // 拖曳 (drag) 判定的相對變數
     this.dragStart = { x: 0, y: 0 };
@@ -51,6 +55,7 @@ export class IframeEventListener {
     this.iframeDocument.addEventListener('mousemove', this.mousemoveHandler.bind(this));
     this.iframeDocument.addEventListener('mousedown', this.mousedownHandler.bind(this));
     this.iframeDocument.addEventListener('mouseup', this.mouseupHandler.bind(this));
+    this.iframeDocument.addEventListener('keydown', this.keydownHandler.bind(this));
     this.iframeDocument.addEventListener('input', this.inputHandler.bind(this));
 
     this.iframeWindow.addEventListener('drop', this.dropHandler.bind(this));
@@ -78,6 +83,15 @@ export class IframeEventListener {
 
     if (!isSelect && !isCheckbox) return;
 
+    if (isCheckbox) {
+      this.dispatchAction("checkBox", this.getCheckboxClickTarget(e.target));
+      return;
+    }
+
+    if (isSelect) {
+      this.setReloadSuppressWindow();
+    }
+
     const action_type = isSelect ? 'change' : 'checkBox';
     this.dispatchAction(action_type, e.target);
   }
@@ -86,9 +100,11 @@ export class IframeEventListener {
     switch (msg.type) {
       case 'START_RECORDING':
         this.isRecording = true;
+        this.snapshotInitialInputValues();
         break;
       case 'STOP_RECORDING':
         this.isRecording = false;
+        clearTimeout(this.inputTimer);
         break;
     }
   }
@@ -100,6 +116,20 @@ export class IframeEventListener {
       this.DOMElement.setElementData(currentEventElement, action_type);
     }
 
+    console.log("[Debug IframeEventListener] dispatchAction", {
+      actionType: action_type,
+      contextId: this.contextId,
+      sourceTag: sourceElement?.tagName || null,
+      sourceId: sourceElement?.id || null,
+      sourceClass: sourceElement?.className || null,
+      sourceDataGjsType: sourceElement?.getAttribute?.("data-gjs-type") || null,
+      targetTag: targetElement?.tagName || null,
+      targetId: targetElement?.id || null,
+      targetClass: targetElement?.className || null,
+      targetDataGjsType: targetElement?.getAttribute?.("data-gjs-type") || null,
+      extraData
+    });
+
     // 這裡的 window 參數動態帶入 this.contextId (例如 iframe_1, iframe_2)
     const action = ActionInterpreter.interpretDrag(
       action_type, 
@@ -110,7 +140,7 @@ export class IframeEventListener {
     );
 
     // 寫入額外資料
-    if (extraData.inputText) action.setInputText(extraData.inputText);
+    if (extraData.inputText !== undefined) action.setInputText(extraData.inputText);
     if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
     // 【請補上這兩行】將拖拉標記附加到 action 上，否則 MainApp1 會認不出來！
     if (extraData.isDragStart) action.isDragStart = true;
@@ -124,7 +154,9 @@ export class IframeEventListener {
   }
 
   clickHandler(e) {
-    if (!this.isRecording) return;
+    if (!this.isRecording || !e.isTrusted) return;
+    if (this.shouldSuppressSyntheticPageEvent()) return;
+    if (this.isFileInput(e.target)) return;
     // 原始 Iframe 邏輯中，真正的 click/dblclick 是在 mouseupHandler 配合 setTimeout 實作的
     // 這裡保留空殼以防後續擴充
   }
@@ -137,9 +169,22 @@ export class IframeEventListener {
 
   inputHandler(e) {
     if (!this.isRecording || !e.isTrusted) return;
+    if (this.shouldSuppressSyntheticPageEvent()) return;
     // 【新增】過濾機制：確認觸發 input 的元素是不是真的「文字輸入框」
     const tag = e.target.tagName.toLowerCase();
     const type = e.target.getAttribute("type");
+    const isRange = this.isRangeInput(e.target);
+
+    if (isRange) {
+      clearTimeout(this.inputTimer);
+      this.inputTimer = setTimeout(() => {
+        this.currentHoveredElement = e.target;
+        this.dispatchAction("range", this.currentHoveredElement, null, {
+          inputText: e.target.value
+        });
+      }, 250);
+      return;
+    }
 
     const isTextInput =
       (tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type))) ||
@@ -148,25 +193,51 @@ export class IframeEventListener {
 
     // 如果不是文字輸入框（例如 select），就直接 return 跳出，不記錄 input
     if (!isTextInput) return;
+    if (!this.shouldRecordTextInputEvent(e.target)) return;
     clearTimeout(this.inputTimer);
+    const target = e.target;
     this.inputTimer = setTimeout(() => {
-      this.currentHoveredElement = e.target;
+      if (!this.isRecording || !this.shouldRecordTextInputEvent(target)) return;
+      this.currentHoveredElement = target;
       this.dispatchAction("input", this.currentHoveredElement, null, {
-        inputText: e.target.value || e.target.innerText
+        inputText: this.getInputValue(target)
       });
     }, this.INPUT_DELAY);
   }
 
+  keydownHandler(e) {
+    if (!this.isRecording || !e.isTrusted || !e.target) return;
+    if (!this.isTextEditingKey(e) || !this.isTextInputElement(e.target)) return;
+    this.lastUserTypedAt.set(e.target, Date.now());
+    this.userEditedInputs.add(e.target);
+  }
+
   mouseupHandler(e) {
-    if (!this.isRecording) return;
+    if (!this.isRecording || !e.isTrusted) return;
+    if (this.shouldSuppressSyntheticPageEvent()) return;
+    const target = this.getComposedEventTarget(e);
+    if (this.isFileInput(target)) return;
+    if (this.isRangeInput(target)) {
+      this.isDragging = false;
+      this.dragStart = { x: 0, y: 0 };
+      this.mouseDownFlag = false;
+      this.dragStepFlag = 0;
+      return;
+    }
+
+    if (this.isColorInput(e.target)) {
+      this.recordColorInput(e.target);
+      return;
+    }
+    if (this.isCheckboxOrCheckboxLabel(target)) return;
     // 【新增】過濾掉 SELECT 和 LABEL 的點擊，這些交由 change 事件去處理
-    if (e.target.tagName === "LABEL" || e.target.tagName === "SELECT") return;
+    if (target.tagName === "LABEL" || target.tagName === "SELECT") return;
 // 增加一個 Debug 觀察觸發次數
     console.log("[Debug IframeListener] mouseup 觸發, isDragging:", this.isDragging);
     if (this.isDragging) {
       this.isDragging = false;
       this.dragStart = { x: 0, y: 0 };
-      this.currentHoveredElement = e.target;
+      this.currentHoveredElement = target;
       
       ///新
       this.mouseDownFlag = false;
@@ -181,7 +252,7 @@ export class IframeEventListener {
           this.isDragging = false;
           this.dragStart = { x: 0, y: 0 };
 
-          this.dispatchAction("click", e.target);
+          this.dispatchAction("click", target);
         }, this.DOUBLE_CLICK_DELAY);
 
       } else if (this.clickFlag === 2) {
@@ -190,7 +261,7 @@ export class IframeEventListener {
         this.isDragging = false;
         this.dragStart = { x: 0, y: 0 };
 
-        this.dispatchAction("dbclick", e.target);
+        this.dispatchAction("dbclick", target);
       }
     }
     this.dragStepFlag = 0;
@@ -199,6 +270,7 @@ export class IframeEventListener {
 
   mousedownHandler(e) {
     if (!this.isRecording) return;
+    if (this.isRangeInput(e.target)) return;
     this.dragStart = { x: e.clientX, y: e.clientY };
     this.isDragging = false;
     this.dragSource = e.target;
@@ -208,6 +280,7 @@ export class IframeEventListener {
 
   mousemoveHandler(e) {
     if (!this.isRecording) return;
+    if (this.isRangeInput(e.target)) return;
     this.currentHoveredElement = e.target;
     
     if (!this.dragStart || this.dragStepFlag !== 1) return;
@@ -224,5 +297,134 @@ export class IframeEventListener {
       // 模擬拖曳開始 (drag start)
       this.dispatchAction("dragANDdrop", this.dragSource, null, { isDragStart: true });
     }
+  }
+
+  isRangeInput(element) {
+    return element?.tagName === "INPUT" && element.getAttribute("type") === "range";
+  }
+
+  isColorInput(element) {
+    return element?.tagName === "INPUT" && element.getAttribute("type") === "color";
+  }
+
+  isFileInput(element) {
+    return element?.tagName === "INPUT" && element.getAttribute("type") === "file";
+  }
+
+  recordColorInput(element) {
+    const value = element?.value;
+    if (!value) return;
+
+    const lastRecord = this.lastColorInput.get(element);
+    if (lastRecord?.value === value && Date.now() - lastRecord.ts < 500) return;
+
+    this.lastColorInput.set(element, { value, ts: Date.now() });
+    clearTimeout(this.inputTimer);
+    this.inputTimer = setTimeout(() => {
+      this.currentHoveredElement = element;
+      this.dispatchAction("color", this.currentHoveredElement, null, {
+        inputText: value
+      });
+    }, 150);
+  }
+
+  getComposedEventTarget(e) {
+    const interactive = this.getFirstComposedElement(e, "button, a, [role='button'], [onclick], input, textarea, select, label");
+    return interactive || e.target;
+  }
+
+  getFirstComposedElement(e, selector) {
+    const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+    for (const item of path) {
+      if (item?.nodeType !== 1) continue;
+      if (item.matches?.(selector)) return item;
+      const closest = item.closest?.(selector);
+      if (closest) return closest;
+    }
+    return null;
+  }
+
+  snapshotInitialInputValues() {
+    try {
+      this.initialInputValues = new WeakMap();
+      this.userEditedInputs = new WeakSet();
+      this.iframeDocument?.querySelectorAll?.("input, textarea, [contenteditable='true']").forEach((element) => {
+        this.initialInputValues.set(element, this.getInputValue(element));
+      });
+    } catch (error) {
+      console.warn("[Recorder] Unable to snapshot initial input values", error);
+    }
+  }
+
+  getInputValue(element) {
+    return element?.value ?? element?.innerText ?? "";
+  }
+
+  shouldRecordTextInputEvent(element) {
+    if (!this.userEditedInputs.has(element)) return false;
+
+    const value = this.getInputValue(element);
+    if (this.initialInputValues.get(element) === value) return false;
+
+    const lastTypedAt = this.lastUserTypedAt.get(element) || 0;
+    return Date.now() - lastTypedAt <= 1500;
+  }
+
+  isTextEditingKey(e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return false;
+    return e.key?.length === 1 || ["Backspace", "Delete"].includes(e.key);
+  }
+
+  isTextInputElement(element) {
+    const tag = element?.tagName?.toLowerCase();
+    const type = element?.getAttribute?.("type");
+    return (
+      (tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type))) ||
+      tag === "textarea" ||
+      element?.isContentEditable
+    );
+  }
+
+  setReloadSuppressWindow(ms = 1500) {
+    try {
+      this.iframeWindow?.sessionStorage?.setItem("__recorderSuppressUntil", String(Date.now() + ms));
+    } catch (error) {
+      console.warn("[Recorder] Unable to set reload suppress window", error);
+    }
+  }
+
+  shouldSuppressSyntheticPageEvent() {
+    try {
+      const until = Number(this.iframeWindow?.sessionStorage?.getItem("__recorderSuppressUntil") || 0);
+      return Date.now() < until;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  getCheckboxClickTarget(input) {
+    const wrappingLabel = input.closest?.("label");
+    if (wrappingLabel) return wrappingLabel;
+
+    if (input.id) {
+      const escapedId = String(input.id).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      const explicitLabel = input.ownerDocument?.querySelector?.(`label[for="${escapedId}"]`);
+      if (explicitLabel) return explicitLabel;
+    }
+
+    return input;
+  }
+
+  isCheckboxOrCheckboxLabel(element) {
+    if (!element) return false;
+
+    if (element.matches?.('input[type="checkbox"]')) return true;
+
+    const label = element.closest?.("label");
+    if (!label?.querySelector?.('input[type="checkbox"]')) return false;
+
+    if (element.closest?.('button, a, [role="button"], [onclick]')) return false;
+
+    return true;
   }
 }

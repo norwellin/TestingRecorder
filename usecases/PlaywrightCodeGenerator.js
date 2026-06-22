@@ -28,6 +28,41 @@ export class PlaywrightCodeGenerator {
     if (action.type === 'navigate') {
       return `await page.goto('${action.url}');`;
     }
+    if (action.type === 'dialog') {
+      const winPrefix = this._getContextPrefix(action.sourceWindow);
+      let dialogAction = "await dialog.dismiss();";
+
+      if (action.dialogType === "alert") {
+        dialogAction = "await dialog.accept();";
+      } else if (action.dialogType === "confirm") {
+        dialogAction = action.result ? "await dialog.accept();" : "await dialog.dismiss();";
+      } else if (action.dialogType === "prompt") {
+        dialogAction = action.result === null
+          ? "await dialog.dismiss();"
+          : `await dialog.accept(${this.quoteForCode(action.result)});`;
+      }
+
+      const dialogCode = [
+        `${winPrefix}.once('dialog', async dialog => {`,
+        "  console.log(`Dialog message: ${dialog.message()}`);",
+        `  ${dialogAction}`,
+        "});"
+      ];
+      const codeArr = this.command.code;
+      const lastLine = codeArr.length > 0 ? codeArr[codeArr.length - 1] : null;
+
+      if (lastLine && lastLine.trim().startsWith("await ")) {
+        return {
+          isReplace: true,
+          code: [
+            ...dialogCode,
+            lastLine
+          ]
+        };
+      }
+
+      return dialogCode;
+    }
     // 🌟 核心修改：將 Promise.all 的組合邏輯封裝在 Generator 內
     if (action.type === 'popup') {
       const popupName = action.popupId || 'newPopup';
@@ -106,13 +141,22 @@ export class PlaywrightCodeGenerator {
       generatedCode = this.clickSetter(action, sourcepath, sourceWindow);
     } else if (action.type === 'dbclick') {
       generatedCode = this.doubleClickSetter(action, sourcepath, sourceWindow);
-    } else if (action.type === 'input') {
+    } else if (action.type === 'input' || action.type === 'color') {
       generatedCode = this.inputSetter(action, sourcepath, sourceWindow, inputText);
+    } else if (action.type === 'range') {
+      generatedCode = this.rangeSetter(action, sourcepath, sourceWindow, inputText);
     } else if (action.type === 'keyboard') {
       generatedCode = this.keyboardSetter(inputKey, sourceWindow);
     } else if (action.type === 'change') {
       generatedCode = this.changeSetter(action, sourcepath, selectLabel, sourceWindow);
     }
+
+    console.log("[Debug PlaywrightCodeGenerator] generatedCode", {
+      actionType: action.type,
+      sourceWindow,
+      sourcepath,
+      generatedCode
+    });
 
     return generatedCode;
   }
@@ -135,14 +179,35 @@ export class PlaywrightCodeGenerator {
     return cssPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   }
 
+  quoteForCode(value) {
+    return JSON.stringify(String(value ?? ""));
+  }
+
   // 3. 解析 ContextId 為 Playwright 的操作變數前綴
   // 3. 解析 ContextId 為 Playwright 的操作變數前綴
   // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
 
 _getContextPrefix(winVar) {
     const context = this.contextMap.get(winVar);
+    console.log("[Debug PlaywrightCodeGenerator] _getContextPrefix", {
+        winVar,
+        contextType: context?.type || null,
+        contextId: context?.contextId || null,
+        parentContextId: context?.parentContextId || null,
+        frameSelector: context?.frameSelector || null,
+        url: context?.url || null
+    });
     if (context?.type === 'iframe') {
-        return this._buildFrameLocatorChain(context);
+        if (this._isUsableIframeContext(context)) {
+            return this._buildFrameLocatorChain(context);
+        }
+
+        console.warn("[PlaywrightCodeGenerator] iframe context is stale or mismatched; falling back to parent context", {
+            contextId: context.contextId,
+            parentContextId: context.parentContextId,
+            frameSelector: context.frameSelector
+        });
+        return this._getBaseContextAlias(this.contextMap.get(context.parentContextId));
     }
 
     // 優先檢查 Map
@@ -198,14 +263,39 @@ setContexts(contexts = [], rootAlias = this.pageAlias) {
       let current = context;
 
       while (current?.type === 'iframe') {
+          if (!this._isUsableIframeContext(current)) {
+              console.warn("[PlaywrightCodeGenerator] skipped unusable iframe context in locator chain", {
+                  contextId: current.contextId,
+                  parentContextId: current.parentContextId,
+                  frameSelector: current.frameSelector
+              });
+              current = this.contextMap.get(current.parentContextId);
+              break;
+          }
           chain.unshift(current);
           current = this.contextMap.get(current.parentContextId);
       }
 
       let prefix = this._getBaseContextAlias(current);
+      console.log("[Debug PlaywrightCodeGenerator] _buildFrameLocatorChain", {
+          baseContextId: current?.contextId || null,
+          baseType: current?.type || null,
+          initialPrefix: prefix,
+          chain: chain.map(frameContext => ({
+              contextId: frameContext.contextId,
+              parentContextId: frameContext.parentContextId,
+              frameSelector: frameContext.frameSelector,
+              url: frameContext.url
+          }))
+      });
       chain.forEach(frameContext => {
           const selector = this._frameSelectorToLocatorSelector(frameContext.frameSelector);
-          prefix += `.locator('${this.replacePath(selector)}').contentFrame()`;
+          console.log("[Debug PlaywrightCodeGenerator] frame selector resolved", {
+              contextId: frameContext.contextId,
+              rawFrameSelector: frameContext.frameSelector,
+              locatorSelector: selector
+          });
+          prefix += `.locator(${this.quoteForCode(selector)}).contentFrame()`;
       });
 
       return prefix;
@@ -223,14 +313,24 @@ setContexts(contexts = [], rootAlias = this.pageAlias) {
       return context.contextId?.replace(/^ctx_/, '') || this.pageAlias;
   }
 
-  _frameSelectorToLocatorSelector(frameSelector) {
-      if (!frameSelector) return 'iframe';
+  _isUsableIframeContext(context) {
+      if (context?.type !== 'iframe') return false;
 
-      const idMatch = String(frameSelector).match(/^(iframe|frame)#(.+)$/);
-      if (idMatch) {
-          return `#${idMatch[2]}`;
+      const frameElement = context.frameElement;
+      const tagName = frameElement?.tagName?.toLowerCase();
+      if (!frameElement || (tagName !== 'iframe' && tagName !== 'frame')) return false;
+      if (frameElement.isConnected === false) return false;
+
+      const parentContext = this.contextMap.get(context.parentContextId);
+      if (parentContext?.documentRef && frameElement.ownerDocument !== parentContext.documentRef) {
+          return false;
       }
 
+      return true;
+  }
+
+  _frameSelectorToLocatorSelector(frameSelector) {
+      if (!frameSelector) return 'iframe';
       return frameSelector;
   }
 
@@ -267,7 +367,7 @@ declareContexts(contexts, rootAlias) {
               const selector = ctx.frameSelector || `iframe:nth-of-type(1)`;
               
               // 產生代碼 (例如：const popup_123_iframe_1 = popup_123.frameLocator('...'))
-              const declaration = `const ${alias} = ${parentAlias}.frameLocator('${this.replacePath(selector)}');`;
+              const declaration = `const ${alias} = ${parentAlias}.frameLocator(${this.quoteForCode(selector)});`;
               
               if (this.command && typeof this.command.appendCode === 'function') {
                   this.command.appendCode(declaration);
@@ -284,8 +384,9 @@ declareContexts(contexts, rootAlias) {
     switch (funName) {
       case "ByRole": {
         const hasName = obj.name !== null && obj.name !== undefined && obj.name !== "";
+        const exactOption = obj.exact === false ? "" : ", exact: true";
         const roleLocator = hasName
-          ? `${winPrefix}.getByRole("${obj.role}", { name: "${obj.name}" })`
+          ? `${winPrefix}.getByRole("${obj.role}", { name: "${obj.name}"${exactOption} })`
           : `${winPrefix}.getByRole("${obj.role}")`;
         const hasIndex = obj.index !== null && obj.index !== undefined;
         return hasIndex ? `${roleLocator}.nth(${obj.index})` : roleLocator;
@@ -295,10 +396,21 @@ declareContexts(contexts, rootAlias) {
       case "ByText":
         return `${winPrefix}.getByText("${obj.text}", { exact: true })`;
       case "ByDomPath":
-        return `${winPrefix}.locator("${this.replacePath(obj.csspath)}")`;
+        return this._buildDomPathLocator(winPrefix, obj);
       default:
         return `${winPrefix}.locator("unknown")`;
     }
+  }
+
+  _buildDomPathLocator(winPrefix, obj) {
+    let locator = winPrefix;
+
+    for (const step of obj.shadowChain || []) {
+      locator += `.locator(${this.quoteForCode(step.hostSelector)})`;
+    }
+
+    locator += `.locator(${this.quoteForCode(obj.csspath)})`;
+    return locator;
   }
 
   changeSetter(action, sourcepath, selectedValue, sourceWindow) {
@@ -306,13 +418,7 @@ declareContexts(contexts, rootAlias) {
     if (!best) return null;
     
     const winPrefix = this._getContextPrefix(sourceWindow);
-    let code = "";
-    
-    if (best.funName === "ByDomPath") {
-        code = `await ${winPrefix}.locator('${this.replacePath(best.obj.csspath)}').selectOption({ label: ${JSON.stringify(selectedValue)} });`;
-    } else {
-        code = `await ${this._buildLocatorString(winPrefix, best)}.selectOption({ label: ${JSON.stringify(selectedValue)} });`;
-    }
+    const code = `await ${this._buildLocatorString(winPrefix, best)}.selectOption({ label: ${JSON.stringify(selectedValue)} });`;
     
     this.updateUserActionDB(action, best.funName, best.obj, "source");
     return code;
@@ -323,7 +429,7 @@ declareContexts(contexts, rootAlias) {
     if (inputKey === "Backspace") {
       return `await ${winPrefix}.keyboard.press('Backspace');`;
     }
-    return `await ${winPrefix}.keyboard.press('${inputKey}');`;
+    return `await ${winPrefix}.keyboard.press(${this.quoteForCode(inputKey)});`;
   }
 
   dragAndDropCodeSetter(action, targetpath, sourcepath, sourceWindow, targetWindow) {
@@ -352,9 +458,6 @@ declareContexts(contexts, rootAlias) {
     
     this.updateUserActionDB(action, best.funName, best.obj, "source");
     
-    if (best.funName === "ByDomPath") {
-        return `await ${winPrefix}.locator('${this.replacePath(best.obj.csspath)}').click();`;
-    }
     return `await ${locator}.click();`;
   }
 
@@ -367,9 +470,6 @@ declareContexts(contexts, rootAlias) {
     
     this.updateUserActionDB(action, best.funName, best.obj, "source");
     
-    if (best.funName === "ByDomPath") {
-        return `await ${winPrefix}.locator('${this.replacePath(best.obj.csspath)}').dblclick();`;
-    }
     return `await ${locator}.dblclick();`;
   }
 
@@ -382,7 +482,19 @@ declareContexts(contexts, rootAlias) {
     
     this.updateUserActionDB(action, best.funName, best.obj, "source");
     
-    return `await ${locator}.fill('${inputText}');`;
+    return `await ${locator}.fill(${this.quoteForCode(inputText)});`;
+  }
+
+  rangeSetter(action, sourcepath, sourceWindow, value) {
+    const best = this._getBestPath(sourcepath);
+    if (!best) return null;
+
+    const winPrefix = this._getContextPrefix(sourceWindow);
+    const locator = this._buildLocatorString(winPrefix, best);
+
+    this.updateUserActionDB(action, best.funName, best.obj, "source");
+
+    return `await ${locator}.fill(${this.quoteForCode(value)});`;
   }
 
   // 5. 將原本對全域陣列 Index 的更新，改為直接對傳入的 Action 實體屬性做更新 (解耦)
@@ -407,14 +519,16 @@ declareContexts(contexts, rootAlias) {
     if (targetType === "drop" || targetType === "target") {
       action.setTargetMethod(funName);
       action.setTargetData(data);
-      if (funName === "ByDomPath" && Array.isArray(obj.options)) {
-        action.targetDomPathOptions = obj.options;
+      if (funName === "ByDomPath") {
+        action.targetDomPathChain = obj.shadowChain || [];
+        action.targetDomPathOptions = Array.isArray(obj.options) ? obj.options : [];
       }
     } else {
       action.setSourceMethod(funName);
       action.setSourceData(data);
-      if (funName === "ByDomPath" && Array.isArray(obj.options)) {
-        action.sourceDomPathOptions = obj.options;
+      if (funName === "ByDomPath") {
+        action.sourceDomPathChain = obj.shadowChain || [];
+        action.sourceDomPathOptions = Array.isArray(obj.options) ? obj.options : [];
       }
     }
   }

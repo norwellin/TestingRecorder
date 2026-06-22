@@ -27,6 +27,7 @@ export class MainApp {
     this.activeListeners = [];
 
     this.setupBackgroundMessageListener();
+    this.setupNativeDialogListener();
 
 
     
@@ -126,6 +127,26 @@ export class MainApp {
         }
       }
       return false; // 非同步安全機制
+    });
+  }
+
+  setupNativeDialogListener() {
+    this.rootWin.addEventListener("message", (event) => {
+      const msg = event.data;
+      if (event.source !== this.rootWin) return;
+      if (msg?.source !== "RECORDER_PAGE_HOOK") return;
+      if (msg.type !== "RECORDER_NATIVE_DIALOG") return;
+      if (!this.isStarted) return;
+
+      this.handleUserAction({
+        type: "dialog",
+        dialogType: msg.dialogType,
+        message: msg.message,
+        result: msg.result,
+        defaultValue: msg.defaultValue,
+        sourceWindow: "ctx_page_0",
+        ts: Date.now()
+      });
     });
   }
   // 統一處理來自各個 Listener (Page/Iframe/Popup) 的互動動作
@@ -467,7 +488,13 @@ export class MainApp {
   }
 
   appendGeneratedCode(action) {
+    this.refreshGeneratorContexts();
     const result = this.codeGenerator.generate(action);
+    console.log("[Debug MainApp] appendGeneratedCode result", {
+      actionType: action?.type || null,
+      sourceWindow: action?.sourceWindow || null,
+      result
+    });
     if (!result) return null;
 
     let codeToReturn = result;
@@ -489,7 +516,17 @@ export class MainApp {
         this.command.appendCode(codeToReturn);
       }
     }
+    console.log("[Debug MainApp] appendGeneratedCode stored", {
+      codeToReturn,
+      isReplace,
+      commandCode: this.command.code
+    });
     return { code: codeToReturn, isReplace };
+  }
+
+  refreshGeneratorContexts() {
+    const allContexts = this.registry.getAllContexts();
+    this.codeGenerator.setContexts(allContexts, this.pageAlias);
   }
   // 🌟 關鍵新增：統一處理增量同步到 Background 的機制
   syncToGlobalStorage(codeResult, action) {
@@ -503,6 +540,12 @@ export class MainApp {
       isReplace: codeResult ? codeResult.isReplace : false, // 傳遞覆寫訊號
       newAction: safeAct
     }).catch(() => { });
+    console.log("[Debug MainApp] syncToGlobalStorage sent", {
+      newCode: codeResult ? codeResult.code : null,
+      isReplace: codeResult ? codeResult.isReplace : false,
+      actionType: safeAct?.type || null,
+      sourceWindow: safeAct?.sourceWindow || null
+    });
   }
 
 }

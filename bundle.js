@@ -1,5 +1,5 @@
-﻿(() => {
-  window.global ||= window;
+window.global ||= window;
+(() => {
   var __create = Object.create;
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -1021,407 +1021,6 @@
       exports.optimize = _optimize3.default;
       exports.common = _common;
       exports.default = _select3.default;
-    }
-  });
-
-  // ../../../node_modules/unique-selector/lib/getID.js
-  var require_getID = __commonJS({
-    "../../../node_modules/unique-selector/lib/getID.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      exports.getID = getID;
-      function getID(el) {
-        var id = el.getAttribute("id");
-        if (id !== null && id !== "") {
-          return id.match(/(?:^\d|:)/) ? '[id="' + id + '"]' : "#" + id;
-        }
-        return null;
-      }
-    }
-  });
-
-  // ../../../node_modules/unique-selector/lib/getClasses.js
-  var require_getClasses = __commonJS({
-    "../../../node_modules/unique-selector/lib/getClasses.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      exports.getClasses = getClasses;
-      exports.getClassSelectors = getClassSelectors2;
-      function getClasses(el) {
-        if (!el.hasAttribute("class")) {
-          return [];
-        }
-        try {
-          var classList = Array.prototype.slice.call(el.classList);
-          return classList.filter(function(item) {
-            return !/^[a-z_-][a-z\d_-]*$/i.test(item) ? null : item;
-          });
-        } catch (e) {
-          var className2 = el.getAttribute("class");
-          className2 = className2.trim().replace(/\s+/g, " ");
-          return className2.split(" ");
-        }
-      }
-      function getClassSelectors2(el) {
-        var classList = getClasses(el).filter(Boolean);
-        return classList.map(function(cl) {
-          return "." + cl;
-        });
-      }
-    }
-  });
-
-  // ../../../node_modules/unique-selector/lib/getCombinations.js
-  var require_getCombinations = __commonJS({
-    "../../../node_modules/unique-selector/lib/getCombinations.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      exports.getCombinations = getCombinations;
-      function kCombinations(result, items, data, start, end, index, k) {
-        if (index === k) {
-          result.push(data.slice(0, index).join(""));
-          return;
-        }
-        for (var i = start; i <= end && end - i + 1 >= k - index; ++i) {
-          data[index] = items[i];
-          kCombinations(result, items, data, i + 1, end, index + 1, k);
-        }
-      }
-      function getCombinations(items, k) {
-        var result = [], n = items.length, data = [];
-        for (var l = 1; l <= k; ++l) {
-          kCombinations(result, items, data, 0, n - 1, 0, l);
-        }
-        return result;
-      }
-    }
-  });
-
-  // ../../../node_modules/unique-selector/lib/getAttributes.js
-  var require_getAttributes = __commonJS({
-    "../../../node_modules/unique-selector/lib/getAttributes.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      exports.getAttributes = getAttributes;
-      function _toConsumableArray(arr) {
-        if (Array.isArray(arr)) {
-          for (var i = 0, arr2 = Array(arr.length); i < arr.length; i++) {
-            arr2[i] = arr[i];
-          }
-          return arr2;
-        } else {
-          return Array.from(arr);
-        }
-      }
-      function getAttributes(el) {
-        var attributesToIgnore = arguments.length > 1 && arguments[1] !== void 0 ? arguments[1] : ["id", "class", "length"];
-        var attributes = el.attributes;
-        var attrs = [].concat(_toConsumableArray(attributes));
-        return attrs.reduce(function(sum, next) {
-          if (!(attributesToIgnore.indexOf(next.nodeName) > -1)) {
-            sum.push("[" + next.nodeName + '="' + next.value + '"]');
-          }
-          return sum;
-        }, []);
-      }
-    }
-  });
-
-  // ../../../node_modules/unique-selector/lib/isElement.js
-  var require_isElement = __commonJS({
-    "../../../node_modules/unique-selector/lib/isElement.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      var _typeof4 = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function(obj) {
-        return typeof obj;
-      } : function(obj) {
-        return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj;
-      };
-      exports.isElement = isElement4;
-      function isElement4(el) {
-        var isElem = void 0;
-        if ((typeof HTMLElement === "undefined" ? "undefined" : _typeof4(HTMLElement)) === "object") {
-          isElem = el instanceof HTMLElement;
-        } else {
-          isElem = !!el && (typeof el === "undefined" ? "undefined" : _typeof4(el)) === "object" && el.nodeType === 1 && typeof el.nodeName === "string";
-        }
-        return isElem;
-      }
-    }
-  });
-
-  // ../../../node_modules/unique-selector/lib/getNthChild.js
-  var require_getNthChild = __commonJS({
-    "../../../node_modules/unique-selector/lib/getNthChild.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      exports.getNthChild = getNthChild;
-      var _isElement = require_isElement();
-      function getNthChild(element) {
-        var counter = 0;
-        var k = void 0;
-        var sibling = void 0;
-        var parentNode = element.parentNode;
-        if (Boolean(parentNode)) {
-          var childNodes = parentNode.childNodes;
-          var len = childNodes.length;
-          for (k = 0; k < len; k++) {
-            sibling = childNodes[k];
-            if ((0, _isElement.isElement)(sibling)) {
-              counter++;
-              if (sibling === element) {
-                return ":nth-child(" + counter + ")";
-              }
-            }
-          }
-        }
-        return null;
-      }
-    }
-  });
-
-  // ../../../node_modules/unique-selector/lib/getTag.js
-  var require_getTag = __commonJS({
-    "../../../node_modules/unique-selector/lib/getTag.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      exports.getTag = getTag;
-      function getTag(el) {
-        return el.tagName.toLowerCase().replace(/:/g, "\\:");
-      }
-    }
-  });
-
-  // ../../../node_modules/unique-selector/lib/isUnique.js
-  var require_isUnique = __commonJS({
-    "../../../node_modules/unique-selector/lib/isUnique.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      exports.isUnique = isUnique;
-      function isUnique(el, selector2) {
-        if (!Boolean(selector2)) return false;
-        var elems = el.ownerDocument.querySelectorAll(selector2);
-        return elems.length === 1 && elems[0] === el;
-      }
-    }
-  });
-
-  // ../../../node_modules/unique-selector/lib/getParents.js
-  var require_getParents = __commonJS({
-    "../../../node_modules/unique-selector/lib/getParents.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      exports.getParents = getParents2;
-      var _isElement = require_isElement();
-      function getParents2(el) {
-        var parents = [];
-        var currentElement = el;
-        while ((0, _isElement.isElement)(currentElement)) {
-          parents.push(currentElement);
-          currentElement = currentElement.parentNode;
-        }
-        return parents;
-      }
-    }
-  });
-
-  // ../../../node_modules/unique-selector/lib/index.js
-  var require_lib2 = __commonJS({
-    "../../../node_modules/unique-selector/lib/index.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      exports.default = unique3;
-      var _getID = require_getID();
-      var _getClasses = require_getClasses();
-      var _getCombinations = require_getCombinations();
-      var _getAttributes = require_getAttributes();
-      var _getNthChild = require_getNthChild();
-      var _getTag = require_getTag();
-      var _isUnique = require_isUnique();
-      var _getParents = require_getParents();
-      function getAllSelectors(el, selectors, attributesToIgnore) {
-        var funcs = {
-          "Tag": _getTag.getTag,
-          "NthChild": _getNthChild.getNthChild,
-          "Attributes": function Attributes(elem) {
-            return (0, _getAttributes.getAttributes)(elem, attributesToIgnore);
-          },
-          "Class": _getClasses.getClassSelectors,
-          "ID": _getID.getID
-        };
-        return selectors.reduce(function(res, next) {
-          res[next] = funcs[next](el);
-          return res;
-        }, {});
-      }
-      function testUniqueness(element, selector2) {
-        var parentNode = element.parentNode;
-        var elements = parentNode.querySelectorAll(selector2);
-        return elements.length === 1 && elements[0] === element;
-      }
-      function getFirstUnique(element, selectors) {
-        return selectors.find(testUniqueness.bind(null, element));
-      }
-      function getUniqueCombination(element, items, tag) {
-        var combinations2 = (0, _getCombinations.getCombinations)(items, 3), firstUnique = getFirstUnique(element, combinations2);
-        if (Boolean(firstUnique)) {
-          return firstUnique;
-        }
-        if (Boolean(tag)) {
-          combinations2 = combinations2.map(function(combination) {
-            return tag + combination;
-          });
-          firstUnique = getFirstUnique(element, combinations2);
-          if (Boolean(firstUnique)) {
-            return firstUnique;
-          }
-        }
-        return null;
-      }
-      function getUniqueSelector(element, selectorTypes, attributesToIgnore, excludeRegex) {
-        var foundSelector = void 0;
-        var elementSelectors = getAllSelectors(element, selectorTypes, attributesToIgnore);
-        if (excludeRegex && excludeRegex instanceof RegExp) {
-          elementSelectors.ID = excludeRegex.test(elementSelectors.ID) ? null : elementSelectors.ID;
-          elementSelectors.Class = elementSelectors.Class.filter(function(className2) {
-            return !excludeRegex.test(className2);
-          });
-        }
-        var _iteratorNormalCompletion = true;
-        var _didIteratorError = false;
-        var _iteratorError = void 0;
-        try {
-          for (var _iterator = selectorTypes[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true) {
-            var selectorType = _step.value;
-            var ID = elementSelectors.ID, Tag = elementSelectors.Tag, Classes = elementSelectors.Class, Attributes = elementSelectors.Attributes, NthChild = elementSelectors.NthChild;
-            switch (selectorType) {
-              case "ID":
-                if (Boolean(ID) && testUniqueness(element, ID)) {
-                  return ID;
-                }
-                break;
-              case "Tag":
-                if (Boolean(Tag) && testUniqueness(element, Tag)) {
-                  return Tag;
-                }
-                break;
-              case "Class":
-                if (Boolean(Classes) && Classes.length) {
-                  foundSelector = getUniqueCombination(element, Classes, Tag);
-                  if (foundSelector) {
-                    return foundSelector;
-                  }
-                }
-                break;
-              case "Attributes":
-                if (Boolean(Attributes) && Attributes.length) {
-                  foundSelector = getUniqueCombination(element, Attributes, Tag);
-                  if (foundSelector) {
-                    return foundSelector;
-                  }
-                }
-                break;
-              case "NthChild":
-                if (Boolean(NthChild)) {
-                  return NthChild;
-                }
-            }
-          }
-        } catch (err) {
-          _didIteratorError = true;
-          _iteratorError = err;
-        } finally {
-          try {
-            if (!_iteratorNormalCompletion && _iterator.return) {
-              _iterator.return();
-            }
-          } finally {
-            if (_didIteratorError) {
-              throw _iteratorError;
-            }
-          }
-        }
-        return "*";
-      }
-      function unique3(el) {
-        var options = arguments.length > 1 && arguments[1] !== void 0 ? arguments[1] : {};
-        var _options$selectorType = options.selectorTypes, selectorTypes = _options$selectorType === void 0 ? ["ID", "Class", "Tag", "NthChild"] : _options$selectorType, _options$attributesTo = options.attributesToIgnore, attributesToIgnore = _options$attributesTo === void 0 ? ["id", "class", "length"] : _options$attributesTo, _options$excludeRegex = options.excludeRegex, excludeRegex = _options$excludeRegex === void 0 ? null : _options$excludeRegex;
-        var allSelectors = [];
-        var parents = (0, _getParents.getParents)(el);
-        var _iteratorNormalCompletion2 = true;
-        var _didIteratorError2 = false;
-        var _iteratorError2 = void 0;
-        try {
-          for (var _iterator2 = parents[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
-            var elem = _step2.value;
-            var selector2 = getUniqueSelector(elem, selectorTypes, attributesToIgnore, excludeRegex);
-            if (Boolean(selector2)) {
-              allSelectors.push(selector2);
-            }
-          }
-        } catch (err) {
-          _didIteratorError2 = true;
-          _iteratorError2 = err;
-        } finally {
-          try {
-            if (!_iteratorNormalCompletion2 && _iterator2.return) {
-              _iterator2.return();
-            }
-          } finally {
-            if (_didIteratorError2) {
-              throw _iteratorError2;
-            }
-          }
-        }
-        var selectors = [];
-        var _iteratorNormalCompletion3 = true;
-        var _didIteratorError3 = false;
-        var _iteratorError3 = void 0;
-        try {
-          for (var _iterator3 = allSelectors[Symbol.iterator](), _step3; !(_iteratorNormalCompletion3 = (_step3 = _iterator3.next()).done); _iteratorNormalCompletion3 = true) {
-            var it = _step3.value;
-            selectors.unshift(it);
-            var _selector = selectors.join(" > ");
-            if ((0, _isUnique.isUnique)(el, _selector)) {
-              return _selector;
-            }
-          }
-        } catch (err) {
-          _didIteratorError3 = true;
-          _iteratorError3 = err;
-        } finally {
-          try {
-            if (!_iteratorNormalCompletion3 && _iterator3.return) {
-              _iterator3.return();
-            }
-          } finally {
-            if (_didIteratorError3) {
-              throw _iteratorError3;
-            }
-          }
-        }
-        return null;
-      }
     }
   });
 
@@ -9978,7 +9577,7 @@
   });
 
   // ../../../node_modules/aria-query/lib/index.js
-  var require_lib3 = __commonJS({
+  var require_lib2 = __commonJS({
     "../../../node_modules/aria-query/lib/index.js"(exports) {
       "use strict";
       Object.defineProperty(exports, "__esModule", {
@@ -10712,7 +10311,7 @@
         }, maxWait);
       });
     }
-    // 視覺化顯示目前已經建立的 Tree
+    // 閬死?＊蝷箇?歇蝬遣蝡? Tree
     printContextTree(rootContext, contextMap, depth = 0) {
       const indent = "  ".repeat(depth);
       console.log(
@@ -10749,7 +10348,7 @@
     constructor() {
       this.contextMap = /* @__PURE__ */ new Map();
     }
-    // ===== 註冊 =====
+    // ===== 閮餃? =====
     register(context) {
       if (!context?.contextId) return null;
       const normalizedContext = {
@@ -10772,7 +10371,7 @@
       });
       return results;
     }
-    // ===== 查詢 =====
+    // ===== ?亥岷 =====
     hasContext(contextId) {
       if (!contextId) return false;
       return this.contextMap.has(contextId);
@@ -10790,7 +10389,7 @@
     getRootContexts() {
       return this.getAllContexts().filter((ctx) => !ctx.parentContextId);
     }
-    // ===== 關係查詢 =====
+    // ===== ???亥岷 =====
     getParent(contextId) {
       const context = this.getContext(contextId);
       if (!context?.parentContextId) return null;
@@ -10817,7 +10416,7 @@
     getPathNames(contextId) {
       return this.getPath(contextId).map((ctx) => ctx.name);
     }
-    // ===== 更新 =====
+    // ===== ?湔 =====
     updateContext(contextId, patch = {}) {
       const existing = this.getContext(contextId);
       if (!existing) return null;
@@ -10831,7 +10430,7 @@
       this.contextMap.set(contextId, updated);
       return updated;
     }
-    // ===== 刪除 =====
+    // ===== ?芷 =====
     removeContext(contextId) {
       const target = this.getContext(contextId);
       if (!target) return false;
@@ -10877,17 +10476,17 @@
     constructor() {
       this.state = {
         isRecording: true,
-        // 錄製結果
+        // ?ˊ蝯?
         actions: [],
         currentActionIndex: 0,
-        // 已初始化的 listener
+        // 撌脣?憪???listener
         activeListenerContextIds: /* @__PURE__ */ new Set(),
-        // context 註冊資訊（先簡單存，之後可交給 ContextRegistry）
+        // context registry data
         contexts: /* @__PURE__ */ new Map(),
-        // 當前動作相關
+        // ?嗅????賊?
         currentAction: null,
         lastAction: null,
-        // input / click / dblclick / debounce 暫存
+        // input / click / dblclick / debounce ?怠?
         pendingActionTimers: /* @__PURE__ */ new Map(),
         // drag session
         dragSession: {
@@ -10897,13 +10496,13 @@
           targetContextId: null,
           targetElementInfo: null
         },
-        // popup 狀態
+        // popup state
         pendingPopup: null,
-        // 通知訂閱者用
+        // ?閮?
         subscribers: /* @__PURE__ */ new Set()
       };
     }
-    // ===== 基本讀取 =====
+    // ===== ?箸霈??=====
     getState() {
       return this.state;
     }
@@ -10919,7 +10518,7 @@
     isRecording() {
       return this.state.isRecording;
     }
-    // ===== 訂閱 / 通知 =====
+    // ===== 閮 / ? =====
     subscribe(callback) {
       if (typeof callback !== "function") return () => {
       };
@@ -10937,12 +10536,12 @@
         }
       });
     }
-    // ===== 錄製開關 =====
+    // ===== ?ˊ?? =====
     setRecording(value) {
       this.state.isRecording = !!value;
       this.notify();
     }
-    // ===== Action 管理 =====
+    // ===== Action 蝞∠? =====
     addAction(action) {
       if (!action || typeof action !== "object") return null;
       const normalizedAction = {
@@ -10982,7 +10581,7 @@
       this.state.lastAction = null;
       this.notify();
     }
-    // ===== Listener 管理 =====
+    // ===== Listener 蝞∠? =====
     hasListener(contextId) {
       if (!contextId) return false;
       return this.state.activeListenerContextIds.has(contextId);
@@ -11001,7 +10600,7 @@
       this.state.activeListenerContextIds.clear();
       this.notify();
     }
-    // ===== Context 管理 =====
+    // ===== Context 蝞∠? =====
     registerContext(context) {
       if (!context?.contextId) return;
       this.state.contexts.set(context.contextId, context);
@@ -11028,7 +10627,7 @@
       this.state.activeListenerContextIds.clear();
       this.notify();
     }
-    // ===== Timer / debounce 管理 =====
+    // ===== Timer / debounce 蝞∠? =====
     setPendingTimer(key, timerId) {
       if (!key) return;
       this.clearPendingTimer(key);
@@ -11053,14 +10652,13 @@
       this.state.pendingActionTimers.clear();
     }
     // ===== Drag session =====
-    // 修改 RecorderStore.js
+    // 靽格 RecorderStore.js
     startDragSession({ sourceContextId = null, sourceElementInfo = null, sourcePath = null } = {}) {
       this.state.dragSession = {
         isDragging: true,
         sourceContextId,
         sourceElementInfo,
         sourcePath,
-        // <=== 必須新增這一行，把解析好的路徑存起來！
         targetContextId: null,
         targetElementInfo: null
       };
@@ -11087,7 +10685,7 @@
       this.notify();
       return finishedSession;
     }
-    // ===== Popup 狀態 =====
+    // ===== Popup ???=====
     setPendingPopup(popupInfo) {
       this.state.pendingPopup = popupInfo || null;
       this.notify();
@@ -11354,11 +10952,10 @@
   // config.js
   var DIALOG_SELECTORS = [
     '[role="dialog"]',
-    // 標準 WAI-ARIA 對話框
-    ".modal",
-    // 常見 class 名稱
+    // 璅? WAI-ARIA 撠店獢?    ".modal",
+    // 撣貉? class ?迂
     "dialog",
-    // 原生 <dialog> 元素
+    // ?? <dialog> ??
     ".gjs-mdl-container",
     // GrapesJS
     ".gjs-mdl-dialog",
@@ -12095,7 +11692,6 @@
 
   // usecases/DOMParserService.js
   var import_optimal_select = __toESM(require_lib());
-  var import_unique_selector = __toESM(require_lib2());
 
   // ../../../node_modules/@medv/finder/finder.js
   var acceptedAttrNames = /* @__PURE__ */ new Set(["role", "name", "aria-label", "rel", "href"]);
@@ -13234,7 +12830,7 @@
   }
 
   // ../../../node_modules/@testing-library/dom/dist/@testing-library/dom.esm.js
-  var import_aria_query = __toESM(require_lib3());
+  var import_aria_query = __toESM(require_lib2());
   var import_lz_string = __toESM(require_lz_string());
   function escapeHTML(str) {
     return str.replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -16516,7 +16112,7 @@
         ByText: { text: null },
         ByTitle: { title: null },
         ByAltText: {},
-        ByDomPath: { csspath: null, options: [] }
+        ByDomPath: { csspath: null, shadowChain: [], options: [] }
       };
       this.weight = { WL: 0.4, Wc: 0.6, Wa: 1, Wcl: 1, Wt: 1, Wn: 3 };
       this.customDynamicIdPatterns = [];
@@ -16530,25 +16126,21 @@
     getOpenSourcePath(e, sourceWin = null) {
       if (!e) return [null, null, null];
       const ownerDoc = e.ownerDocument;
-      if (!ownerDoc || !ownerDoc.contains(e)) {
-        console.warn("[DOMParser] \u5143\u7D20\u5DF2\u4E0D\u5728\u6240\u5C6C\u7684\u6587\u4EF6\u4E2D\uFF0C\u5617\u8A66\u89E3\u6790\u5931\u6557", e);
+      const realRoot = e.getRootNode();
+      const isElementInDocument = ownerDoc?.contains(e) || realRoot?.host && ownerDoc?.contains(realRoot.host);
+      if (!ownerDoc || !isElementInDocument) {
+        console.warn("[DOMParser] ?\uF077?\u648C\u8116??\u51BD?\u6485\u7949??\uF2E8\u8FA3\u929D\u54E8??\uE91C\u5CAB\u95AB??\u61AD\u671B?", e);
         return null;
       }
-      console.log("[Debug DOMParser] \u6B63\u5728\u89E3\u6790\u5143\u7D20:", e);
-      const realRoot = e.getRootNode();
+      console.log("[Debug DOMParser] \u7507?\uEBED\u95AB???\uF077?:", e);
       this.cleanInfo();
       this.setInfo(e);
       this.clearPlaywrightObj();
+      const shadowChain = this.getShadowChain(e);
       let isUniqueObj = { ByRole: false, ByTitle: false, ByDomPath: false, ByText: false };
       const cssatt = ["id", "attribute", "class", "tag", "nthchild"];
       const optPri = ["id", "class", "name", "placeholder", "data-testid", "href", "src"];
-      const uniPri = ["ID", "Attributes", "Class", "Tag", "NthChild"];
-      const dynamicIdOrClassRegex = new RegExp(
-        // 動態 ID 的特徵
-        `(#(i[a-z0-9]{3,5}|ion-(input|textarea|select|checkbox|radio|toggle|range|datetime)-\\d+(-lbl)?|[0-9a-f]{8}-.*|[a-z0-9_-]{10,}))|(\\.(active|focus|hover|disabled|selected|checked|hydrated|md|ios|gjs-[\\w-]+|css-[\\w-]+|sc-[\\w-]+|styled-[\\w-]+|p-\\d|m-\\d|px-\\d|py-\\d|mx-\\d|my-\\d|w-\\w+|h-\\w+|text-\\w+|bg-\\w+|flex|grid|col|row|rounded|shadow|border))`,
-        "i"
-      );
-      let csskey = 0, optkey = 0, unikey = 0, finderkey = 0;
+      let csskey = 0, optkey = 0, finderkey = 0;
       let selector2 = "";
       try {
         selector2 = getCssSelector(e, {
@@ -16564,12 +16156,12 @@
             }
           ]
         });
-        if (this.findUnique(selector2, realRoot)) {
+        if (this.findUniqueWithShadowChain(selector2, shadowChain, e)) {
           isUniqueObj.ByDomPath = true;
           csskey = 1;
         }
       } catch (err) {
-        console.warn("[DOMParser] css-selector-generator \u89E3\u6790\u5931\u6557", err);
+        console.warn("[DOMParser] css-selector-generator \u95AB??\u61AD\u671B?", err);
       }
       let opt_selector = "";
       try {
@@ -16577,7 +16169,7 @@
           root: realRoot,
           priority: optPri,
           ignore: {
-            // 讓我們的過濾函數決定這個 class 該不該用 (回傳 true 代表忽略)
+            // ????????鞈?????謕?class ?啗???啗??(?豯止齒 true ???鞈?)
             class: (className2) => this.isDynamicOrUnstableClass(className2),
             attribute: (name, value, defaultPredicate) => {
               if (name === "id") return this.isDynamicGeneratedId(value);
@@ -16585,52 +16177,36 @@
             }
           }
         });
-        if (this.findUnique(opt_selector, realRoot)) {
+        if (this.findUniqueWithShadowChain(opt_selector, shadowChain, e)) {
           isUniqueObj.ByDomPath = true;
           optkey = 1;
         }
       } catch (err) {
-        console.warn("[DOMParser] optimal-select \u89E3\u6790\u5931\u6557", err);
-      }
-      let dom_selector = "";
-      try {
-        dom_selector = (0, import_unique_selector.default)(e, {
-          selectorTypes: uniPri,
-          // 傳入我們剛剛寫好的 ID 與 Class 綜合黑名單正規表達式
-          excludeRegex: dynamicIdOrClassRegex
-        });
-        if (this.findUnique(dom_selector, realRoot)) {
-          isUniqueObj.ByDomPath = true;
-          unikey = 1;
-        }
-      } catch (err) {
-        console.warn("[DOMParser] unique-selector \u89E3\u6790\u5931\u6557", err);
+        console.warn("[DOMParser] optimal-select \u95AB??\u61AD\u671B?", err);
       }
       let finder_selector = "";
       try {
         finder_selector = finder(e, {
           root: realRoot,
           idName: (name) => !this.isDynamicGeneratedId(name),
-          // 只有「不是」不穩定 Class 的，才允許被 finder 使用
           className: (name) => !this.isDynamicOrUnstableClass(name)
         });
-        if (this.findUnique(finder_selector, realRoot)) {
+        if (this.findUniqueWithShadowChain(finder_selector, shadowChain, e)) {
           isUniqueObj.ByDomPath = true;
           finderkey = 1;
         }
       } catch (err) {
-        console.warn("[DOMParser] finder \u89E3\u6790\u5931\u6557", err);
+        console.warn("[DOMParser] finder \u95AB??\u61AD\u671B?", err);
       }
       let csspath = this.analyzeCssPath(selector2, csskey);
       let optpath = this.analyzeCssPath(opt_selector, optkey);
-      let unipath = this.analyzeCssPath(dom_selector, unikey);
       let finderpath = this.analyzeCssPath(finder_selector, finderkey);
       console.log("csspath: ", csspath);
       console.log("optpath: ", optpath);
-      console.log("unipath: ", unipath);
       console.log("finderpath: ", finderpath);
-      const domPathOptions = this.rankDomPaths([csspath, optpath, unipath, finderpath]);
+      const domPathOptions = this.rankDomPaths([csspath, optpath, finderpath]).filter((option) => !this.hasUnstableAttributeSelector(option.path)).map((option) => ({ ...option, shadowChain }));
       this.playwrightObj.ByDomPath.csspath = domPathOptions[0]?.path || "";
+      this.playwrightObj.ByDomPath.shadowChain = domPathOptions[0]?.shadowChain || [];
       this.playwrightObj.ByDomPath.options = domPathOptions;
       if (this.getPlaywrightRole(e, sourceWin)) {
         isUniqueObj.ByRole = true;
@@ -16673,19 +16249,19 @@
       }
       return ranked.sort((a, b) => b.score - a.score);
     }
-    // 🌟 新增方法：讓外部傳入解析好的動態 ID 規則
+    // ?? ????撖??奕??叟????喉????????? ID ?秋?
     setCustomDynamicIdRules(rulesArray) {
       if (!Array.isArray(rulesArray)) return;
       this.customDynamicIdPatterns = rulesArray.map((ruleStr) => {
         try {
           return new RegExp(ruleStr, "i");
         } catch (e) {
-          console.error(`[DOMParser] \u7121\u6548\u7684\u6B63\u5247\u8868\u9054\u5F0F\u898F\u5247: ${ruleStr}`, e);
+          console.error(`[DOMParser] ?\u22A5??\uF113\u8FE4?\uF2EC\u201D?\uE742?\u95AC\uE431?: ${ruleStr}`, e);
           return null;
         }
       }).filter((regex) => regex !== null);
     }
-    analyzeCssPath(cssPath, unique3) {
+    analyzeCssPath(cssPath, unique2) {
       const obj = {
         path: cssPath || "",
         length: 0,
@@ -16693,7 +16269,7 @@
         cl: 0,
         t: 0,
         n: 0,
-        U: unique3
+        U: unique2
       };
       if (!cssPath || typeof cssPath !== "string") {
         return obj;
@@ -16710,11 +16286,109 @@
       obj.n = nthMatches ? nthMatches.length : 0;
       return obj;
     }
+    hasUnstableAttributeSelector(selector2) {
+      if (typeof selector2 !== "string") return true;
+      return /\[style\b(?:[~|^$*]?=)?/i.test(selector2);
+    }
     findUnique(path, doc) {
       if (!path) return false;
       try {
         const element = doc.querySelectorAll(path);
         return element.length === 1;
+      } catch (e) {
+        return false;
+      }
+    }
+    isShadowRoot(root) {
+      return root && root.nodeType === Node.DOCUMENT_FRAGMENT_NODE && root.host instanceof Element;
+    }
+    getBestOpenSourceSelector(el, root) {
+      if (!el || !root) return "";
+      const candidates = [];
+      const cssatt = ["id", "attribute", "class", "tag", "nthchild"];
+      const optPri = ["id", "class", "name", "placeholder", "data-testid", "href", "src"];
+      try {
+        const selector2 = getCssSelector(el, {
+          selectors: cssatt,
+          root,
+          blacklist: [
+            (sel) => {
+              if (typeof sel !== "string") return false;
+              if (sel.startsWith("#")) return this.isDynamicGeneratedId(sel.slice(1));
+              if (sel.startsWith(".")) return this.isDynamicOrUnstableClass(sel.slice(1));
+              return false;
+            }
+          ]
+        });
+        candidates.push(this.analyzeCssPath(selector2, this.findUnique(selector2, root) ? 1 : 0));
+      } catch (err) {
+        console.warn("[DOMParser] css-selector-generator shadow host \u95AB??\u61AD\u671B?", err);
+      }
+      try {
+        const selector2 = (0, import_optimal_select.select)(el, {
+          root,
+          priority: optPri,
+          ignore: {
+            class: (className2) => this.isDynamicOrUnstableClass(className2),
+            attribute: (name, value, defaultPredicate) => {
+              if (name === "id") return this.isDynamicGeneratedId(value);
+              return typeof defaultPredicate === "function" ? defaultPredicate(name, value) : false;
+            }
+          }
+        });
+        candidates.push(this.analyzeCssPath(selector2, this.findUnique(selector2, root) ? 1 : 0));
+      } catch (err) {
+        console.warn("[DOMParser] optimal-select shadow host \u95AB??\u61AD\u671B?", err);
+      }
+      try {
+        const selector2 = finder(el, {
+          root,
+          idName: (name) => !this.isDynamicGeneratedId(name),
+          className: (name) => !this.isDynamicOrUnstableClass(name)
+        });
+        candidates.push(this.analyzeCssPath(selector2, this.findUnique(selector2, root) ? 1 : 0));
+      } catch (err) {
+        console.warn("[DOMParser] finder shadow host \u95AB??\u61AD\u671B?", err);
+      }
+      return this.rankDomPaths(candidates).filter((option) => !this.hasUnstableAttributeSelector(option.path))[0]?.path || "";
+    }
+    getShadowChain(el) {
+      const chain = [];
+      let root = el?.getRootNode?.();
+      while (this.isShadowRoot(root)) {
+        const host = root.host;
+        const parentRoot = host.getRootNode();
+        const hostSelector = this.getBestOpenSourceSelector(host, parentRoot);
+        if (!hostSelector) break;
+        chain.unshift({ hostSelector });
+        root = parentRoot;
+      }
+      return chain;
+    }
+    resolveShadowMatches(baseRoot, shadowChain, targetSelector) {
+      let roots = [baseRoot];
+      for (const step of shadowChain || []) {
+        const nextRoots = [];
+        for (const root of roots) {
+          const hosts = Array.from(root.querySelectorAll(step.hostSelector));
+          for (const host of hosts) {
+            if (host.shadowRoot) nextRoots.push(host.shadowRoot);
+          }
+        }
+        roots = nextRoots;
+      }
+      return roots.flatMap((root) => Array.from(root.querySelectorAll(targetSelector)));
+    }
+    findUniqueWithShadowChain(path, shadowChain, targetEl) {
+      if (!path || !targetEl?.ownerDocument) return false;
+      try {
+        if (!shadowChain?.length) {
+          const root = targetEl.getRootNode();
+          const matches3 = Array.from(root.querySelectorAll(path));
+          return matches3.length === 1 && matches3[0] === targetEl;
+        }
+        const matches2 = this.resolveShadowMatches(targetEl.ownerDocument, shadowChain, path);
+        return matches2.length === 1 && matches2[0] === targetEl;
       } catch (e) {
         return false;
       }
@@ -16732,13 +16406,23 @@
           }
         }
       } catch (e) {
-        console.warn("[DOMParser] Testing Library getRoles \u89E3\u6790\u5931\u6557", e);
+        console.warn("[DOMParser] Testing Library getRoles \u95AB??\u61AD\u671B?", e);
       }
       return null;
     }
     getPlaywrightRole(el, sourceWin) {
       if (!(el instanceof Element)) return false;
       const container = this.currentDoc.body || this.currentDoc;
+      if (el.tagName === "ION-BUTTON") {
+        const name2 = (el.textContent || el.innerText || "").trim().replace(/\s+/g, " ");
+        if (name2 && this.isUniqueIonButtonText(el, name2, container)) {
+          this.playwrightObj.ByRole.index = null;
+          this.playwrightObj.ByRole.name = name2;
+          this.playwrightObj.ByRole.role = "button";
+          this.playwrightObj.ByRole.exact = false;
+          return true;
+        }
+      }
       const role = this.getTestingLibraryRole(el);
       if (!role || role === "generic" || role === "presentation") {
         return false;
@@ -16747,7 +16431,7 @@
       try {
         name = computeAccessibleName2(el);
       } catch (e) {
-        console.warn("[DOMParser] computeAccessibleName \u767C\u751F\u932F\u8AA4", e);
+        console.warn("[DOMParser] computeAccessibleName ?\u6F5B??\u822A\u708A", e);
       }
       try {
         const options = name ? { name, exact: true } : {};
@@ -16757,11 +16441,12 @@
           this.playwrightObj.ByRole.index = index;
           this.playwrightObj.ByRole.name = name || null;
           this.playwrightObj.ByRole.role = role;
+          this.playwrightObj.ByRole.exact = !this.hasGeneratedIconNameRisk(el);
           return true;
         }
         return false;
       } catch (error) {
-        console.warn("[DOMParser] Testing Library ByRole \u89E3\u6790\u5931\u6557", error);
+        console.warn("[DOMParser] Testing Library ByRole \u95AB??\u61AD\u671B?", error);
         return false;
       }
     }
@@ -16777,9 +16462,22 @@
           return true;
         }
       } catch (error) {
-        console.warn("[DOMParser] Testing Library ByText \u89E3\u6790\u5931\u6557", error);
+        console.warn("[DOMParser] Testing Library ByText \u95AB??\u61AD\u671B?", error);
       }
       return false;
+    }
+    hasGeneratedIconNameRisk(el) {
+      return !!el.querySelector?.(
+        'i[class*="fa"], span[class*="fa-"], [class*="material-icons"], [class*="icon-"]'
+      );
+    }
+    isUniqueIonButtonText(el, text, container) {
+      if (el.tagName !== "ION-BUTTON") return false;
+      const matches2 = Array.from(container.querySelectorAll("ion-button")).filter((button) => {
+        const buttonText = (button.textContent || button.innerText || "").trim().replace(/\s+/g, " ");
+        return buttonText === text;
+      });
+      return matches2.length === 1 && matches2[0] === el;
     }
     checkUniqueByTitle(el) {
       if (!this.currentDoc) return false;
@@ -16793,16 +16491,16 @@
           return true;
         }
       } catch (error) {
-        console.warn("[DOMParser] Testing Library ByTitle \u89E3\u6790\u5931\u6557", error);
+        console.warn("[DOMParser] Testing Library ByTitle \u95AB??\u61AD\u671B?", error);
       }
       return false;
     }
-    // 🌟 新增：過濾不穩定、無語意、或純狀態的 Class
+    // ?? ????契????????蹓踝??止等??蹓??????? Class
     isDynamicOrUnstableClass(className2) {
       if (typeof className2 !== "string") return true;
       const val = className2.trim();
       if (!val) return true;
-      const stateClasses = /^(active|focus|hover|visited|disabled|selected|checked|hydrated|md|ios|gjs-[a-zA-Z0-9_-]+)$/i;
+      const stateClasses = /^(active|focus|hover|visited|disabled|selected|checked|hydrated|md|ios|ion-activated|ion-focused|ion-touched|ion-dirty|ion-valid|ion-invalid|gjs-[a-zA-Z0-9_-]+)$/i;
       const cssInJsLike = /^(css-|sc-|styled-).*[a-zA-Z0-9_-]{4,}$/i;
       const utilityClasses = /^(p|m|px|py|mx|my|w|h|text|bg|flex|grid|col|row|rounded|shadow|border)-[a-z0-9]+$/i;
       const pureHash = /^[a-z0-9]{8,15}$/i;
@@ -16841,7 +16539,7 @@
         ByText: { text: null },
         ByTitle: { title: null },
         ByAltText: {},
-        ByDomPath: { csspath: null, options: [] }
+        ByDomPath: { csspath: null, shadowChain: [], options: [] }
       };
     }
     getPriority() {
@@ -16856,7 +16554,7 @@
       if (!value) return false;
       for (const pattern of this.customDynamicIdPatterns) {
         if (pattern.test(value)) {
-          console.log(`[DOMParser] \u6514\u622A\u5230\u7B26\u5408\u81EA\u5B9A\u7FA9(Excel)\u898F\u5247\u7684\u52D5\u614B ID: ${value}`);
+          console.log(`[DOMParser] ?\uE743\uF34B?\u5541\u6CF5?\uF389\uF2AE\u6470\uEAF2\u5114(Excel)\u95AC\uE431??\uF112???ID: ${value}`);
           return true;
         }
       }
@@ -16875,7 +16573,7 @@
     constructor() {
       this.init();
     }
-    // 將原本在 constructor 的邏輯抽出來，方便後續 clearCode 時呼叫
+    // 撠??砍 constructor ??頛舀?箔?嚗靘踹?蝥?clearCode ???
     init() {
       this.code = [];
       this.code_import = [];
@@ -16901,8 +16599,7 @@
       return [...this.code_import, ...this.codeOutsider_up, ...this.codeWindows, ...this.code, ...this.codeOutsider_down];
     }
     // ==========================================
-    // 新增：相容新版 MainApp1.js 所需的介面方法
-    // ==========================================
+    // ?啣?嚗摰寞??MainApp1.js ?????Ｘ瘜?    // ==========================================
     appendCode(line) {
       this.codeSetter(line);
     }
@@ -16916,7 +16613,7 @@
 
   // usecases/PlaywrightCodeGenerator.js
   var PlaywrightCodeGenerator = class {
-    // 1. 移除 userActionDB 依賴，改為單純接收 DOM 服務與 Command 參照
+    // 1. 蝘駁 userActionDB 靘陷嚗?箏蝝??DOM ????Command ?
     constructor(domService, command, pageAlias = "page") {
       this.domService = domService;
       this.command = command;
@@ -16925,7 +16622,7 @@
       this.contextAliasMap = /* @__PURE__ */ new Map();
       this.contextMap = /* @__PURE__ */ new Map();
     }
-    // 2. 改為直接回傳程式碼字串，將寫入動作交還給 MainApp1 處理
+    // 2. ?寧?湔?蝔?蝣澆?銝莎?撠神?亙?雿漱?策 MainApp1 ??
     generate(action) {
       if (!action) {
         console.warn("generate: action \u4E0D\u5B58\u5728");
@@ -16934,6 +16631,35 @@
       console.log("Generating code for action: ", action);
       if (action.type === "navigate") {
         return `await page.goto('${action.url}');`;
+      }
+      if (action.type === "dialog") {
+        const winPrefix = this._getContextPrefix(action.sourceWindow);
+        let dialogAction = "await dialog.dismiss();";
+        if (action.dialogType === "alert") {
+          dialogAction = "await dialog.accept();";
+        } else if (action.dialogType === "confirm") {
+          dialogAction = action.result ? "await dialog.accept();" : "await dialog.dismiss();";
+        } else if (action.dialogType === "prompt") {
+          dialogAction = action.result === null ? "await dialog.dismiss();" : `await dialog.accept(${this.quoteForCode(action.result)});`;
+        }
+        const dialogCode = [
+          `${winPrefix}.once('dialog', async dialog => {`,
+          "  console.log(`Dialog message: ${dialog.message()}`);",
+          `  ${dialogAction}`,
+          "});"
+        ];
+        const codeArr = this.command.code;
+        const lastLine = codeArr.length > 0 ? codeArr[codeArr.length - 1] : null;
+        if (lastLine && lastLine.trim().startsWith("await ")) {
+          return {
+            isReplace: true,
+            code: [
+              ...dialogCode,
+              lastLine
+            ]
+          };
+        }
+        return dialogCode;
       }
       if (action.type === "popup") {
         const popupName = action.popupId || "newPopup";
@@ -16988,19 +16714,27 @@
         generatedCode = this.clickSetter(action, sourcepath, sourceWindow);
       } else if (action.type === "dbclick") {
         generatedCode = this.doubleClickSetter(action, sourcepath, sourceWindow);
-      } else if (action.type === "input") {
+      } else if (action.type === "input" || action.type === "color") {
         generatedCode = this.inputSetter(action, sourcepath, sourceWindow, inputText);
+      } else if (action.type === "range") {
+        generatedCode = this.rangeSetter(action, sourcepath, sourceWindow, inputText);
       } else if (action.type === "keyboard") {
         generatedCode = this.keyboardSetter(inputKey, sourceWindow);
       } else if (action.type === "change") {
         generatedCode = this.changeSetter(action, sourcepath, selectLabel, sourceWindow);
       }
+      console.log("[Debug PlaywrightCodeGenerator] generatedCode", {
+        actionType: action.type,
+        sourceWindow,
+        sourcepath,
+        generatedCode
+      });
       return generatedCode;
     }
     // ==========================================
-    // 以下為具體的生成與組裝邏輯 Helper
+    // 隞乩??箏擃?????鋆?頛?Helper
     // ==========================================
-    // 從解析結果中挑出權重最高(最優先)的 Selector 方法
+    // 敺圾???葉?甈??擃???芸?)??Selector ?寞?
     _getBestPath(paths) {
       if (!paths) return null;
       for (let i = 0; i < this.domService.priSize; i++) {
@@ -17008,17 +16742,34 @@
       }
       return null;
     }
-    // 特殊字元跳脫，避免 Playwright 語法出錯
+    // ?寞?摮?頝唾嚗??Playwright 隤??粹
     replacePath(cssPath) {
       return cssPath.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     }
-    // 3. 解析 ContextId 為 Playwright 的操作變數前綴
-    // 3. 解析 ContextId 為 Playwright 的操作變數前綴
-    // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    quoteForCode(value) {
+      return JSON.stringify(String(value ?? ""));
+    }
+    // 3. 閫?? ContextId ??Playwright ??雿??詨?蝬?    // 3. 閫?? ContextId ??Playwright ??雿??詨?蝬?    // 瑼?嚗yrecorderRestructure/usecases/PlaywrightCodeGenerator.js
     _getContextPrefix(winVar) {
       const context = this.contextMap.get(winVar);
+      console.log("[Debug PlaywrightCodeGenerator] _getContextPrefix", {
+        winVar,
+        contextType: context?.type || null,
+        contextId: context?.contextId || null,
+        parentContextId: context?.parentContextId || null,
+        frameSelector: context?.frameSelector || null,
+        url: context?.url || null
+      });
       if (context?.type === "iframe") {
-        return this._buildFrameLocatorChain(context);
+        if (this._isUsableIframeContext(context)) {
+          return this._buildFrameLocatorChain(context);
+        }
+        console.warn("[PlaywrightCodeGenerator] iframe context is stale or mismatched; falling back to parent context", {
+          contextId: context.contextId,
+          parentContextId: context.parentContextId,
+          frameSelector: context.frameSelector
+        });
+        return this._getBaseContextAlias(this.contextMap.get(context.parentContextId));
       }
       if (this.contextAliasMap && this.contextAliasMap.has(winVar)) {
         const alias = this.contextAliasMap.get(winVar);
@@ -17030,11 +16781,11 @@
       }
       return this.pageAlias;
     }
-    // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
-    // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
-    // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
-    // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
-    // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    // 瑼?嚗yrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    // 瑼?嚗yrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    // 瑼?嚗yrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    // 瑼?嚗yrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    // 瑼?嚗yrecorderRestructure/usecases/PlaywrightCodeGenerator.js
     setContexts(contexts = [], rootAlias = this.pageAlias) {
       if (!Array.isArray(contexts)) return;
       const baseAlias = rootAlias || this.pageAlias;
@@ -17057,13 +16808,38 @@
       const chain = [];
       let current = context;
       while (current?.type === "iframe") {
+        if (!this._isUsableIframeContext(current)) {
+          console.warn("[PlaywrightCodeGenerator] skipped unusable iframe context in locator chain", {
+            contextId: current.contextId,
+            parentContextId: current.parentContextId,
+            frameSelector: current.frameSelector
+          });
+          current = this.contextMap.get(current.parentContextId);
+          break;
+        }
         chain.unshift(current);
         current = this.contextMap.get(current.parentContextId);
       }
       let prefix = this._getBaseContextAlias(current);
+      console.log("[Debug PlaywrightCodeGenerator] _buildFrameLocatorChain", {
+        baseContextId: current?.contextId || null,
+        baseType: current?.type || null,
+        initialPrefix: prefix,
+        chain: chain.map((frameContext) => ({
+          contextId: frameContext.contextId,
+          parentContextId: frameContext.parentContextId,
+          frameSelector: frameContext.frameSelector,
+          url: frameContext.url
+        }))
+      });
       chain.forEach((frameContext) => {
         const selector2 = this._frameSelectorToLocatorSelector(frameContext.frameSelector);
-        prefix += `.locator('${this.replacePath(selector2)}').contentFrame()`;
+        console.log("[Debug PlaywrightCodeGenerator] frame selector resolved", {
+          contextId: frameContext.contextId,
+          rawFrameSelector: frameContext.frameSelector,
+          locatorSelector: selector2
+        });
+        prefix += `.locator(${this.quoteForCode(selector2)}).contentFrame()`;
       });
       return prefix;
     }
@@ -17076,12 +16852,20 @@
       if (context.type === "page") return this.pageAlias;
       return context.contextId?.replace(/^ctx_/, "") || this.pageAlias;
     }
+    _isUsableIframeContext(context) {
+      if (context?.type !== "iframe") return false;
+      const frameElement = context.frameElement;
+      const tagName = frameElement?.tagName?.toLowerCase();
+      if (!frameElement || tagName !== "iframe" && tagName !== "frame") return false;
+      if (frameElement.isConnected === false) return false;
+      const parentContext = this.contextMap.get(context.parentContextId);
+      if (parentContext?.documentRef && frameElement.ownerDocument !== parentContext.documentRef) {
+        return false;
+      }
+      return true;
+    }
     _frameSelectorToLocatorSelector(frameSelector) {
       if (!frameSelector) return "iframe";
-      const idMatch = String(frameSelector).match(/^(iframe|frame)#(.+)$/);
-      if (idMatch) {
-        return `#${idMatch[2]}`;
-      }
       return frameSelector;
     }
     declareContexts(contexts, rootAlias) {
@@ -17106,7 +16890,7 @@
           const alias = this.contextAliasMap.get(ctx.contextId);
           const parentAlias = this.contextAliasMap.get(ctx.parentContextId) || rootAlias;
           const selector2 = ctx.frameSelector || `iframe:nth-of-type(1)`;
-          const declaration = `const ${alias} = ${parentAlias}.frameLocator('${this.replacePath(selector2)}');`;
+          const declaration = `const ${alias} = ${parentAlias}.frameLocator(${this.quoteForCode(selector2)});`;
           if (this.command && typeof this.command.appendCode === "function") {
             this.command.appendCode(declaration);
           }
@@ -17115,13 +16899,14 @@
       });
       return generatedDeclarations;
     }
-    // 4. 新增共用的 Locator 字串組裝器，統整舊版 switch 邏輯
+    // 4. ?啣??梁??Locator 摮葡蝯??剁?蝯望?? switch ?摩
     _buildLocatorString(winPrefix, methodObj) {
       const { funName, obj } = methodObj;
       switch (funName) {
         case "ByRole": {
           const hasName = obj.name !== null && obj.name !== void 0 && obj.name !== "";
-          const roleLocator = hasName ? `${winPrefix}.getByRole("${obj.role}", { name: "${obj.name}" })` : `${winPrefix}.getByRole("${obj.role}")`;
+          const exactOption = obj.exact === false ? "" : ", exact: true";
+          const roleLocator = hasName ? `${winPrefix}.getByRole("${obj.role}", { name: "${obj.name}"${exactOption} })` : `${winPrefix}.getByRole("${obj.role}")`;
           const hasIndex = obj.index !== null && obj.index !== void 0;
           return hasIndex ? `${roleLocator}.nth(${obj.index})` : roleLocator;
         }
@@ -17130,21 +16915,24 @@
         case "ByText":
           return `${winPrefix}.getByText("${obj.text}", { exact: true })`;
         case "ByDomPath":
-          return `${winPrefix}.locator("${this.replacePath(obj.csspath)}")`;
+          return this._buildDomPathLocator(winPrefix, obj);
         default:
           return `${winPrefix}.locator("unknown")`;
       }
+    }
+    _buildDomPathLocator(winPrefix, obj) {
+      let locator = winPrefix;
+      for (const step of obj.shadowChain || []) {
+        locator += `.locator(${this.quoteForCode(step.hostSelector)})`;
+      }
+      locator += `.locator(${this.quoteForCode(obj.csspath)})`;
+      return locator;
     }
     changeSetter(action, sourcepath, selectedValue, sourceWindow) {
       const best = this._getBestPath(sourcepath);
       if (!best) return null;
       const winPrefix = this._getContextPrefix(sourceWindow);
-      let code = "";
-      if (best.funName === "ByDomPath") {
-        code = `await ${winPrefix}.locator('${this.replacePath(best.obj.csspath)}').selectOption({ label: ${JSON.stringify(selectedValue)} });`;
-      } else {
-        code = `await ${this._buildLocatorString(winPrefix, best)}.selectOption({ label: ${JSON.stringify(selectedValue)} });`;
-      }
+      const code = `await ${this._buildLocatorString(winPrefix, best)}.selectOption({ label: ${JSON.stringify(selectedValue)} });`;
       this.updateUserActionDB(action, best.funName, best.obj, "source");
       return code;
     }
@@ -17153,7 +16941,7 @@
       if (inputKey === "Backspace") {
         return `await ${winPrefix}.keyboard.press('Backspace');`;
       }
-      return `await ${winPrefix}.keyboard.press('${inputKey}');`;
+      return `await ${winPrefix}.keyboard.press(${this.quoteForCode(inputKey)});`;
     }
     dragAndDropCodeSetter(action, targetpath, sourcepath, sourceWindow, targetWindow) {
       const bestSou = this._getBestPath(sourcepath);
@@ -17173,9 +16961,6 @@
       const winPrefix = this._getContextPrefix(sourceWindow);
       const locator = this._buildLocatorString(winPrefix, best);
       this.updateUserActionDB(action, best.funName, best.obj, "source");
-      if (best.funName === "ByDomPath") {
-        return `await ${winPrefix}.locator('${this.replacePath(best.obj.csspath)}').click();`;
-      }
       return `await ${locator}.click();`;
     }
     doubleClickSetter(action, sourcepath, sourceWindow) {
@@ -17184,9 +16969,6 @@
       const winPrefix = this._getContextPrefix(sourceWindow);
       const locator = this._buildLocatorString(winPrefix, best);
       this.updateUserActionDB(action, best.funName, best.obj, "source");
-      if (best.funName === "ByDomPath") {
-        return `await ${winPrefix}.locator('${this.replacePath(best.obj.csspath)}').dblclick();`;
-      }
       return `await ${locator}.dblclick();`;
     }
     inputSetter(action, sourcepath, sourceWindow, inputText) {
@@ -17195,9 +16977,17 @@
       const winPrefix = this._getContextPrefix(sourceWindow);
       const locator = this._buildLocatorString(winPrefix, best);
       this.updateUserActionDB(action, best.funName, best.obj, "source");
-      return `await ${locator}.fill('${inputText}');`;
+      return `await ${locator}.fill(${this.quoteForCode(inputText)});`;
     }
-    // 5. 將原本對全域陣列 Index 的更新，改為直接對傳入的 Action 實體屬性做更新 (解耦)
+    rangeSetter(action, sourcepath, sourceWindow, value) {
+      const best = this._getBestPath(sourcepath);
+      if (!best) return null;
+      const winPrefix = this._getContextPrefix(sourceWindow);
+      const locator = this._buildLocatorString(winPrefix, best);
+      this.updateUserActionDB(action, best.funName, best.obj, "source");
+      return `await ${locator}.fill(${this.quoteForCode(value)});`;
+    }
+    // 5. 撠??砍??典???? Index ??堆??寧?湔撠?亦? Action 撖阡?撅祆批??湔 (閫??
     updateUserActionDB(action, funName, obj, targetType = "source") {
       if (!action || typeof action.setSourceMethod !== "function") return;
       let data = "";
@@ -17217,14 +17007,16 @@
       if (targetType === "drop" || targetType === "target") {
         action.setTargetMethod(funName);
         action.setTargetData(data);
-        if (funName === "ByDomPath" && Array.isArray(obj.options)) {
-          action.targetDomPathOptions = obj.options;
+        if (funName === "ByDomPath") {
+          action.targetDomPathChain = obj.shadowChain || [];
+          action.targetDomPathOptions = Array.isArray(obj.options) ? obj.options : [];
         }
       } else {
         action.setSourceMethod(funName);
         action.setSourceData(data);
-        if (funName === "ByDomPath" && Array.isArray(obj.options)) {
-          action.sourceDomPathOptions = obj.options;
+        if (funName === "ByDomPath") {
+          action.sourceDomPathChain = obj.shadowChain || [];
+          action.sourceDomPathOptions = Array.isArray(obj.options) ? obj.options : [];
         }
       }
     }
@@ -17248,8 +17040,12 @@
       this.targetWindow = targetWindow;
       this.sourceMethod = null;
       this.sourceData = null;
+      this.sourceDomPathChain = [];
+      this.sourceDomPathOptions = [];
       this.targetMethod = null;
       this.targetData = null;
+      this.targetDomPathChain = [];
+      this.targetDomPathOptions = [];
       this.keyboard = null;
       this.selectedText = null;
       this.selectedValue = null;
@@ -17356,6 +17152,17 @@
       this.currentHoveredElement = null;
       this.typedText = "";
       this.timer = null;
+      this.initialInputValues = /* @__PURE__ */ new WeakMap();
+      this.lastUserTypedAt = /* @__PURE__ */ new WeakMap();
+      this.userEditedInputs = /* @__PURE__ */ new WeakSet();
+      this.lastColorInput = /* @__PURE__ */ new WeakMap();
+      this.dragStart = { x: 0, y: 0 };
+      this.isDragging = false;
+      this.DRAG_THRESHOLD = 5;
+      this.dragSource = null;
+      this.mouseDownFlag = false;
+      this.dragStepFlag = 0;
+      this.suppressClickUntil = 0;
       this.isRecording = false;
     }
     init() {
@@ -17364,6 +17171,9 @@
         return;
       }
       this.mainDocument.addEventListener("click", this.clickHandler.bind(this), true);
+      this.mainDocument.addEventListener("mousedown", this.mousedownHandler.bind(this), true);
+      this.mainDocument.addEventListener("mousemove", this.mousemoveHandler.bind(this), true);
+      this.mainDocument.addEventListener("mouseup", this.mouseupHandler.bind(this), true);
       this.mainWindow.addEventListener("dragstart", this.dragStartHandler.bind(this));
       this.mainDocument.addEventListener("dblclick", this.dblClickHandler.bind(this), true);
       this.mainDocument.addEventListener("keydown", this.keydownHandler.bind(this));
@@ -17380,13 +17190,15 @@
       switch (msg.type) {
         case "START_RECORDING":
           this.isRecording = true;
+          this.snapshotInitialInputValues();
           break;
         case "STOP_RECORDING":
           this.isRecording = false;
+          clearTimeout(this.timer);
           break;
       }
     }
-    // 統一封裝與派發 Action 的方法
+    // 蝯曹?撠??晷??Action ?瘜?
     dispatchAction(action_type, sourceElement, targetElement = null, extraData = {}) {
       const currentEventElement = sourceElement || targetElement;
       if (currentEventElement) {
@@ -17397,11 +17209,11 @@
         sourceElement,
         targetElement,
         this.contextId,
-        // 將事件的來源綁定當前的 contextId
+        // 撠?隞嗥?靘?蝬??嗅???contextId
         targetElement ? this.contextId : ""
       );
       if (extraData.keyboard) action.setKeyboard(extraData.keyboard);
-      if (extraData.inputText) action.setInputText(extraData.inputText);
+      if (extraData.inputText !== void 0) action.setInputText(extraData.inputText);
       if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
       if (extraData.isDragStart) action.isDragStart = true;
       if (extraData.isDrop) action.isDrop = true;
@@ -17418,16 +17230,35 @@
       this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
     }
     inputHandler(e) {
-      if (!this.isRecording) return;
+      if (!this.isRecording || !e.isTrusted) return;
+      if (this.shouldSuppressSyntheticPageEvent()) return;
       const tag = e.target.tagName.toLowerCase();
       const type = e.target.getAttribute("type");
+      const isRange = this.isRangeInput(e.target);
+      if (isRange) {
+        clearTimeout(this.timer);
+        this.timer = setTimeout(() => {
+          this.currentHoveredElement = e.target;
+          this.dispatchAction("range", this.currentHoveredElement, null, {
+            inputText: e.target.value
+          });
+        }, 250);
+        return;
+      }
+      if (this.isColorInput(e.target)) {
+        this.recordColorInput(e.target);
+        return;
+      }
       const isTextInput = tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type)) || tag === "textarea" || e.target.isContentEditable;
       if (!isTextInput) return;
+      if (!this.shouldRecordTextInputEvent(e.target)) return;
       clearTimeout(this.timer);
+      const target = e.target;
       this.timer = setTimeout(() => {
-        this.currentHoveredElement = e.target;
+        if (!this.isRecording || !this.shouldRecordTextInputEvent(target)) return;
+        this.currentHoveredElement = target;
         this.dispatchAction("input", this.currentHoveredElement, null, {
-          inputText: e.target.value || e.target.innerText
+          inputText: this.getInputValue(target)
         });
       }, 500);
     }
@@ -17435,14 +17266,30 @@
       if (!this.isRecording || !e.isTrusted) return;
       const tag = e.target.tagName;
       const type = e.target.type;
+      if (this.isRangeInput(e.target)) return;
+      if (this.isColorInput(e.target)) {
+        this.recordColorInput(e.target);
+        return;
+      }
       const isSelect = tag === "SELECT";
       const isCheckbox = tag === "INPUT" && type === "checkbox";
       if (!isSelect && !isCheckbox) return;
+      if (isCheckbox) {
+        this.dispatchAction("checkBox", this.getCheckboxClickTarget(e.target));
+        return;
+      }
+      if (isSelect) {
+        this.setReloadSuppressWindow();
+      }
       const action_type = isSelect ? "change" : "checkBox";
       this.dispatchAction(action_type, e.target);
     }
     keydownHandler(e) {
       if (!this.isRecording) return;
+      if (e.isTrusted && e.target && this.isTextEditingKey(e) && this.isTextInputElement(e.target)) {
+        this.lastUserTypedAt.set(e.target, Date.now());
+        this.userEditedInputs.add(e.target);
+      }
       if (e.key === "Backspace") {
         this.currentHoveredElement = e.target;
         this.dispatchAction("keyboard", this.currentHoveredElement, null, {
@@ -17452,6 +17299,7 @@
     }
     dblClickHandler(e) {
       if (!this.isRecording) return;
+      if (this.shouldSuppressSyntheticPageEvent()) return;
       this.currentHoveredElement = e.target;
       this.dispatchAction("dbclick", this.currentHoveredElement);
     }
@@ -17459,28 +17307,192 @@
       if (!this.isRecording) return;
       const target = e.target;
       if (!target) return;
+      if (this.isRangeInput(target)) return;
       if (target.getAttribute("draggable") === "true") {
         this.dispatchAction("dragANDdrop", target, null, { isDragStart: true });
       }
     }
+    mousedownHandler(e) {
+      if (!this.isRecording || !e.isTrusted) return;
+      if (this.isRangeInput(e.target)) return;
+      if (!this.isMouseDragCandidate(e.target)) return;
+      this.dragStart = { x: e.clientX, y: e.clientY };
+      this.isDragging = false;
+      this.dragSource = this.getDragSourceElement(e.target);
+      this.mouseDownFlag = true;
+      this.dragStepFlag = 1;
+    }
+    mousemoveHandler(e) {
+      if (!this.isRecording || !e.isTrusted) return;
+      if (this.isRangeInput(e.target)) return;
+      this.currentHoveredElement = this.getDragTargetElement(e.target);
+      if (!this.dragStart || this.dragStepFlag !== 1) return;
+      const dx = e.clientX - this.dragStart.x;
+      const dy = e.clientY - this.dragStart.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance >= this.DRAG_THRESHOLD && this.mouseDownFlag) {
+        this.isDragging = true;
+        this.dragStepFlag = 2;
+        this.mouseDownFlag = false;
+        this.dispatchAction("dragANDdrop", this.dragSource, null, { isDragStart: true });
+      }
+    }
+    mouseupHandler(e) {
+      if (!this.isRecording || !e.isTrusted) return;
+      if (this.shouldSuppressSyntheticPageEvent()) return;
+      if (this.isFileInput(e.target)) return;
+      if (this.isDragging) {
+        this.isDragging = false;
+        this.dragStart = { x: 0, y: 0 };
+        this.currentHoveredElement = this.getDragTargetElement(e.target);
+        this.mouseDownFlag = false;
+        this.dragStepFlag = 0;
+        this.suppressClickUntil = Date.now() + 300;
+        this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
+        return;
+      }
+      this.resetMouseDragState();
+    }
     clickHandler(e) {
-      if (!this.isRecording) return;
-      if (e.target.tagName === "LABEL" || e.target.tagName === "SELECT") return;
-      let clickable = e.target;
-      if (e.target.tagName === "INPUT") {
-        const label = e.target.parentElement?.querySelector(`label[for="${e.target.id}"]`);
-        clickable = label || e.target.closest(`button, a, [role="button"], [onclick], i, svg`) || e.target;
+      if (!this.isRecording || !e.isTrusted) return;
+      if (Date.now() < this.suppressClickUntil) return;
+      if (this.shouldSuppressSyntheticPageEvent()) return;
+      const target = this.getComposedEventTarget(e);
+      if (this.isFileInput(target)) return;
+      if (this.isRangeInput(target)) return;
+      if (this.isCheckboxOrCheckboxLabel(target)) return;
+      if (target.tagName === "LABEL" || target.tagName === "SELECT") return;
+      let clickable = target;
+      if (target.tagName === "INPUT") {
+        const label = target.parentElement?.querySelector(`label[for="${target.id}"]`);
+        clickable = label || target.closest(`button, a, [role="button"], [onclick], i, svg`) || target;
       } else {
-        clickable = e.target.closest(`button, a, [role="button"], [onclick], i, svg`) || e.target;
+        clickable = target.closest(`button, a, [role="button"], [onclick], i, svg`) || target;
       }
       this.currentHoveredElement = clickable;
       this.dispatchAction("click", this.currentHoveredElement);
+    }
+    isRangeInput(element) {
+      return element?.tagName === "INPUT" && element.getAttribute("type") === "range";
+    }
+    isColorInput(element) {
+      return element?.tagName === "INPUT" && element.getAttribute("type") === "color";
+    }
+    isFileInput(element) {
+      return element?.tagName === "INPUT" && element.getAttribute("type") === "file";
+    }
+    recordColorInput(element) {
+      const value = element?.value;
+      if (!value) return;
+      const lastRecord = this.lastColorInput.get(element);
+      if (lastRecord?.value === value && Date.now() - lastRecord.ts < 500) return;
+      this.lastColorInput.set(element, { value, ts: Date.now() });
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => {
+        this.currentHoveredElement = element;
+        this.dispatchAction("color", this.currentHoveredElement, null, {
+          inputText: value
+        });
+      }, 150);
+    }
+    getDragSourceElement(element) {
+      return element?.closest?.(".gjs-layer-move, [data-toggle-move]") || element;
+    }
+    getComposedEventTarget(e) {
+      const interactive = this.getFirstComposedElement(e, "button, a, [role='button'], [onclick], input, textarea, select, label");
+      return interactive || e.target;
+    }
+    getFirstComposedElement(e, selector2) {
+      const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+      for (const item of path) {
+        if (item?.nodeType !== 1) continue;
+        if (item.matches?.(selector2)) return item;
+        const closest = item.closest?.(selector2);
+        if (closest) return closest;
+      }
+      return null;
+    }
+    isMouseDragCandidate(element) {
+      return !!element?.closest?.(".gjs-layer-move, [data-toggle-move]");
+    }
+    getDragTargetElement(element) {
+      return element?.closest?.(".gjs-layer, .gjs-layer-item, [data-layer-id], [data-gjs-type]") || element;
+    }
+    resetMouseDragState() {
+      this.isDragging = false;
+      this.dragStart = { x: 0, y: 0 };
+      this.dragSource = null;
+      this.mouseDownFlag = false;
+      this.dragStepFlag = 0;
+    }
+    snapshotInitialInputValues() {
+      try {
+        this.initialInputValues = /* @__PURE__ */ new WeakMap();
+        this.userEditedInputs = /* @__PURE__ */ new WeakSet();
+        this.mainDocument?.querySelectorAll?.("input, textarea, [contenteditable='true']").forEach((element) => {
+          this.initialInputValues.set(element, this.getInputValue(element));
+        });
+      } catch (error) {
+        console.warn("[Recorder] Unable to snapshot initial input values", error);
+      }
+    }
+    getInputValue(element) {
+      return element?.value ?? element?.innerText ?? "";
+    }
+    shouldRecordTextInputEvent(element) {
+      if (!this.userEditedInputs.has(element)) return false;
+      const value = this.getInputValue(element);
+      if (this.initialInputValues.get(element) === value) return false;
+      const lastTypedAt = this.lastUserTypedAt.get(element) || 0;
+      return Date.now() - lastTypedAt <= 1500;
+    }
+    isTextEditingKey(e) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return false;
+      return e.key?.length === 1 || ["Backspace", "Delete"].includes(e.key);
+    }
+    isTextInputElement(element) {
+      const tag = element?.tagName?.toLowerCase();
+      const type = element?.getAttribute?.("type");
+      return tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type)) || tag === "textarea" || element?.isContentEditable;
+    }
+    setReloadSuppressWindow(ms = 1500) {
+      try {
+        this.mainWindow?.sessionStorage?.setItem("__recorderSuppressUntil", String(Date.now() + ms));
+      } catch (error) {
+        console.warn("[Recorder] Unable to set reload suppress window", error);
+      }
+    }
+    shouldSuppressSyntheticPageEvent() {
+      try {
+        const until = Number(this.mainWindow?.sessionStorage?.getItem("__recorderSuppressUntil") || 0);
+        return Date.now() < until;
+      } catch (error) {
+        return false;
+      }
+    }
+    getCheckboxClickTarget(input) {
+      const wrappingLabel = input.closest?.("label");
+      if (wrappingLabel) return wrappingLabel;
+      if (input.id) {
+        const escapedId = String(input.id).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        const explicitLabel = input.ownerDocument?.querySelector?.(`label[for="${escapedId}"]`);
+        if (explicitLabel) return explicitLabel;
+      }
+      return input;
+    }
+    isCheckboxOrCheckboxLabel(element) {
+      if (!element) return false;
+      if (element.matches?.('input[type="checkbox"]')) return true;
+      const label = element.closest?.("label");
+      if (!label?.querySelector?.('input[type="checkbox"]')) return false;
+      if (element.closest?.('button, a, [role="button"], [onclick]')) return false;
+      return true;
     }
   };
 
   // interfaces/IframeEventListener.js
   var IframeEventListener = class {
-    // 1. 移除 command, userActionDB 等依賴，改為接收 onActionRecorded 回呼函式
+    // 1. 蝘駁 command, userActionDB 蝑?鞈湛??寧?交 onActionRecorded ??賢?
     constructor(contexts, domParserService, onActionRecorded) {
       this.contexts = contexts;
       this.iframeWindow = contexts?.iframeWindow || null;
@@ -17495,6 +17507,10 @@
       this.DOUBLE_CLICK_DELAY = 250;
       this.inputTimer = 0;
       this.INPUT_DELAY = 500;
+      this.initialInputValues = /* @__PURE__ */ new WeakMap();
+      this.lastUserTypedAt = /* @__PURE__ */ new WeakMap();
+      this.userEditedInputs = /* @__PURE__ */ new WeakSet();
+      this.lastColorInput = /* @__PURE__ */ new WeakMap();
       this.dragStart = { x: 0, y: 0 };
       this.isDragging = false;
       this.DRAG_THRESHOLD = 5;
@@ -17511,6 +17527,7 @@
       this.iframeDocument.addEventListener("mousemove", this.mousemoveHandler.bind(this));
       this.iframeDocument.addEventListener("mousedown", this.mousedownHandler.bind(this));
       this.iframeDocument.addEventListener("mouseup", this.mouseupHandler.bind(this));
+      this.iframeDocument.addEventListener("keydown", this.keydownHandler.bind(this));
       this.iframeDocument.addEventListener("input", this.inputHandler.bind(this));
       this.iframeWindow.addEventListener("drop", this.dropHandler.bind(this));
       this.iframeDocument.addEventListener("click", this.clickHandler.bind(this), true);
@@ -17520,7 +17537,7 @@
       });
       this.iframeWindow.addEventListener("message", this.messageHandler.bind(this));
     }
-    // 【新增】處理 SELECT 與 Checkbox 的改變
+    // ?憓???SELECT ??Checkbox ?霈?
     changeHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
       const tag = e.target.tagName;
@@ -17528,6 +17545,13 @@
       const isSelect = tag === "SELECT";
       const isCheckbox = tag === "INPUT" && type === "checkbox";
       if (!isSelect && !isCheckbox) return;
+      if (isCheckbox) {
+        this.dispatchAction("checkBox", this.getCheckboxClickTarget(e.target));
+        return;
+      }
+      if (isSelect) {
+        this.setReloadSuppressWindow();
+      }
       const action_type = isSelect ? "change" : "checkBox";
       this.dispatchAction(action_type, e.target);
     }
@@ -17536,18 +17560,33 @@
       switch (msg.type) {
         case "START_RECORDING":
           this.isRecording = true;
+          this.snapshotInitialInputValues();
           break;
         case "STOP_RECORDING":
           this.isRecording = false;
+          clearTimeout(this.inputTimer);
           break;
       }
     }
-    // 2. 建立統一的派發 Action 方法
+    // 2. 撱箇?蝯曹??晷??Action ?寞?
     dispatchAction(action_type, sourceElement, targetElement = null, extraData = {}) {
       const currentEventElement = sourceElement || targetElement;
       if (currentEventElement) {
         this.DOMElement.setElementData(currentEventElement, action_type);
       }
+      console.log("[Debug IframeEventListener] dispatchAction", {
+        actionType: action_type,
+        contextId: this.contextId,
+        sourceTag: sourceElement?.tagName || null,
+        sourceId: sourceElement?.id || null,
+        sourceClass: sourceElement?.className || null,
+        sourceDataGjsType: sourceElement?.getAttribute?.("data-gjs-type") || null,
+        targetTag: targetElement?.tagName || null,
+        targetId: targetElement?.id || null,
+        targetClass: targetElement?.className || null,
+        targetDataGjsType: targetElement?.getAttribute?.("data-gjs-type") || null,
+        extraData
+      });
       const action = ActionInterpreter.interpretDrag(
         action_type,
         sourceElement,
@@ -17555,7 +17594,7 @@
         this.contextId,
         targetElement ? this.contextId : ""
       );
-      if (extraData.inputText) action.setInputText(extraData.inputText);
+      if (extraData.inputText !== void 0) action.setInputText(extraData.inputText);
       if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
       if (extraData.isDragStart) action.isDragStart = true;
       if (extraData.isDrop) action.isDrop = true;
@@ -17566,7 +17605,9 @@
       }
     }
     clickHandler(e) {
-      if (!this.isRecording) return;
+      if (!this.isRecording || !e.isTrusted) return;
+      if (this.shouldSuppressSyntheticPageEvent()) return;
+      if (this.isFileInput(e.target)) return;
     }
     dropHandler(e) {
       if (!this.isRecording) return;
@@ -17575,26 +17616,62 @@
     }
     inputHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
+      if (this.shouldSuppressSyntheticPageEvent()) return;
       const tag = e.target.tagName.toLowerCase();
       const type = e.target.getAttribute("type");
+      const isRange = this.isRangeInput(e.target);
+      if (isRange) {
+        clearTimeout(this.inputTimer);
+        this.inputTimer = setTimeout(() => {
+          this.currentHoveredElement = e.target;
+          this.dispatchAction("range", this.currentHoveredElement, null, {
+            inputText: e.target.value
+          });
+        }, 250);
+        return;
+      }
       const isTextInput = tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type)) || tag === "textarea" || e.target.isContentEditable;
       if (!isTextInput) return;
+      if (!this.shouldRecordTextInputEvent(e.target)) return;
       clearTimeout(this.inputTimer);
+      const target = e.target;
       this.inputTimer = setTimeout(() => {
-        this.currentHoveredElement = e.target;
+        if (!this.isRecording || !this.shouldRecordTextInputEvent(target)) return;
+        this.currentHoveredElement = target;
         this.dispatchAction("input", this.currentHoveredElement, null, {
-          inputText: e.target.value || e.target.innerText
+          inputText: this.getInputValue(target)
         });
       }, this.INPUT_DELAY);
     }
+    keydownHandler(e) {
+      if (!this.isRecording || !e.isTrusted || !e.target) return;
+      if (!this.isTextEditingKey(e) || !this.isTextInputElement(e.target)) return;
+      this.lastUserTypedAt.set(e.target, Date.now());
+      this.userEditedInputs.add(e.target);
+    }
     mouseupHandler(e) {
-      if (!this.isRecording) return;
-      if (e.target.tagName === "LABEL" || e.target.tagName === "SELECT") return;
+      if (!this.isRecording || !e.isTrusted) return;
+      if (this.shouldSuppressSyntheticPageEvent()) return;
+      const target = this.getComposedEventTarget(e);
+      if (this.isFileInput(target)) return;
+      if (this.isRangeInput(target)) {
+        this.isDragging = false;
+        this.dragStart = { x: 0, y: 0 };
+        this.mouseDownFlag = false;
+        this.dragStepFlag = 0;
+        return;
+      }
+      if (this.isColorInput(e.target)) {
+        this.recordColorInput(e.target);
+        return;
+      }
+      if (this.isCheckboxOrCheckboxLabel(target)) return;
+      if (target.tagName === "LABEL" || target.tagName === "SELECT") return;
       console.log("[Debug IframeListener] mouseup \u89F8\u767C, isDragging:", this.isDragging);
       if (this.isDragging) {
         this.isDragging = false;
         this.dragStart = { x: 0, y: 0 };
-        this.currentHoveredElement = e.target;
+        this.currentHoveredElement = target;
         this.mouseDownFlag = false;
         this.dragStepFlag = 0;
         this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
@@ -17605,20 +17682,21 @@
             this.clickFlag = 0;
             this.isDragging = false;
             this.dragStart = { x: 0, y: 0 };
-            this.dispatchAction("click", e.target);
+            this.dispatchAction("click", target);
           }, this.DOUBLE_CLICK_DELAY);
         } else if (this.clickFlag === 2) {
           clearTimeout(this.clickTimeOut);
           this.clickFlag = 0;
           this.isDragging = false;
           this.dragStart = { x: 0, y: 0 };
-          this.dispatchAction("dbclick", e.target);
+          this.dispatchAction("dbclick", target);
         }
       }
       this.dragStepFlag = 0;
     }
     mousedownHandler(e) {
       if (!this.isRecording) return;
+      if (this.isRangeInput(e.target)) return;
       this.dragStart = { x: e.clientX, y: e.clientY };
       this.isDragging = false;
       this.dragSource = e.target;
@@ -17627,6 +17705,7 @@
     }
     mousemoveHandler(e) {
       if (!this.isRecording) return;
+      if (this.isRangeInput(e.target)) return;
       this.currentHoveredElement = e.target;
       if (!this.dragStart || this.dragStepFlag !== 1) return;
       const dx = e.clientX - this.dragStart.x;
@@ -17638,6 +17717,106 @@
         this.mouseDownFlag = false;
         this.dispatchAction("dragANDdrop", this.dragSource, null, { isDragStart: true });
       }
+    }
+    isRangeInput(element) {
+      return element?.tagName === "INPUT" && element.getAttribute("type") === "range";
+    }
+    isColorInput(element) {
+      return element?.tagName === "INPUT" && element.getAttribute("type") === "color";
+    }
+    isFileInput(element) {
+      return element?.tagName === "INPUT" && element.getAttribute("type") === "file";
+    }
+    recordColorInput(element) {
+      const value = element?.value;
+      if (!value) return;
+      const lastRecord = this.lastColorInput.get(element);
+      if (lastRecord?.value === value && Date.now() - lastRecord.ts < 500) return;
+      this.lastColorInput.set(element, { value, ts: Date.now() });
+      clearTimeout(this.inputTimer);
+      this.inputTimer = setTimeout(() => {
+        this.currentHoveredElement = element;
+        this.dispatchAction("color", this.currentHoveredElement, null, {
+          inputText: value
+        });
+      }, 150);
+    }
+    getComposedEventTarget(e) {
+      const interactive = this.getFirstComposedElement(e, "button, a, [role='button'], [onclick], input, textarea, select, label");
+      return interactive || e.target;
+    }
+    getFirstComposedElement(e, selector2) {
+      const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+      for (const item of path) {
+        if (item?.nodeType !== 1) continue;
+        if (item.matches?.(selector2)) return item;
+        const closest = item.closest?.(selector2);
+        if (closest) return closest;
+      }
+      return null;
+    }
+    snapshotInitialInputValues() {
+      try {
+        this.initialInputValues = /* @__PURE__ */ new WeakMap();
+        this.userEditedInputs = /* @__PURE__ */ new WeakSet();
+        this.iframeDocument?.querySelectorAll?.("input, textarea, [contenteditable='true']").forEach((element) => {
+          this.initialInputValues.set(element, this.getInputValue(element));
+        });
+      } catch (error) {
+        console.warn("[Recorder] Unable to snapshot initial input values", error);
+      }
+    }
+    getInputValue(element) {
+      return element?.value ?? element?.innerText ?? "";
+    }
+    shouldRecordTextInputEvent(element) {
+      if (!this.userEditedInputs.has(element)) return false;
+      const value = this.getInputValue(element);
+      if (this.initialInputValues.get(element) === value) return false;
+      const lastTypedAt = this.lastUserTypedAt.get(element) || 0;
+      return Date.now() - lastTypedAt <= 1500;
+    }
+    isTextEditingKey(e) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return false;
+      return e.key?.length === 1 || ["Backspace", "Delete"].includes(e.key);
+    }
+    isTextInputElement(element) {
+      const tag = element?.tagName?.toLowerCase();
+      const type = element?.getAttribute?.("type");
+      return tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type)) || tag === "textarea" || element?.isContentEditable;
+    }
+    setReloadSuppressWindow(ms = 1500) {
+      try {
+        this.iframeWindow?.sessionStorage?.setItem("__recorderSuppressUntil", String(Date.now() + ms));
+      } catch (error) {
+        console.warn("[Recorder] Unable to set reload suppress window", error);
+      }
+    }
+    shouldSuppressSyntheticPageEvent() {
+      try {
+        const until = Number(this.iframeWindow?.sessionStorage?.getItem("__recorderSuppressUntil") || 0);
+        return Date.now() < until;
+      } catch (error) {
+        return false;
+      }
+    }
+    getCheckboxClickTarget(input) {
+      const wrappingLabel = input.closest?.("label");
+      if (wrappingLabel) return wrappingLabel;
+      if (input.id) {
+        const escapedId = String(input.id).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        const explicitLabel = input.ownerDocument?.querySelector?.(`label[for="${escapedId}"]`);
+        if (explicitLabel) return explicitLabel;
+      }
+      return input;
+    }
+    isCheckboxOrCheckboxLabel(element) {
+      if (!element) return false;
+      if (element.matches?.('input[type="checkbox"]')) return true;
+      const label = element.closest?.("label");
+      if (!label?.querySelector?.('input[type="checkbox"]')) return false;
+      if (element.closest?.('button, a, [role="button"], [onclick]')) return false;
+      return true;
     }
   };
 
@@ -17680,7 +17859,7 @@
   // MainApp.js
   console.log("\u{1F680} [System] bundle.js \u5DF2\u7D93\u6210\u529F\u88AB Chrome \u6CE8\u5165\u5230\u9019\u500B\u7DB2\u9801\uFF01", window.location.href);
   var MainApp = class {
-    // 建構子：初始化所有子系統。允許傳入自訂的 document 與 window，預設為當前網頁的
+    // 撱箸?摮???????蝟餌絞??閮勗?亥閮? document ??window嚗?閮剔?嗅?蝬脤???
     constructor(rootDoc = document, rootWin = window) {
       console.log("\u{1F3D7}\uFE0F [MainApp] \u9032\u5165 constructor\uFF01");
       this.rootDoc = rootDoc;
@@ -17689,6 +17868,7 @@
       this.scanResult = null;
       this.activeListeners = [];
       this.setupBackgroundMessageListener();
+      this.setupNativeDialogListener();
       this.registry = new ContextRegistry();
       this.store = new RecorderStore();
       this.domParserService = new DOMParserService({
@@ -17725,10 +17905,10 @@
         });
       }
     }
-    // 🌟 貼上這個新方法：專門處理 Background 傳來的跨世界/原生 Popup 事件
+    // ?? 鞎潔???寞?嚗???? Background ?喃??楊銝?/?? Popup 鈭辣
     // ==================== myrecorderRestructure/MainApp1.js ====================
-    // 將這段函式加在 MainApp1 類別裡面
-    // 接收 Background 傳來的原生 Popup 通知
+    // 撠挾?賢?? MainApp1 憿鋆⊿
+    // ?交 Background ?喃?????Popup ?
     setupBackgroundMessageListener() {
       if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.onMessage) return;
       chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -17761,7 +17941,25 @@
         return false;
       });
     }
-    // 統一處理來自各個 Listener (Page/Iframe/Popup) 的互動動作
+    setupNativeDialogListener() {
+      this.rootWin.addEventListener("message", (event) => {
+        const msg = event.data;
+        if (event.source !== this.rootWin) return;
+        if (msg?.source !== "RECORDER_PAGE_HOOK") return;
+        if (msg.type !== "RECORDER_NATIVE_DIALOG") return;
+        if (!this.isStarted) return;
+        this.handleUserAction({
+          type: "dialog",
+          dialogType: msg.dialogType,
+          message: msg.message,
+          result: msg.result,
+          defaultValue: msg.defaultValue,
+          sourceWindow: "ctx_page_0",
+          ts: Date.now()
+        });
+      });
+    }
+    // 蝯曹???靘??Listener (Page/Iframe/Popup) ????雿?
     handleUserAction(action) {
       if (!this.isStarted) return;
       console.log("[Debug MainApp] \u63A5\u6536\u5230 Action:", action.type, action);
@@ -17776,7 +17974,7 @@
             sourceContextId: action.sourceWindow,
             sourceElementInfo: action.getSourceElement(),
             sourcePath
-            // 預先存好解析結果
+            // ??摮末閫??蝯?
           });
           return;
         }
@@ -17805,8 +18003,7 @@
         });
       }
     }
-    // 啟動錄製器
-    // 檔案：myrecorderRestructure/MainApp.js
+    // ???ˊ??    // 瑼?嚗yrecorderRestructure/MainApp.js
     start() {
       if (this.isStarted) return this.getState();
       const scanner = new ContextScanner(this.rootDoc, this.rootWin);
@@ -17831,10 +18028,8 @@
           chrome.runtime.sendMessage({
             type: "APPEND_RECORD_DATA",
             newCode: initialBatchCode,
-            // 傳送陣列
             isReplace: false,
             newAction: gotoAction
-            // 關聯最後一個動作
           }).catch(() => {
           });
         }
@@ -17844,7 +18039,7 @@
       this.bindListenersToContexts(allContexts);
       return this.getState();
     }
-    // 🌟 關鍵新增：專門給新分頁(Popup)或重新整理後的頁面「自動接續錄製」使用
+    // ?? ??啣?嚗??蝯行??(Popup)???唳?????Ｕ?蝥?鋆賬蝙??
     autoStart() {
       if (this.isStarted) return;
       console.log(`\u{1F680} [MainApp] \u5075\u6E2C\u5230\u7CFB\u7D71\u6B63\u5728\u9304\u88FD\u4E2D\uFF0C\u81EA\u52D5\u555F\u52D5\u76E3\u807D\u5668\uFF01(\u8EAB\u5206: ${this.pageAlias})`);
@@ -17858,7 +18053,7 @@
       this.store.setRecording(true);
       this.bindListenersToContexts(allContexts);
     }
-    // 停止錄製器
+    // ?迫?ˊ??
     stop() {
       if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
         chrome.storage.local.set({ isRecordingSessionActive: false });
@@ -17870,7 +18065,7 @@
       this.isStarted = false;
       return this.getState();
     }
-    // 完全重置錄製器 (清除所有資料)
+    // 摰?蔭?ˊ??(皜?????
     reset() {
       this.stop();
       this.registry.clear();
@@ -17886,9 +18081,9 @@
       this.isStarted = false;
       return this.getState();
     }
-    // 處理新彈出的視窗 (Popup)
-    // 處理新彈出的視窗 (Popup)
-    // 處理新彈出的視窗 (Popup)
+    // ???啣??箇?閬? (Popup)
+    // ???啣??箇?閬? (Popup)
+    // ???啣??箇?閬? (Popup)
     handleNewPopup(popupData) {
       console.log("[pop up detected]");
       const action = {
@@ -17914,14 +18109,12 @@
         });
       }
     }
-    // 將 Registry 裡的環境資料同步到 Store 中集中管理
+    // 撠?Registry 鋆∠??啣?鞈??郊??Store 銝剝?銝剔恣??
     syncRegistryToStore() {
       this.store.registerContexts(this.registry.getAllContexts());
     }
-    // 核心邏輯：將「動作資料」轉譯為「程式碼字串」並存起來
-    // 以下為各種 Getter 方法，用於提供對外取得內部狀態的介面
-    // 取得錄製到的所有動作列表
-    // 取得錄製到的所有動作列表 (安全過濾版)
+    // ?詨??摩嚗???雿???霅舐??撘Ⅳ摮葡?蒂摮絲靘?    // 隞乩??箏?蝔?Getter ?寞?嚗?潭?靘?憭?敺?函???隞
+    // ???ˊ?啁????雿?銵?    // ???ˊ?啁????雿?銵?(摰?蕪??
     getActions() {
       return this.store.getActions().map((act) => {
         return this.decorateActionForDisplay(act);
@@ -17942,11 +18135,11 @@
       }
       return contextId;
     }
-    // 取得產生的完整 Playwright 程式碼字串
+    // ???Ｙ?????Playwright 蝔?蝣澆?銝?
     getGeneratedCode() {
       return this.command.getCode();
     }
-    // 取得整個 App 的綜合狀態 (通常打包傳給 Popup 介面渲染使用)
+    // ???游?App ??????(?虜???喟策 Popup 隞皜脫?雿輻)
     getState() {
       return {
         isStarted: this.isStarted,
@@ -17957,7 +18150,7 @@
         generatedCode: this.command.getCode()
       };
     }
-    // 取得供開發者除錯用的詳細狀態
+    // ??靘??潸?舐?底蝝啁???
     debugState() {
       return {
         scanResult: this.scanResult,
@@ -17967,8 +18160,8 @@
         isStarted: this.isStarted
       };
     }
-    // [新增] 動態為掃描到的每一個 Context 掛載對應的事件監聽器
-    // 動態為掃描到的每一個 Context 掛載對應的事件監聽器
+    // [?啣?] ???箸????銝??Context ??撠???隞嗥?賢
+    // ???箸????銝??Context ??撠???隞嗥?賢
     bindListenersToContexts(contexts) {
       contexts.forEach((ctx) => {
         if (this.store.hasListener(ctx.contextId)) return;
@@ -17986,9 +18179,9 @@
         let listener = null;
         const listenerContexts = {
           contextId: ctx.contextId,
-          // 如果是主頁或彈出視窗，就把它的 windowRef 當作 mainWindow
+          // 憒??臭蜓??敶閬?嚗停????windowRef ?嗡? mainWindow
           mainWindow: ctx.type === "page" || ctx.type === "popup" ? ctx.windowRef : this.rootWin,
-          // 如果是 iframe，就把它的 windowRef 給 iframeWindow
+          // 憒???iframe嚗停????windowRef 蝯?iframeWindow
           iframeWindow: ctx.type === "iframe" ? ctx.windowRef : null
         };
         if (ctx.type === "page" || ctx.type === "popup") {
@@ -18020,7 +18213,13 @@
       console.table(activeIframes);
     }
     appendGeneratedCode(action) {
+      this.refreshGeneratorContexts();
       const result = this.codeGenerator.generate(action);
+      console.log("[Debug MainApp] appendGeneratedCode result", {
+        actionType: action?.type || null,
+        sourceWindow: action?.sourceWindow || null,
+        result
+      });
       if (!result) return null;
       let codeToReturn = result;
       let isReplace = false;
@@ -18038,9 +18237,18 @@
           this.command.appendCode(codeToReturn);
         }
       }
+      console.log("[Debug MainApp] appendGeneratedCode stored", {
+        codeToReturn,
+        isReplace,
+        commandCode: this.command.code
+      });
       return { code: codeToReturn, isReplace };
     }
-    // 🌟 關鍵新增：統一處理增量同步到 Background 的機制
+    refreshGeneratorContexts() {
+      const allContexts = this.registry.getAllContexts();
+      this.codeGenerator.setContexts(allContexts, this.pageAlias);
+    }
+    // ?? ??啣?嚗絞銝??憓??郊??Background ????
     syncToGlobalStorage(codeResult, action) {
       if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return;
       const safeAct = this.decorateActionForDisplay(action);
@@ -18048,9 +18256,15 @@
         type: "APPEND_RECORD_DATA",
         newCode: codeResult ? codeResult.code : null,
         isReplace: codeResult ? codeResult.isReplace : false,
-        // 傳遞覆寫訊號
+        // ?喲?閬神閮?
         newAction: safeAct
       }).catch(() => {
+      });
+      console.log("[Debug MainApp] syncToGlobalStorage sent", {
+        newCode: codeResult ? codeResult.code : null,
+        isReplace: codeResult ? codeResult.isReplace : false,
+        actionType: safeAct?.type || null,
+        sourceWindow: safeAct?.sourceWindow || null
       });
     }
   };

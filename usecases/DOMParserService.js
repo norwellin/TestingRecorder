@@ -1,15 +1,14 @@
-// usecases 負責邏輯層
+﻿// usecases 鞎痊?摩撅?
 import { DOMElement } from './../entities/DOMElement.js';
 import { DIALOG_SELECTORS as ds } from './../config.js';
 import { getCssSelector } from "css-selector-generator";
 import { select } from 'optimal-select'; // global: 'OptimalSelect'
-import unique from 'unique-selector';
 
-// ====== 新增：引入 @medv/finder ======
+// ====== ?啣?嚗???@medv/finder ======
 import { finder } from '@medv/finder';
 
-// ====== 新增：引入 Testing Library 與無障礙 API ======
-// 加入 getRoles
+// ====== ?啣?嚗???Testing Library ??? API ======
+// ? getRoles
 import { queryAllByRole, queryAllByText, queryAllByTitle, getRoles } from '@testing-library/dom';
 import { computeAccessibleName } from 'dom-accessibility-api';
 
@@ -17,7 +16,7 @@ export class DOMParserService {
   constructor(contexts = {}) {
     this.mainWindow = contexts?.mainWindow || window;
 
-    this.currentDoc = null; // 動態儲存當前正在處理的元素的所屬 Document
+    this.currentDoc = null; // ???脣??嗅?甇?????蝝??撅?Document
 
     this.DIALOG_SELECTORS = ds;
     this.priSize = 4;
@@ -29,11 +28,11 @@ export class DOMParserService {
     };
     this.playwrightObj = {
       ByRole: { name: null, role: null, index: null },
-      ByLabel: {}, ByPlaceholder: {}, ByText: { text: null }, ByTitle: { title: null }, ByAltText: {}, ByDomPath: { csspath: null, options: [] }
+      ByLabel: {}, ByPlaceholder: {}, ByText: { text: null }, ByTitle: { title: null }, ByAltText: {}, ByDomPath: { csspath: null, shadowChain: [], options: [] }
     };
 
     this.weight = { WL: 0.4, Wc: 0.6, Wa: 1.0, Wcl: 1.0, Wt: 1.0, Wn: 3.0 };
-    // 🌟 新增：用來存放從外部 (例如轉換後的 Excel JSON) 讀取到的自定義 Regex 規則
+    // ?? ?啣?嚗靘??曉?憭 (靘?頧?敺? Excel JSON) 霈??摰儔 Regex 閬?
     this.customDynamicIdPatterns = [];
   }
 
@@ -48,40 +47,33 @@ export class DOMParserService {
     if (!e) return [null, null, null];
 
     const ownerDoc = e.ownerDocument;
-    if (!ownerDoc || !ownerDoc.contains(e)) {
-      console.warn("[DOMParser] 元素已不在所屬的文件中，嘗試解析失敗", e);
+    const realRoot = e.getRootNode();
+    const isElementInDocument = ownerDoc?.contains(e) || (realRoot?.host && ownerDoc?.contains(realRoot.host));
+    if (!ownerDoc || !isElementInDocument) {
+      console.warn("[DOMParser] ??撌脖??冽?撅祉??辣銝哨??岫閫??憭望?", e);
       return null;
     }
 
-    console.log("[Debug DOMParser] 正在解析元素:", e);
+    console.log("[Debug DOMParser] 甇?閫????:", e);
 
-    const realRoot = e.getRootNode();
     this.cleanInfo();
-    this.setInfo(e); // 這裡會同步更新 this.currentDoc
+    this.setInfo(e); // ?ㄐ??甇交??this.currentDoc
     this.clearPlaywrightObj();
+    const shadowChain = this.getShadowChain(e);
 
-    // 狀態記錄物件，記錄各種類型的 Locator 是否能唯一找到元素
+    // ????隞塚?閮??車憿???Locator ?臬?賢銝?曉??
     let isUniqueObj = { ByRole: false, ByTitle: false, ByDomPath: false, ByText: false };
 
     // ==========================================
-    // 1. 統一的屬性優先級設定 (保留 class，但交由我們的過濾器嚴格審查)
+    // 1. 蝯曹??惇?批??閮剖? (靽? class嚗?鈭斤???蕪?典?澆祟??
     // ==========================================
     const cssatt = ["id", "attribute", "class", "tag", "nthchild"];
-    const optPri = ['id', 'class', 'name', 'placeholder', 'data-testid', 'href', 'src']; 
-    const uniPri = ["ID", "Attributes", "Class", "Tag", "NthChild"];
+    const optPri = ['id', 'class', 'name', 'placeholder', 'data-testid', 'href', 'src'];
 
-    // 針對 unique-selector 製作的綜合正規表達式 (同時包含動態 ID 與不穩定 Class)
-    const dynamicIdOrClassRegex = new RegExp(
-        // 動態 ID 的特徵
-        `(#(i[a-z0-9]{3,5}|ion-(input|textarea|select|checkbox|radio|toggle|range|datetime)-\\d+(-lbl)?|[0-9a-f]{8}-.*|[a-z0-9_-]{10,}))|` + 
-        // 狀態與 Utility Class 的特徵 (如選取狀態、Tailwind 排版等)
-        `(\\.(active|focus|hover|disabled|selected|checked|hydrated|md|ios|gjs-[\\w-]+|css-[\\w-]+|sc-[\\w-]+|styled-[\\w-]+|p-\\d|m-\\d|px-\\d|py-\\d|mx-\\d|my-\\d|w-\\w+|h-\\w+|text-\\w+|bg-\\w+|flex|grid|col|row|rounded|shadow|border))`
-    , 'i');
-
-    let csskey = 0, optkey = 0, unikey = 0, finderkey = 0;
+    let csskey = 0, optkey = 0, finderkey = 0;
 
     // ==========================================
-    // 2. 各大 CSS Selector 套件解析 (加入 ID 與 Class 雙重攔截機制)
+    // 2. ?之 CSS Selector 憟辣閫?? (? ID ??Class ???璈)
     // ==========================================
 
     // (A) css-selector-generator
@@ -93,20 +85,20 @@ export class DOMParserService {
             blacklist: [
                 (sel) => {
                     if (typeof sel === 'string') {
-                        // 如果是 ID，檢查是否為動態亂碼
+                        // 憒???ID嚗炎?交?衣??鈭Ⅳ
                         if (sel.startsWith('#')) return this.isDynamicGeneratedId(sel.slice(1)); 
-                        // 如果是 Class，檢查是否為不穩定/純排版的 Class
+                        // 憒???Class嚗炎?交?衣銝帘摰?蝝??? Class
                         if (sel.startsWith('.')) return this.isDynamicOrUnstableClass(sel.slice(1)); 
                     }
                     return false;
                 }
             ]
         });
-        if (this.findUnique(selector, realRoot)) {
+        if (this.findUniqueWithShadowChain(selector, shadowChain, e)) {
             isUniqueObj.ByDomPath = true; csskey = 1;
         }
     } catch (err) {
-        console.warn("[DOMParser] css-selector-generator 解析失敗", err);
+        console.warn("[DOMParser] css-selector-generator 閫??憭望?", err);
     }
 
     // (B) optimal-select
@@ -116,7 +108,7 @@ export class DOMParserService {
             root: realRoot, 
             priority: optPri, 
             ignore: { 
-                // 讓我們的過濾函數決定這個 class 該不該用 (回傳 true 代表忽略)
+                // 霈????蕪?賣瘙箏???class 閰脖?閰脩 (? true 隞?”敹賜)
                 class: (className) => this.isDynamicOrUnstableClass(className),
                 attribute: (name, value, defaultPredicate) => {
                     if (name === 'id') return this.isDynamicGeneratedId(value);
@@ -124,64 +116,50 @@ export class DOMParserService {
                 }
             }
         });
-        if (this.findUnique(opt_selector, realRoot)) {
+        if (this.findUniqueWithShadowChain(opt_selector, shadowChain, e)) {
             isUniqueObj.ByDomPath = true; optkey = 1;
         }
     } catch (err) {
-        console.warn("[DOMParser] optimal-select 解析失敗", err);
+        console.warn("[DOMParser] optimal-select 閫??憭望?", err);
     }
 
-    // (C) unique-selector
-    let dom_selector = "";
-    try {
-        dom_selector = unique(e, { 
-            selectorTypes: uniPri,
-            // 傳入我們剛剛寫好的 ID 與 Class 綜合黑名單正規表達式
-            excludeRegex: dynamicIdOrClassRegex 
-        });
-        if (this.findUnique(dom_selector, realRoot)) {
-            isUniqueObj.ByDomPath = true; unikey = 1;
-        }
-    } catch (err) {
-        console.warn("[DOMParser] unique-selector 解析失敗", err);
-    }
-
-    // (D) @medv/finder
+    // (C) @medv/finder
     let finder_selector = "";
     try {
         finder_selector = finder(e, {
             root: realRoot,
             idName: (name) => !this.isDynamicGeneratedId(name),
-            // 只有「不是」不穩定 Class 的，才允許被 finder 使用
+            // ?芣????胯?蝛拙? Class ????閮梯◤ finder 雿輻
             className: (name) => !this.isDynamicOrUnstableClass(name),
         });
-        if (this.findUnique(finder_selector, realRoot)) {
+        if (this.findUniqueWithShadowChain(finder_selector, shadowChain, e)) {
             isUniqueObj.ByDomPath = true; finderkey = 1;
         }
     } catch (err) {
-        console.warn("[DOMParser] finder 解析失敗", err);
+        console.warn("[DOMParser] finder 閫??憭望?", err);
     }
 
     // ==========================================
-    // 3. 評估與競爭最佳 DOM Path
+    // 3. 閰摯?奎?剜?雿?DOM Path
     // ==========================================
     let csspath = this.analyzeCssPath(selector, csskey);
     let optpath = this.analyzeCssPath(opt_selector, optkey);
-    let unipath = this.analyzeCssPath(dom_selector, unikey);
     let finderpath = this.analyzeCssPath(finder_selector, finderkey);
 
     console.log("csspath: ", csspath);
     console.log("optpath: ", optpath);
-    console.log("unipath: ", unipath);
     console.log("finderpath: ", finderpath);
     
-    // 利用我們優化過的權重系統 (Class 最高，嚴格懲罰 [style]) 選出最後的贏家
-    const domPathOptions = this.rankDomPaths([csspath, optpath, unipath, finderpath]);
+    // ?拍??????頂蝯?(Class ?擃??湔?脩蔑 [style]) ?詨?敺?韐振
+    const domPathOptions = this.rankDomPaths([csspath, optpath, finderpath])
+      .filter(option => !this.hasUnstableAttributeSelector(option.path))
+      .map(option => ({ ...option, shadowChain }));
     this.playwrightObj.ByDomPath.csspath = domPathOptions[0]?.path || "";
+    this.playwrightObj.ByDomPath.shadowChain = domPathOptions[0]?.shadowChain || [];
     this.playwrightObj.ByDomPath.options = domPathOptions;
 
     // ==========================================
-    // 4. Playwright 特有語義定位分析 (ByRole, ByTitle, ByText)
+    // 4. Playwright ?寞?隤儔摰??? (ByRole, ByTitle, ByText)
     // ==========================================
     if (this.getPlaywrightRole(e, sourceWin)) {
       isUniqueObj.ByRole = true;
@@ -194,7 +172,7 @@ export class DOMParserService {
     }
 
     // ==========================================
-    // 5. 按照優先級 (Priority) 輸出結果
+    // 5. ??芸?蝝?(Priority) 頛詨蝯?
     // ==========================================
     let newObj = {};
     for (let i = 0; i < this.priSize; i++) {
@@ -236,16 +214,16 @@ export class DOMParserService {
 
     return ranked.sort((a, b) => b.score - a.score);
   }
-// 🌟 新增方法：讓外部傳入解析好的動態 ID 規則
+// ?? ?啣??寞?嚗?憭?喳閫??憟賜??? ID 閬?
   setCustomDynamicIdRules(rulesArray) {
     if (!Array.isArray(rulesArray)) return;
     
     this.customDynamicIdPatterns = rulesArray.map(ruleStr => {
       try {
-        // 將字串轉換為正規表達式物件，'i' 表示忽略大小寫
+        // 撠?銝脰??甇??銵券?撘隞塚?'i' 銵函內敹賜憭批?撖?
         return new RegExp(ruleStr, 'i');
       } catch (e) {
-        console.error(`[DOMParser] 無效的正則表達式規則: ${ruleStr}`, e);
+        console.error(`[DOMParser] ?⊥??迤?”??閬?: ${ruleStr}`, e);
         return null;
       }
     }).filter(regex => regex !== null);
@@ -285,11 +263,130 @@ export class DOMParserService {
     return obj;
   }
 
+  hasUnstableAttributeSelector(selector) {
+    if (typeof selector !== "string") return true;
+    return /\[style\b(?:[~|^$*]?=)?/i.test(selector);
+  }
+
   findUnique(path, doc) {
     if (!path) return false;
     try {
       const element = doc.querySelectorAll(path);
       return element.length === 1;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  isShadowRoot(root) {
+    return root && root.nodeType === Node.DOCUMENT_FRAGMENT_NODE && root.host instanceof Element;
+  }
+
+  getBestOpenSourceSelector(el, root) {
+    if (!el || !root) return "";
+
+    const candidates = [];
+    const cssatt = ["id", "attribute", "class", "tag", "nthchild"];
+    const optPri = ['id', 'class', 'name', 'placeholder', 'data-testid', 'href', 'src'];
+
+    try {
+      const selector = getCssSelector(el, {
+        selectors: cssatt,
+        root,
+        blacklist: [
+          (sel) => {
+            if (typeof sel !== 'string') return false;
+            if (sel.startsWith('#')) return this.isDynamicGeneratedId(sel.slice(1));
+            if (sel.startsWith('.')) return this.isDynamicOrUnstableClass(sel.slice(1));
+            return false;
+          }
+        ]
+      });
+      candidates.push(this.analyzeCssPath(selector, this.findUnique(selector, root) ? 1 : 0));
+    } catch (err) {
+      console.warn("[DOMParser] css-selector-generator shadow host 閫??憭望?", err);
+    }
+
+    try {
+      const selector = select(el, {
+        root,
+        priority: optPri,
+        ignore: {
+          class: (className) => this.isDynamicOrUnstableClass(className),
+          attribute: (name, value, defaultPredicate) => {
+            if (name === 'id') return this.isDynamicGeneratedId(value);
+            return typeof defaultPredicate === 'function' ? defaultPredicate(name, value) : false;
+          }
+        }
+      });
+      candidates.push(this.analyzeCssPath(selector, this.findUnique(selector, root) ? 1 : 0));
+    } catch (err) {
+      console.warn("[DOMParser] optimal-select shadow host 閫??憭望?", err);
+    }
+
+    try {
+      const selector = finder(el, {
+        root,
+        idName: (name) => !this.isDynamicGeneratedId(name),
+        className: (name) => !this.isDynamicOrUnstableClass(name),
+      });
+      candidates.push(this.analyzeCssPath(selector, this.findUnique(selector, root) ? 1 : 0));
+    } catch (err) {
+      console.warn("[DOMParser] finder shadow host 閫??憭望?", err);
+    }
+
+    return this.rankDomPaths(candidates)
+      .filter(option => !this.hasUnstableAttributeSelector(option.path))[0]?.path || "";
+  }
+
+  getShadowChain(el) {
+    const chain = [];
+    let root = el?.getRootNode?.();
+
+    while (this.isShadowRoot(root)) {
+      const host = root.host;
+      const parentRoot = host.getRootNode();
+      const hostSelector = this.getBestOpenSourceSelector(host, parentRoot);
+
+      if (!hostSelector) break;
+      chain.unshift({ hostSelector });
+      root = parentRoot;
+    }
+
+    return chain;
+  }
+
+  resolveShadowMatches(baseRoot, shadowChain, targetSelector) {
+    let roots = [baseRoot];
+
+    for (const step of shadowChain || []) {
+      const nextRoots = [];
+
+      for (const root of roots) {
+        const hosts = Array.from(root.querySelectorAll(step.hostSelector));
+        for (const host of hosts) {
+          if (host.shadowRoot) nextRoots.push(host.shadowRoot);
+        }
+      }
+
+      roots = nextRoots;
+    }
+
+    return roots.flatMap(root => Array.from(root.querySelectorAll(targetSelector)));
+  }
+
+  findUniqueWithShadowChain(path, shadowChain, targetEl) {
+    if (!path || !targetEl?.ownerDocument) return false;
+
+    try {
+      if (!shadowChain?.length) {
+        const root = targetEl.getRootNode();
+        const matches = Array.from(root.querySelectorAll(path));
+        return matches.length === 1 && matches[0] === targetEl;
+      }
+
+      const matches = this.resolveShadowMatches(targetEl.ownerDocument, shadowChain, path);
+      return matches.length === 1 && matches[0] === targetEl;
     } catch (e) {
       return false;
     }
@@ -311,7 +408,7 @@ export class DOMParserService {
         }
       }
     } catch (e) {
-      console.warn("[DOMParser] Testing Library getRoles 解析失敗", e);
+      console.warn("[DOMParser] Testing Library getRoles 閫??憭望?", e);
     }
 
     return null;
@@ -321,9 +418,20 @@ export class DOMParserService {
     if (!(el instanceof Element)) return false;
     const container = this.currentDoc.body || this.currentDoc;
 
+    if (el.tagName === "ION-BUTTON") {
+      const name = (el.textContent || el.innerText || "").trim().replace(/\s+/g, " ");
+      if (name && this.isUniqueIonButtonText(el, name, container)) {
+        this.playwrightObj.ByRole.index = null;
+        this.playwrightObj.ByRole.name = name;
+        this.playwrightObj.ByRole.role = "button";
+        this.playwrightObj.ByRole.exact = false;
+        return true;
+      }
+    }
+
     const role = this.getTestingLibraryRole(el);
     
-    // 🌟 修正 1：直接在這裡排除沒有語意的 generic 與 presentation
+    // ?? 靽格迤 1嚗?亙?ㄐ?瘝?隤???generic ??presentation
     if (!role || role === 'generic' || role === 'presentation') {
         return false; 
     }
@@ -332,7 +440,7 @@ export class DOMParserService {
     try {
       name = computeAccessibleName(el);
     } catch (e) {
-      console.warn("[DOMParser] computeAccessibleName 發生錯誤", e);
+      console.warn("[DOMParser] computeAccessibleName ?潛??航炊", e);
     }
 
     try {
@@ -341,18 +449,19 @@ export class DOMParserService {
 
       const index = matches.indexOf(el);
 
-      // 🌟 修正 2：拔除嚴格的 isUnique，只要畫面上有找到 (index !== -1) 就視為成功
+      // ?? 靽格迤 2嚗??文?潛? isUnique嚗閬?Ｖ????(index !== -1) 撠梯??箸???
       if (index !== -1) {
         this.playwrightObj.ByRole.index = index;
         this.playwrightObj.ByRole.name = name || null;
         this.playwrightObj.ByRole.role = role;
+        this.playwrightObj.ByRole.exact = !this.hasGeneratedIconNameRisk(el);
         
-        return true; // 允許回傳 true，讓後續產生器可以補上 .nth(index)
+        return true; // ?迂? true嚗?敺??Ｙ??典隞亥?銝?.nth(index)
       }
       return false;
       
     } catch (error) {
-      console.warn("[DOMParser] Testing Library ByRole 解析失敗", error);
+      console.warn("[DOMParser] Testing Library ByRole 閫??憭望?", error);
       return false;
     }
   }
@@ -371,9 +480,26 @@ export class DOMParserService {
         return true;
       }
     } catch (error) {
-      console.warn("[DOMParser] Testing Library ByText 解析失敗", error);
+      console.warn("[DOMParser] Testing Library ByText 閫??憭望?", error);
     }
     return false;
+  }
+
+  hasGeneratedIconNameRisk(el) {
+    return !!el.querySelector?.(
+      'i[class*="fa"], span[class*="fa-"], [class*="material-icons"], [class*="icon-"]'
+    );
+  }
+
+  isUniqueIonButtonText(el, text, container) {
+    if (el.tagName !== "ION-BUTTON") return false;
+
+    const matches = Array.from(container.querySelectorAll("ion-button")).filter((button) => {
+      const buttonText = (button.textContent || button.innerText || "").trim().replace(/\s+/g, " ");
+      return buttonText === text;
+    });
+
+    return matches.length === 1 && matches[0] === el;
   }
 
   checkUniqueByTitle(el) {
@@ -390,29 +516,29 @@ export class DOMParserService {
         return true;
       }
     } catch (error) {
-      console.warn("[DOMParser] Testing Library ByTitle 解析失敗", error);
+      console.warn("[DOMParser] Testing Library ByTitle 閫??憭望?", error);
     }
     return false;
   }
-// 🌟 新增：過濾不穩定、無語意、或純狀態的 Class
+// ?? ?啣?嚗?瞈曆?蝛拙??隤???蝝??? Class
   isDynamicOrUnstableClass(className) {
     if (typeof className !== 'string') return true;
     const val = className.trim();
     if (!val) return true;
 
-    // 1. 狀態與框架生命週期 Class (如選取中、載入中、特定平台)
-    const stateClasses = /^(active|focus|hover|visited|disabled|selected|checked|hydrated|md|ios|gjs-[a-zA-Z0-9_-]+)$/i;
+    // 1. ???獢??望? Class (憒?葉???乩葉?摰像??
+    const stateClasses = /^(active|focus|hover|visited|disabled|selected|checked|hydrated|md|ios|ion-activated|ion-focused|ion-touched|ion-dirty|ion-valid|ion-invalid|gjs-[a-zA-Z0-9_-]+)$/i;
     
-    // 2. CSS-in-JS Hash 亂碼 (如 React Styled-components 產生的 css-1k2x3y, sc-bdVaJa)
+    // 2. CSS-in-JS Hash 鈭Ⅳ (憒?React Styled-components ?Ｙ???css-1k2x3y, sc-bdVaJa)
     const cssInJsLike = /^(css-|sc-|styled-).*[a-zA-Z0-9_-]{4,}$/i;
     
-    // 3. Tailwind / Bootstrap 等純排版 Utility Class (如 p-4, m-2, text-center, flex, w-full)
+    // 3. Tailwind / Bootstrap 蝑??? Utility Class (憒?p-4, m-2, text-center, flex, w-full)
     const utilityClasses = /^(p|m|px|py|mx|my|w|h|text|bg|flex|grid|col|row|rounded|shadow|border)-[a-z0-9]+$/i;
     
-    // 4. 純粹的亂碼 (例如編譯打包後出現的 8 碼以上隨機字串)
+    // 4. 蝝硃??蝣?(靘?蝺刻陌??敺?曄? 8 蝣潔誑銝璈?銝?
     const pureHash = /^[a-z0-9]{8,15}$/i; 
 
-    // 如果符合任何一種「不穩定特徵」，就回傳 true (代表這是壞的 Class，應該被忽略)
+    // 憒?蝚血?隞颱?銝蝔柴?蝛拙??孵噩??撠勗???true (隞?”?憯? Class嚗?閰脰◤敹賜)
     return stateClasses.test(val) || cssInJsLike.test(val) || utilityClasses.test(val) || pureHash.test(val);
   }
   setInfo(el) {
@@ -453,7 +579,7 @@ export class DOMParserService {
       ByText: { text: null },
       ByTitle: { title: null },
       ByAltText: {},
-      ByDomPath: { csspath: null, options: [] }
+      ByDomPath: { csspath: null, shadowChain: [], options: [] }
     };
   }
 
@@ -472,35 +598,35 @@ export class DOMParserService {
     if (!value) return false;
 
 // ==========================================
-    // 1. 檢查「自定義 Excel 規則」(如果外部有傳入設定)
+    // 1. 瑼Ｘ?摰儔 Excel 閬???憒?憭??亥身摰?
     // ==========================================
     for (const pattern of this.customDynamicIdPatterns) {
       if (pattern.test(value)) {
-        console.log(`[DOMParser] 攔截到符合自定義(Excel)規則的動態 ID: ${value}`);
+        console.log(`[DOMParser] ??啁泵?摰儔(Excel)閬?????ID: ${value}`);
         return true; 
       }
     }
 
     // ==========================================
-    // 2. 檢查「一般亂數與常見框架」的動態 ID 特徵
+    // 2. 瑼Ｘ???砌??貉?撣貉?獢???? ID ?孵噩
     // ==========================================
     
-    // 短亂碼 (如: ihim, iiq4k)
+    // ?凋?蝣?(憒? ihim, iiq4k)
     const grapesLikeId = /^i[a-z0-9]{3,5}$/i;
 
-    // Ionic 框架
+    // Ionic 獢
     const ionicGeneratedId = /^ion-(input|textarea|select|checkbox|radio|toggle|range|datetime)-\d+(-lbl)?$/i;
 
-    // 常見 UUID (如: 123e4567-e89b-12d3-a456-426614174000)
+    // 撣貉? UUID (憒? 123e4567-e89b-12d3-a456-426614174000)
     const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-    // 雜湊 Hash 產生的長亂碼
+    // ?? Hash ?Ｙ??鈭Ⅳ
     const hashLike = /^[a-z0-9_-]{10,}$/i;
 
-    // 常見現代 UI 框架 (MUI, Radix, Chakra, Element Plus 等) 產生的帶數字 ID
+    // 撣貉??曆誨 UI 獢 (MUI, Radix, Chakra, Element Plus 蝑? ?Ｙ??葆?詨? ID
     const frameworkDynamic = /^(mui-|radix-|chakra-|el-|headlessui-|rc-tabs-).*\d+.*$/i;
 
-    // 純數字 ID (很多舊系統或動態表單會直接用資料庫流水號當 ID，極不穩定)
+    // 蝝摮?ID (敺??頂蝯望???銵典??亦鞈?摨急?瘞渲???ID嚗扔銝帘摰?
     const pureNumbers = /^\d+$/;
 
     return (
