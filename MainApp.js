@@ -25,6 +25,9 @@ export class MainApp {
     this.isStarted = false;
     this.scanResult = null;
     this.activeListeners = [];
+    this.hoverPreviewSessionEnabled = false;
+    this.dynamicFrameObserver = null;
+    this.dynamicFrameScanTimer = null;
 
     this.setupBackgroundMessageListener();
     this.setupNativeDialogListener();
@@ -56,10 +59,16 @@ export class MainApp {
 
     this.navigationTracker = new NavigationTracker({
       rootWindow: this.rootWin,
-      onNavigate: (navInfo) => {
-        const action = { type: "navigate", ...navInfo, ts: Date.now() };
+      onNavigationDetected: (navInfo) => {
+        const action = {
+          type: "navigate",
+          ...navInfo,
+          url: navInfo.currentUrl || navInfo.url || window.location.href,
+          ts: Date.now()
+        };
         const newLine = this.appendGeneratedCode(action);
-        const savedAction = this.store.addAction(action);
+        this.attachGeneratedCodeToAction(action, newLine);
+        const savedAction = this.addGeneratedAction(action, newLine);
         this.syncToGlobalStorage(newLine, savedAction);
       },
     });
@@ -108,7 +117,8 @@ export class MainApp {
 
         // ===== 修改後 =====
         const newLine = this.appendGeneratedCode(action);
-        const savedAction = this.store.addAction(action);
+        this.attachGeneratedCodeToAction(action, newLine);
+        const savedAction = this.addGeneratedAction(action, newLine);
         this.syncToGlobalStorage(newLine, savedAction);
 
         // 4. 即時更新畫面 UI
@@ -133,10 +143,10 @@ export class MainApp {
   setupNativeDialogListener() {
     this.rootWin.addEventListener("message", (event) => {
       const msg = event.data;
-      if (event.source !== this.rootWin) return;
       if (msg?.source !== "RECORDER_PAGE_HOOK") return;
       if (msg.type !== "RECORDER_NATIVE_DIALOG") return;
       if (!this.isStarted) return;
+      if (event.source !== this.rootWin && !this.isKnownFrameSource(event.source)) return;
 
       this.handleUserAction({
         type: "dialog",
@@ -144,10 +154,19 @@ export class MainApp {
         message: msg.message,
         result: msg.result,
         defaultValue: msg.defaultValue,
+        frameUrl: msg.frameUrl,
+        fromIframe: msg.fromIframe === true,
         sourceWindow: "ctx_page_0",
         ts: Date.now()
       });
     });
+  }
+
+  isKnownFrameSource(sourceWindow) {
+    if (!sourceWindow || !this.registry || typeof this.registry.getContextsByType !== "function") return false;
+    return this.registry
+      .getContextsByType("iframe")
+      .some((ctx) => ctx.windowRef === sourceWindow);
   }
   // 統一處理來自各個 Listener (Page/Iframe/Popup) 的互動動作
   handleUserAction(action) {
@@ -186,7 +205,8 @@ export class MainApp {
 
     // ===== 修改後 =====
     const newLine = this.appendGeneratedCode(action);
-    const savedAction = this.store.addAction(action);
+    this.attachGeneratedCodeToAction(action, newLine);
+    const savedAction = this.addGeneratedAction(action, newLine);
     this.syncToGlobalStorage(newLine, savedAction);
 
 
@@ -208,6 +228,7 @@ export class MainApp {
 
   start() {
     if (this.isStarted) return this.getState();
+    this.hoverPreviewSessionEnabled = true;
 
     // 1. 掃描環境並註冊
     const scanner = new ContextScanner(this.rootDoc, this.rootWin);
@@ -233,6 +254,11 @@ export class MainApp {
     if (gotoResult) {
       initialBatchCode.push(gotoResult);
       this.command.appendCode(gotoResult);
+      this.attachGeneratedCodeToAction(gotoAction, {
+        code: [gotoResult],
+        isReplace: false
+      });
+      this.store.addAction(gotoAction);
     }
 
     // 4. 🌟 一次性同步所有初始化代碼，防止多次發送導致的覆蓋問題
@@ -250,12 +276,14 @@ export class MainApp {
     this.isStarted = true;
     this.store.setRecording(true);
     this.bindListenersToContexts(allContexts);
+    this.startDynamicFrameWatcher();
 
     return this.getState();
   }
   // 🌟 關鍵新增：專門給新分頁(Popup)或重新整理後的頁面「自動接續錄製」使用
   autoStart() {
     if (this.isStarted) return;
+    this.hoverPreviewSessionEnabled = false;
 
     console.log(`🚀 [MainApp] 偵測到系統正在錄製中，自動啟動監聽器！(身分: ${this.pageAlias})`);
 
@@ -272,6 +300,7 @@ export class MainApp {
     this.isStarted = true;
     this.store.setRecording(true);
     this.bindListenersToContexts(allContexts);
+    this.startDynamicFrameWatcher();
   }
 
   // 停止錄製器
@@ -284,16 +313,96 @@ export class MainApp {
 
 
     //this.popupTracker.stop();
+    this.stopDynamicFrameWatcher();
     this.navigationTracker.stop();
     //this.clickToPageTracker.stop();
 
     // [修改] 關閉所有事件監聽器的錄製開關
-    this.activeListeners.forEach(l => l.isRecording = false);
+    this.activeListeners.forEach(l => {
+      if (typeof l.setRecordingState === "function") {
+        l.setRecordingState(false, { allowHoverPreview: false });
+      } else {
+        l.isRecording = false;
+        l.hoverInspector?.hide?.();
+        l.lastPreviewTarget = null;
+      }
+    });
 
     this.store.setRecording(false);
     this.isStarted = false;
+    this.hoverPreviewSessionEnabled = false;
 
     return this.getState();
+  }
+
+  startDynamicFrameWatcher() {
+    if (this.dynamicFrameObserver || !this.rootDoc?.documentElement) return;
+    if (typeof MutationObserver === "undefined") return;
+
+    const hasFrameNode = (node) => {
+      if (!node) return false;
+      if (node.nodeType === 1 && node.matches?.("iframe, frame")) return true;
+      return !!node.querySelector?.("iframe, frame");
+    };
+
+    this.dynamicFrameObserver = new MutationObserver((mutations) => {
+      const shouldRescan = mutations.some((mutation) => {
+        if (mutation.type === "childList") {
+          return Array.from(mutation.addedNodes || []).some(hasFrameNode);
+        }
+
+        if (mutation.type === "attributes") {
+          return mutation.target?.matches?.("iframe, frame");
+        }
+
+        return false;
+      });
+
+      if (shouldRescan) {
+        this.scheduleDynamicFrameRescan("iframe mutation");
+      }
+    });
+
+    this.dynamicFrameObserver.observe(this.rootDoc.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["src"]
+    });
+  }
+
+  stopDynamicFrameWatcher() {
+    if (this.dynamicFrameObserver) {
+      this.dynamicFrameObserver.disconnect();
+      this.dynamicFrameObserver = null;
+    }
+
+    if (this.dynamicFrameScanTimer) {
+      clearTimeout(this.dynamicFrameScanTimer);
+      this.dynamicFrameScanTimer = null;
+    }
+  }
+
+  scheduleDynamicFrameRescan(reason = "dynamic iframe") {
+    if (!this.isStarted) return;
+
+    clearTimeout(this.dynamicFrameScanTimer);
+    this.dynamicFrameScanTimer = setTimeout(() => {
+      this.dynamicFrameScanTimer = null;
+      this.rescanAndBindDynamicFrames(reason);
+    }, 800);
+  }
+
+  rescanAndBindDynamicFrames(reason = "dynamic iframe") {
+    if (!this.isStarted) return;
+
+    console.log("[Debug MainApp] rescan contexts for dynamic iframe", { reason });
+    const scanner = new ContextScanner(this.rootDoc, this.rootWin);
+    this.scanResult = scanner.scanAllContexts();
+    this.registry.registerMany(this.scanResult.contexts);
+    this.syncRegistryToStore();
+    this.refreshGeneratorContexts();
+    this.bindListenersToContexts(this.registry.getAllContexts());
   }
 
   // 完全重置錄製器 (清除所有資料)
@@ -333,7 +442,8 @@ export class MainApp {
 
     // ===== 修改後 =====
     const newLine = this.appendGeneratedCode(action);
-    const savedAction = this.store.addAction(action);
+    this.attachGeneratedCodeToAction(action, newLine);
+    const savedAction = this.addGeneratedAction(action, newLine);
     this.syncToGlobalStorage(newLine, savedAction);
 
     // popup 內部由新視窗自己的 MainApp.autoStart() 註冊，避免父視窗重複綁定並產生 contextId 撞名。
@@ -427,11 +537,19 @@ export class MainApp {
       if (this.store.hasListener(ctx.contextId)) return;
 
       if (ctx.type === "iframe" && !ctx.documentRef) {
+        const frameId = ctx.frameElement?.id || "(no id)";
+        const frameName = ctx.frameElement?.name || "(no name)";
+        const frameSrc = ctx.frameElement?.getAttribute?.("src") || "(no src)";
+        const resolvedSrc = ctx.frameElement?.src || "(no resolved src)";
+        console.warn(
+          `[Debug MainApp] unable to bind iframe listener: contextId=${ctx.contextId}, id=${frameId}, name=${frameName}, selector=${ctx.frameSelector || "(no selector)"}, src=${frameSrc}, resolvedSrc=${resolvedSrc}`
+        );
         console.warn("[Debug MainApp] skip iframe listener because documentRef is null", {
           contextId: ctx.contextId,
           locator: ctx.frameSelector,
           url: ctx.url,
-          frameId: ctx.frameElement?.id || null,
+          frameId,
+          frameName,
           frameSrc: ctx.frameElement?.getAttribute?.("src") || null,
           resolvedSrc: ctx.frameElement?.src || null
         });
@@ -467,7 +585,13 @@ export class MainApp {
       // 如果成功建立，則初始化並記錄起來
       if (listener) {
         listener.init();
-        listener.isRecording = this.isStarted;
+        if (typeof listener.setRecordingState === "function") {
+          listener.setRecordingState(this.isStarted, {
+            allowHoverPreview: this.hoverPreviewSessionEnabled === true
+          });
+        } else {
+          listener.isRecording = this.isStarted;
+        }
         this.activeListeners.push(listener);
         this.store.registerListener(ctx.contextId);
       }
@@ -522,6 +646,44 @@ export class MainApp {
       commandCode: this.command.code
     });
     return { code: codeToReturn, isReplace };
+  }
+
+  attachGeneratedCodeToAction(action, codeResult) {
+    if (!action || !codeResult || !codeResult.code) return;
+
+    const lines = Array.isArray(codeResult.code) ? codeResult.code : [codeResult.code];
+    action.generatedCodeLines = lines;
+    action.generatedCodeLine = lines[lines.length - 1] || "";
+    action.generatedCodeReplacesPrevious = codeResult.isReplace === true;
+  }
+
+  addGeneratedAction(action, codeResult) {
+    let replacedAction = null;
+    if (codeResult?.isReplace && typeof this.store.removeLastAction === "function") {
+      replacedAction = this.store.removeLastAction();
+    }
+
+    if (replacedAction) {
+      action.triggerAction = this.decorateActionForDisplay(replacedAction);
+    }
+
+    return this.store.addAction(action);
+  }
+
+  setHoverPreviewSessionEnabled(enabled) {
+    this.hoverPreviewSessionEnabled = enabled === true;
+    try {
+      if (typeof chrome !== "undefined" && chrome.storage?.local) {
+        chrome.storage.local.set({ hoverPreviewSessionEnabled: this.hoverPreviewSessionEnabled });
+      }
+    } catch (error) {
+      console.warn("[MainApp] Unable to persist hover preview session state", error);
+    }
+    this.activeListeners.forEach(listener => {
+      if (typeof listener.setHoverPreviewSessionEnabled === "function") {
+        listener.setHoverPreviewSessionEnabled(this.hoverPreviewSessionEnabled);
+      }
+    });
   }
 
   refreshGeneratorContexts() {

@@ -5,6 +5,7 @@ document.addEventListener("DOMContentLoaded", async function () {
     const stopButton = document.getElementById("stop-recording");   // ?迫?ˊ??
     const clearButton = document.getElementById("clear-recording"); // 皜蝝????
     const exportButton = document.getElementById("export-script");  // ?臬?單??
+    const hoverHighlightButton = document.getElementById("toggle-hover-highlight");
     const statusDiv = document.getElementById("status");            // ???摮＊蝷箏?憛?
     const recordingIndicator = document.getElementById("recording-indicator"); // ?ˊ銝剔?蝝??內??
     const actionsDiv = document.getElementById("recorded-actions"); // 憿舐內雿輻??雿???皜?憛?
@@ -12,6 +13,7 @@ document.addEventListener("DOMContentLoaded", async function () {
     const actionsCountSpan = document.getElementById("actions-count"); // 憿舐內??蝮賣??蝐?
 
     let actions = []; // ?脣??刻??園?銝剔??????
+    let hoverHighlightEnabled = true;
 
     // 2. 頛?賢?嚗?銝??澆???撘Ⅳ鞈?甇????桐?摮葡
     function normalizeCode(value) { 
@@ -92,12 +94,26 @@ document.addEventListener("DOMContentLoaded", async function () {
         return action.displaySourceWindow || action.sourceWindow || "";
     }
 
+    function updateHoverHighlightButton(enabled) {
+        hoverHighlightEnabled = enabled !== false;
+        if (!hoverHighlightButton) return;
+
+        hoverHighlightButton.textContent = hoverHighlightEnabled ? "Highlight On" : "Highlight Off";
+        hoverHighlightButton.classList.toggle("disabled", !hoverHighlightEnabled);
+        hoverHighlightButton.title = hoverHighlightEnabled
+            ? "Click to turn off hovered element highlight"
+            : "Click to turn on hovered element highlight";
+    }
+
     function getActionTarget(action) {
         if (action.type === "dragANDdrop") return action.displayTargetWindow || action.targetWindow || "";
         return action.displayTargetWindow || action.targetWindow || "";
     }
 
     function getActionBehavior(action) {
+        if (action.type === "dialog" && action.triggerAction?.type) {
+            return `dialog\ntrigger: ${action.triggerAction.type}`;
+        }
         return action.type || "unknown";
     }
 
@@ -112,6 +128,9 @@ document.addEventListener("DOMContentLoaded", async function () {
     function formatActionMethod(action) {
         if (action.type === "dragANDdrop") {
             return `來源: ${action.sourceMethod || ""}\n目標: ${action.targetMethod || ""}`;
+        }
+        if (action.type === "dialog" && action.triggerAction) {
+            return `dialog\ntrigger: ${action.triggerAction.sourceMethod || ""}`;
         }
         return action.sourceMethod || "";
     }
@@ -131,6 +150,21 @@ document.addEventListener("DOMContentLoaded", async function () {
 
         if (action.type === "navigate" || action.type === "popup") {
             cell.textContent = action.url || "";
+            return cell;
+        }
+
+        if (action.type === "dialog" && action.triggerAction) {
+            const dialogText = action.dialogType || action.message || "dialog";
+            appendLabeledElement(cell, "Dialog", dialogText, null, null, index, "source");
+            appendLabeledElement(
+                cell,
+                "Trigger",
+                action.triggerAction.sourceData || getActionValue(action.triggerAction),
+                action.triggerAction.sourceMethod,
+                null,
+                index,
+                "source"
+            );
             return cell;
         }
 
@@ -194,6 +228,36 @@ document.addEventListener("DOMContentLoaded", async function () {
             ...orderedBody.map(line => "  " + line),
             "});"
         ];
+    }
+
+    function getActionGeneratedLines(action) {
+        if (Array.isArray(action?.generatedCodeLines)) return action.generatedCodeLines.filter(Boolean);
+        if (action?.generatedCodeLine) return [action.generatedCodeLine];
+        return [];
+    }
+
+    function setActionGeneratedLines(action, lines) {
+        const normalizedLines = Array.isArray(lines) ? lines.filter(Boolean) : [];
+        action.generatedCodeLines = normalizedLines;
+        action.generatedCodeLine = normalizedLines[normalizedLines.length - 1] || "";
+    }
+
+    function buildCodeBodyFromActions(fallbackCodeBody = []) {
+        const codeBody = [];
+        let hasMissingActionCode = false;
+
+        actions.forEach(action => {
+            const lines = getActionGeneratedLines(action);
+            if (lines.length) {
+                codeBody.push(...lines);
+            } else if (action.type !== "navigate" || action.url) {
+                hasMissingActionCode = true;
+            }
+        });
+
+        return codeBody.length && !hasMissingActionCode
+            ? codeBody
+            : (Array.isArray(fallbackCodeBody) ? fallbackCodeBody.filter(Boolean) : []);
     }
 
     function parseFrameDeclaration(line) {
@@ -403,16 +467,24 @@ document.addEventListener("DOMContentLoaded", async function () {
     async function updateDomPathSelection(actionIndex, field, oldPath, newPath, newChain = []) {
         const storage = await chrome.storage.local.get(["generatedCodeBody", "generatedCode"]);
         const codeBody = Array.isArray(storage.generatedCodeBody) ? [...storage.generatedCodeBody] : [];
-        const codeIndex = findCodeBodyIndexForAction(codeBody, actionIndex);
+        const action = actions[actionIndex];
+        const actionLines = getActionGeneratedLines(action);
 
-        if (codeIndex >= 0) {
-            codeBody[codeIndex] = replaceDomPathInCodeLine(codeBody[codeIndex], field, oldPath, newPath, newChain);
+        if (action && actionLines.length) {
+            const nextLines = actionLines.map(line => replaceDomPathInCodeLine(line, field, oldPath, newPath, newChain));
+            setActionGeneratedLines(action, nextLines);
+        } else {
+            const codeIndex = findCodeBodyIndexForAction(codeBody, actionIndex);
+            if (codeIndex >= 0) {
+                codeBody[codeIndex] = replaceDomPathInCodeLine(codeBody[codeIndex], field, oldPath, newPath, newChain);
+            }
         }
 
-        const generatedCode = wrapPlaywrightCode(codeBody);
+        const nextCodeBody = buildCodeBodyFromActions(codeBody);
+        const generatedCode = wrapPlaywrightCode(nextCodeBody);
         await chrome.storage.local.set({
             generatedAction: actions,
-            generatedCodeBody: codeBody,
+            generatedCodeBody: nextCodeBody,
             generatedCode
         });
         setCodeView(normalizeCode(generatedCode));
@@ -424,6 +496,22 @@ document.addEventListener("DOMContentLoaded", async function () {
         let changed = false;
 
         actions.forEach((action, actionIndex) => {
+            const actionLines = getActionGeneratedLines(action);
+            if (actionLines.length) {
+                let nextLines = actionLines;
+                if (action.sourceMethod === "ByDomPath" && action.sourceData) {
+                    nextLines = nextLines.map(line => replaceDomPathInCodeLine(line, "source", null, action.sourceData, action.sourceDomPathChain || []));
+                }
+                if (action.targetMethod === "ByDomPath" && action.targetData) {
+                    nextLines = nextLines.map(line => replaceDomPathInCodeLine(line, "target", null, action.targetData, action.targetDomPathChain || []));
+                }
+                if (nextLines.join("\n") !== actionLines.join("\n")) {
+                    setActionGeneratedLines(action, nextLines);
+                    changed = true;
+                }
+                return;
+            }
+
             const codeIndex = findCodeBodyIndexForAction(codeBody, actionIndex);
             if (codeIndex < 0) return;
 
@@ -441,11 +529,13 @@ document.addEventListener("DOMContentLoaded", async function () {
             }
         });
 
-        if (!changed) return;
+        const nextCodeBody = buildCodeBodyFromActions(codeBody);
+        if (!changed && nextCodeBody.join("\n") === codeBody.filter(Boolean).join("\n")) return;
 
-        const generatedCode = wrapPlaywrightCode(codeBody);
+        const generatedCode = wrapPlaywrightCode(nextCodeBody);
         await chrome.storage.local.set({
-            generatedCodeBody: codeBody,
+            generatedAction: actions,
+            generatedCodeBody: nextCodeBody,
             generatedCode
         });
         setCodeView(normalizeCode(generatedCode));
@@ -494,14 +584,20 @@ document.addEventListener("DOMContentLoaded", async function () {
         if (changes.recorderStatus) {
             updateUI(changes.recorderStatus.newValue === "recording");
         }
+
+        if (changes.hoverHighlightEnabled) {
+            updateHoverHighlightButton(changes.hoverHighlightEnabled.newValue !== false);
+        }
     });
 
     // 9. ??鈭辣蝬?嚗??隞斤策??單?? (Background Script)
     
     // 暺???憪?鋆賬?
     startButton.addEventListener("click", async () => {
+        await chrome.storage.local.set({ hoverPreviewSessionEnabled: true });
         const response = await chrome.runtime.sendMessage({ type: "START_RECORDING" });
         if (!response?.ok) {
+            await chrome.storage.local.set({ hoverPreviewSessionEnabled: false });
             alert(response?.error || "Failed to start recording");
             return;
         }
@@ -510,6 +606,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
     // 暺???甇ａ?鋆賬?
     stopButton.addEventListener("click", async () => {
+        await chrome.storage.local.set({ hoverPreviewSessionEnabled: false });
         const response = await chrome.runtime.sendMessage({ type: "STOP_RECORDING" });
         if (!response?.ok) {
             alert(response?.error || "Failed to stop recording");
@@ -533,6 +630,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         updateActionsList(actions);
         setCodeView("// No code has been generated yet");
         updateUI(false);
+        await chrome.storage.local.set({ hoverPreviewSessionEnabled: false });
     });
 
     // 暺???箄?研?撠???蝔?蝣潔?頛?撖阡?瑼?
@@ -557,6 +655,14 @@ document.addEventListener("DOMContentLoaded", async function () {
         });
     });
 
+    hoverHighlightButton?.addEventListener("click", async () => {
+        const nextEnabled = !hoverHighlightEnabled;
+        await chrome.storage.local.set({ hoverHighlightEnabled: nextEnabled });
+        updateHoverHighlightButton(nextEnabled);
+    });
+
     // 10. ?瑁??????單頛摰敺??餃? Background ?輯???
+    const hoverStorage = await chrome.storage.local.get(["hoverHighlightEnabled"]);
+    updateHoverHighlightButton(hoverStorage.hoverHighlightEnabled !== false);
     await loadInitialState();
 });

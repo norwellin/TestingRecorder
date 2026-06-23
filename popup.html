@@ -66,6 +66,7 @@
 
         .controls {
             display: flex;
+            flex-wrap: wrap;
             gap: 10px;
             margin-bottom: 15px;
         }
@@ -102,6 +103,16 @@
 
         #export-script {
             background-color: #2196F3;
+            color: white;
+        }
+
+        #toggle-hover-highlight {
+            background-color: #ff5fb7;
+            color: white;
+        }
+
+        #toggle-hover-highlight.disabled {
+            background-color: #9e9e9e;
             color: white;
         }
 
@@ -467,6 +478,7 @@
         <button id="stop-recording">Stop Recording</button>
         <button id="clear-recording">Clear Recording</button>
         <button id="export-script">Export Script</button>
+        <button id="toggle-hover-highlight" title="Toggle hovered element highlight">Highlight On</button>
     </div>
 
     <div class="status-bar">

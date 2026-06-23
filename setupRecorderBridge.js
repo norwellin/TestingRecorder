@@ -79,6 +79,9 @@ export function setupRecorderBridge({ MainApp }) {
 
   function startRecording() {
     const instance = ensureApp();
+    if (typeof instance.setHoverPreviewSessionEnabled === "function") {
+      instance.setHoverPreviewSessionEnabled(true);
+    }
     if (!isRecording) {
       instance.start();
       isRecording = true;
@@ -99,6 +102,9 @@ export function setupRecorderBridge({ MainApp }) {
     }
 
     isRecording = false;
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      chrome.storage.local.set({ hoverPreviewSessionEnabled: false });
+    }
     //pushActionsAndCode(); // 停止時把最後一次的狀態推播給背景
 
     chrome.runtime.sendMessage({
@@ -119,6 +125,9 @@ export function setupRecorderBridge({ MainApp }) {
     chrome.runtime.sendMessage({ type: "RECORDER_STATUS_UPDATE", status: "idle" });
 
     isRecording = false;
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      chrome.storage.local.set({ hoverPreviewSessionEnabled: false });
+    }
   }
 
   // ==========================================

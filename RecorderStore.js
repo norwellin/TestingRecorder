@@ -104,6 +104,14 @@ export class RecorderStore {
     return normalizedAction;
   }
 
+  removeLastAction() {
+    const removedAction = this.state.actions.pop() || null;
+    this.state.lastAction = this.state.actions[this.state.actions.length - 1] || null;
+    this.state.currentAction = this.state.lastAction;
+    this.notify();
+    return removedAction;
+  }
+
   updateCurrentAction(patch) {
     if (!this.state.currentAction || !patch || typeof patch !== 'object') return;
 

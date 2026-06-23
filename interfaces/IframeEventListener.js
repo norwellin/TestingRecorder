@@ -1,6 +1,7 @@
 // iframe 內部事件監聽器，負責處理 iframe 內部事件 (已重構解耦版)
 import { DOMElement } from "../entities/DOMElement";
 import { ActionInterpreter } from '../usecases/ActionInterpreter.js';
+import { HoverInspector } from "./HoverInspector.js";
 
 export class IframeEventListener {
   // 1. 移除 command, userActionDB 等依賴，改為接收 onActionRecorded 回呼函式
@@ -41,6 +42,10 @@ export class IframeEventListener {
     this.dragSource = null;
     this.mouseDownFlag = false;
     this.dragStepFlag = 0;
+    this.hoverInspector = new HoverInspector(this.iframeDocument, this.iframeWindow);
+    this.lastPreviewTarget = null;
+    this.hoverHighlightEnabled = true;
+    this.hoverPreviewSessionEnabled = false;
 
     // GUI 狀態控制
     this.isRecording = false;
@@ -53,12 +58,15 @@ export class IframeEventListener {
     }
     
     this.iframeDocument.addEventListener('mousemove', this.mousemoveHandler.bind(this));
+    this.iframeDocument.addEventListener('mouseout', this.mouseoutHandler.bind(this), true);
+    this.iframeDocument.addEventListener('mouseleave', this.hideHoverPreview.bind(this), true);
     this.iframeDocument.addEventListener('mousedown', this.mousedownHandler.bind(this));
     this.iframeDocument.addEventListener('mouseup', this.mouseupHandler.bind(this));
     this.iframeDocument.addEventListener('keydown', this.keydownHandler.bind(this));
     this.iframeDocument.addEventListener('input', this.inputHandler.bind(this));
 
     this.iframeWindow.addEventListener('drop', this.dropHandler.bind(this));
+    this.iframeWindow.addEventListener('blur', this.hideHoverPreview.bind(this));
     this.iframeDocument.addEventListener("click", this.clickHandler.bind(this), true);
 
     // 【新增】監聽 change 事件
@@ -70,6 +78,8 @@ export class IframeEventListener {
 
     // 處理外部控制錄製開關的訊息
     this.iframeWindow.addEventListener('message', this.messageHandler.bind(this));
+    this.loadHoverHighlightPreference();
+    this.bindHoverHighlightPreference();
   }
 
   // 【新增】處理 SELECT 與 Checkbox 的改變
@@ -93,17 +103,20 @@ export class IframeEventListener {
     }
 
     const action_type = isSelect ? 'change' : 'checkBox';
-    this.dispatchAction(action_type, e.target);
+    this.dispatchAction(action_type, e.target, null, isSelect ? {
+      selectedValue: e.target.value,
+      selectedText: e.target.options?.[e.target.selectedIndex]?.text || ""
+    } : {});
   }
   messageHandler(e) {
     const msg = e.data;
     switch (msg.type) {
       case 'START_RECORDING':
-        this.isRecording = true;
+        this.setRecordingState(true, { allowHoverPreview: true });
         this.snapshotInitialInputValues();
         break;
       case 'STOP_RECORDING':
-        this.isRecording = false;
+        this.setRecordingState(false, { allowHoverPreview: false });
         clearTimeout(this.inputTimer);
         break;
     }
@@ -141,6 +154,9 @@ export class IframeEventListener {
 
     // 寫入額外資料
     if (extraData.inputText !== undefined) action.setInputText(extraData.inputText);
+    if (extraData.selectedValue !== undefined) action.setSelectedValue(extraData.selectedValue);
+    if (extraData.selectedText !== undefined) action.setSelectedText(extraData.selectedText);
+    if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
     if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
     // 【請補上這兩行】將拖拉標記附加到 action 上，否則 MainApp1 會認不出來！
     if (extraData.isDragStart) action.isDragStart = true;
@@ -231,7 +247,8 @@ export class IframeEventListener {
     }
     if (this.isCheckboxOrCheckboxLabel(target)) return;
     // 【新增】過濾掉 SELECT 和 LABEL 的點擊，這些交由 change 事件去處理
-    if (target.tagName === "LABEL" || target.tagName === "SELECT") return;
+    if (target.tagName === "LABEL" && !this.isRadioOrRadioLabel(target)) return;
+    if (target.tagName === "SELECT") return;
 // 增加一個 Debug 觀察觸發次數
     console.log("[Debug IframeListener] mouseup 觸發, isDragging:", this.isDragging);
     if (this.isDragging) {
@@ -245,6 +262,7 @@ export class IframeEventListener {
       // 模擬拖曳放開 (drop)
       this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
     } else {
+      const preParsedSourcePath = this.preParseSourcePath(target);
       this.clickFlag += 1;
       if (this.clickFlag === 1) {
         this.clickTimeOut = setTimeout(() => {
@@ -252,7 +270,7 @@ export class IframeEventListener {
           this.isDragging = false;
           this.dragStart = { x: 0, y: 0 };
 
-          this.dispatchAction("click", target);
+          this.dispatchAction("click", target, null, { preParsedSourcePath });
         }, this.DOUBLE_CLICK_DELAY);
 
       } else if (this.clickFlag === 2) {
@@ -261,11 +279,21 @@ export class IframeEventListener {
         this.isDragging = false;
         this.dragStart = { x: 0, y: 0 };
 
-        this.dispatchAction("dbclick", target);
+        this.dispatchAction("dbclick", target, null, { preParsedSourcePath });
       }
     }
+    this.mouseDownFlag = false;
     this.dragStepFlag = 0;
 
+  }
+
+  preParseSourcePath(element) {
+    try {
+      return this.domParserService.getOpenSourcePath(element, this.iframeWindow);
+    } catch (error) {
+      console.warn("[Recorder] Unable to pre-parse iframe click locator", error);
+      return null;
+    }
   }
 
   mousedownHandler(e) {
@@ -276,12 +304,18 @@ export class IframeEventListener {
     this.dragSource = e.target;
     this.mouseDownFlag = true;
     this.dragStepFlag = 1;
+    this.hideHoverPreview();
   }
 
   mousemoveHandler(e) {
     if (!this.isRecording) return;
     if (this.isRangeInput(e.target)) return;
     this.currentHoveredElement = e.target;
+    if (this.shouldPreviewHover()) {
+      this.previewHoveredElement(this.currentHoveredElement);
+    } else {
+      this.hideHoverPreview();
+    }
     
     if (!this.dragStart || this.dragStepFlag !== 1) return;
     
@@ -297,6 +331,108 @@ export class IframeEventListener {
       // 模擬拖曳開始 (drag start)
       this.dispatchAction("dragANDdrop", this.dragSource, null, { isDragStart: true });
     }
+  }
+
+  previewHoveredElement(element) {
+    if (!element || element === this.lastPreviewTarget) return;
+    this.lastPreviewTarget = element;
+
+    try {
+      const sourcePath = this.domParserService.getOpenSourcePath(element, this.iframeWindow);
+      this.hoverInspector?.show(element, this.formatLocatorPreview(sourcePath));
+    } catch (error) {
+      console.warn("[Recorder] Unable to preview hovered iframe locator", error);
+      this.hoverInspector?.show(element, "");
+    }
+  }
+
+  shouldPreviewHover() {
+    return this.hoverPreviewSessionEnabled && this.hoverHighlightEnabled && !this.mouseDownFlag && !this.isDragging && this.dragStepFlag === 0;
+  }
+
+  setRecordingState(isRecording, options = {}) {
+    this.isRecording = isRecording === true;
+    this.setHoverPreviewSessionEnabled(options.allowHoverPreview === true);
+    if (!this.isRecording) this.hideHoverPreview();
+  }
+
+  setHoverPreviewSessionEnabled(enabled) {
+    this.hoverPreviewSessionEnabled = enabled === true;
+    if (!this.hoverPreviewSessionEnabled) this.hideHoverPreview();
+  }
+
+  loadHoverHighlightPreference() {
+    try {
+      if (typeof chrome === "undefined" || !chrome.storage?.local) return;
+      chrome.storage.local.get(["hoverHighlightEnabled", "hoverPreviewSessionEnabled"], (result) => {
+        this.setHoverHighlightEnabled(result.hoverHighlightEnabled !== false);
+        this.setHoverPreviewSessionEnabled(result.hoverPreviewSessionEnabled === true);
+      });
+    } catch (error) {
+      console.warn("[Recorder] Unable to load iframe hover highlight preference", error);
+    }
+  }
+
+  bindHoverHighlightPreference() {
+    try {
+      if (typeof chrome === "undefined" || !chrome.storage?.onChanged) return;
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== "local" || !changes.hoverHighlightEnabled) return;
+        this.setHoverHighlightEnabled(changes.hoverHighlightEnabled.newValue !== false);
+      });
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== "local" || !changes.hoverPreviewSessionEnabled) return;
+        this.setHoverPreviewSessionEnabled(changes.hoverPreviewSessionEnabled.newValue === true);
+      });
+    } catch (error) {
+      console.warn("[Recorder] Unable to bind iframe hover highlight preference", error);
+    }
+  }
+
+  setHoverHighlightEnabled(enabled) {
+    this.hoverHighlightEnabled = enabled !== false;
+    if (!this.hoverHighlightEnabled) this.hideHoverPreview();
+  }
+
+  mouseoutHandler(e) {
+    if (!e.relatedTarget) this.hideHoverPreview();
+  }
+
+  hideHoverPreview() {
+    this.hoverInspector?.hide();
+    this.lastPreviewTarget = null;
+  }
+
+  formatLocatorPreview(sourcePath) {
+    const best = this.getBestPreviewPath(sourcePath);
+    if (!best) return "";
+
+    const { funName, obj } = best;
+    const quote = (value) => JSON.stringify(String(value ?? ""));
+
+    if (funName === "ByRole") {
+      const role = quote(obj.role);
+      if (obj.name !== null && obj.name !== undefined && obj.name !== "") {
+        const exactOption = obj.exact === false ? "" : ", exact: true";
+        const nth = obj.index !== null && obj.index !== undefined ? `.nth(${obj.index})` : "";
+        return `getByRole(${role}, { name: ${quote(obj.name)}${exactOption} })${nth}`;
+      }
+      return `getByRole(${role})`;
+    }
+
+    if (funName === "ByText") return `getByText(${quote(obj.text)}, { exact: true })`;
+    if (funName === "ByTitle") return `getByTitle(${quote(obj.title)}, { exact: true })`;
+    if (funName === "ByDomPath") return `locator(${quote(obj.csspath)})`;
+
+    return funName;
+  }
+
+  getBestPreviewPath(sourcePath) {
+    if (!sourcePath) return null;
+    for (let i = 0; i < this.domParserService.priSize; i++) {
+      if (sourcePath[i]) return sourcePath[i];
+    }
+    return null;
   }
 
   isRangeInput(element) {
@@ -329,7 +465,7 @@ export class IframeEventListener {
   }
 
   getComposedEventTarget(e) {
-    const interactive = this.getFirstComposedElement(e, "button, a, [role='button'], [onclick], input, textarea, select, label");
+    const interactive = this.getFirstComposedElement(e, "button, a, [role='button'], [onclick], input, textarea, select, label, [data-thread-id], .thread-item");
     return interactive || e.target;
   }
 
@@ -426,5 +562,11 @@ export class IframeEventListener {
     if (element.closest?.('button, a, [role="button"], [onclick]')) return false;
 
     return true;
+  }
+
+  isRadioOrRadioLabel(element) {
+    if (!element) return false;
+    if (element.matches?.('input[type="radio"]')) return true;
+    return !!element.closest?.("label")?.querySelector?.('input[type="radio"]');
   }
 }

@@ -87,7 +87,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       let codeBody = Array.isArray(data.generatedCodeBody) ? data.generatedCodeBody : [];
       const currentAction = Array.isArray(data.generatedAction) ? data.generatedAction : [];
       
-      // 接收到 MainApp 傳來的覆寫訊號，剔除上一行 click
+      // 接收到 MainApp 傳來的覆寫訊號，剔除上一行 click/action
       if (message.isReplace && codeBody.length > 0) {
           codeBody.pop(); 
       }
@@ -97,7 +97,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           codeBody.push(...newLines);
       }
       
+      if (message.isReplace && currentAction.length > 0) {
+          currentAction.pop();
+      }
+
       if (message.newAction) {
+          const newLines = message.newCode
+              ? (Array.isArray(message.newCode) ? message.newCode : [message.newCode])
+              : [];
+          if (newLines.length) {
+              message.newAction.generatedCodeLines = newLines;
+              message.newAction.generatedCodeLine = newLines[newLines.length - 1] || "";
+              message.newAction.generatedCodeReplacesPrevious = message.isReplace === true;
+          }
           currentAction.push(message.newAction);
       }
       

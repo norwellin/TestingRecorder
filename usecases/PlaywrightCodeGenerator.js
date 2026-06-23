@@ -96,7 +96,7 @@ export class PlaywrightCodeGenerator {
     let targetpath = null;
     let inputText = action.inputText || "default";
     let inputKey = action.keyboard || "default";
-    let selectLabel = action.selectedText || "default";
+    let selectValue = action.selectedValue || "default";
 
     // 從封裝好的 UserAction 實體中取得元素與視窗資訊
     // 從封裝好的 UserAction 實體中取得元素與視窗資訊
@@ -121,12 +121,12 @@ export class PlaywrightCodeGenerator {
            const srcEl = action.getSourceElement();
            inputText = srcEl ? (srcEl.innerText || srcEl.value || "") : "";
        }
-       if (action.type === 'change' && !action.selectedText) {
-           const srcEl = action.getSourceElement();
-           if (srcEl && srcEl.options && srcEl.selectedIndex >= 0) {
-               selectLabel = srcEl.options[srcEl.selectedIndex]?.text || "";
-           }
-       }
+        if (action.type === 'change' && !action.selectedValue) {
+            const srcEl = action.getSourceElement();
+            if (srcEl && srcEl.options && srcEl.selectedIndex >= 0) {
+                selectValue = srcEl.value || srcEl.options[srcEl.selectedIndex]?.value || "";
+            }
+        }
     }
 
     // 解析動作發生的目標視窗環境 (動態 ContextId: 例如 'page', 'popup_1', 'iframe_2')
@@ -148,7 +148,7 @@ export class PlaywrightCodeGenerator {
     } else if (action.type === 'keyboard') {
       generatedCode = this.keyboardSetter(inputKey, sourceWindow);
     } else if (action.type === 'change') {
-      generatedCode = this.changeSetter(action, sourcepath, selectLabel, sourceWindow);
+      generatedCode = this.changeSetter(action, sourcepath, selectValue, sourceWindow);
     }
 
     console.log("[Debug PlaywrightCodeGenerator] generatedCode", {
@@ -418,7 +418,7 @@ declareContexts(contexts, rootAlias) {
     if (!best) return null;
     
     const winPrefix = this._getContextPrefix(sourceWindow);
-    const code = `await ${this._buildLocatorString(winPrefix, best)}.selectOption({ label: ${JSON.stringify(selectedValue)} });`;
+    const code = `await ${this._buildLocatorString(winPrefix, best)}.selectOption({ value: ${JSON.stringify(selectedValue)} });`;
     
     this.updateUserActionDB(action, best.funName, best.obj, "source");
     return code;

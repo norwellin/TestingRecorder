@@ -7,13 +7,23 @@
   const originalPrompt = window.prompt;
 
   function notify(dialogType, message, extraData = {}) {
-    window.postMessage({
+    const payload = {
       source: "RECORDER_PAGE_HOOK",
       type: "RECORDER_NATIVE_DIALOG",
       dialogType,
       message: String(message ?? ""),
+      frameUrl: String(window.location?.href || ""),
       ...extraData
-    }, "*");
+    };
+
+    window.postMessage(payload, "*");
+
+    if (window.top && window.top !== window) {
+      window.top.postMessage({
+        ...payload,
+        fromIframe: true
+      }, "*");
+    }
   }
 
   window.alert = function(message) {

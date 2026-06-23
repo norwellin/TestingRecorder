@@ -187,12 +187,79 @@ export class ContextScanner {
       return `${tagName}[data-testid="${escapeCss(testId)}"]`;
     }
 
+    const containerSelector = this.buildStableAncestorSelector(frameEl);
+    if (containerSelector) {
+      return `${containerSelector} ${tagName}`;
+    }
+
     const src = frameEl.getAttribute('src');
     if (src) {
       return `${tagName}[src="${escapeCss(src)}"]`;
     }
 
     return `${tagName}:nth-of-type(${index + 1})`;
+  }
+
+  buildStableAncestorSelector(frameEl) {
+    const escapeCss = (value) => {
+      if (globalThis.CSS?.escape) return globalThis.CSS.escape(value);
+      return String(value).replace(/"/g, '\\"');
+    };
+
+    let current = frameEl?.parentElement;
+    while (current && current !== this.rootDocument?.documentElement) {
+      const tagName = (current.tagName || '').toLowerCase();
+
+      if (current.id && !this.isLikelyDynamicValue(current.id)) {
+        return `#${escapeCss(current.id)}`;
+      }
+
+      const testId = current.getAttribute?.('data-testid');
+      if (testId) {
+        return `${tagName}[data-testid="${escapeCss(testId)}"]`;
+      }
+
+      const stableDataAttr = this.getStableDataAttributeSelector(current, tagName, escapeCss);
+      if (stableDataAttr) {
+        return stableDataAttr;
+      }
+
+      const classSelector = this.getStableClassSelector(current, tagName, escapeCss);
+      if (classSelector) {
+        return classSelector;
+      }
+
+      current = current.parentElement;
+    }
+
+    return null;
+  }
+
+  getStableDataAttributeSelector(element, tagName, escapeCss) {
+    const ignored = new Set(['style', 'class', 'id']);
+    for (const attr of Array.from(element.attributes || [])) {
+      if (!attr.name.startsWith('data-') || ignored.has(attr.name)) continue;
+      if (!attr.value || this.isLikelyDynamicValue(attr.value)) continue;
+      return `${tagName}[${attr.name}="${escapeCss(attr.value)}"]`;
+    }
+    return null;
+  }
+
+  getStableClassSelector(element, tagName, escapeCss) {
+    const stableClasses = Array.from(element.classList || [])
+      .filter((className) => !this.isLikelyDynamicValue(className));
+    if (!stableClasses.length) return null;
+    return `${tagName}.${stableClasses.map(escapeCss).join('.')}`;
+  }
+
+  isLikelyDynamicValue(value) {
+    const text = String(value || '').trim();
+    if (!text) return true;
+    return (
+      /\d{4,}/.test(text) ||
+      /[a-f0-9]{8,}/i.test(text) ||
+      /^(active|selected|open|show|hidden|visible|disabled)$/i.test(text)
+    );
   }
 
   createContextId(type) {

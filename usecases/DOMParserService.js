@@ -68,9 +68,9 @@ export class DOMParserService {
     // 1. 蝯曹??惇?批??閮剖? (靽? class嚗?鈭斤???蕪?典?澆祟??
     // ==========================================
     const cssatt = ["id", "attribute", "class", "tag", "nthchild"];
-    const optPri = ['id', 'class', 'name', 'placeholder', 'data-testid', 'href', 'src'];
+    const optPri = ['id', 'data-testid', 'data-thread-id', 'data-action', 'class', 'name', 'placeholder', 'href', 'src'];
 
-    let csskey = 0, optkey = 0, finderkey = 0;
+    let csskey = 0, optkey = 0, finderkey = 0, structuralkey = 0;
 
     // ==========================================
     // 2. ?之 CSS Selector 憟辣閫?? (? ID ??Class ???璈)
@@ -139,23 +139,40 @@ export class DOMParserService {
         console.warn("[DOMParser] finder 閫??憭望?", err);
     }
 
+    // (D) 純 HTML 結構關聯 path：只使用 tag 與兄弟位置，不依賴 id/class/attribute/text
+    const structural_selector = this.getStructuralCssPath(e, realRoot);
+    if (this.findUniqueWithShadowChain(structural_selector, shadowChain, e)) {
+      isUniqueObj.ByDomPath = true;
+      structuralkey = 1;
+    }
+
     // ==========================================
     // 3. 閰摯?奎?剜?雿?DOM Path
     // ==========================================
     let csspath = this.analyzeCssPath(selector, csskey);
     let optpath = this.analyzeCssPath(opt_selector, optkey);
     let finderpath = this.analyzeCssPath(finder_selector, finderkey);
+    let structuralpath = this.analyzeCssPath(structural_selector, structuralkey);
 
     console.log("csspath: ", csspath);
     console.log("optpath: ", optpath);
     console.log("finderpath: ", finderpath);
+    console.log("structuralpath: ", structuralpath);
     
     // ?拍??????頂蝯?(Class ?擃??湔?脩蔑 [style]) ?詨?敺?韐振
-    const domPathOptions = this.rankDomPaths([csspath, optpath, finderpath])
-      .filter(option => !this.hasUnstableAttributeSelector(option.path))
-      .map(option => ({ ...option, shadowChain }));
-    this.playwrightObj.ByDomPath.csspath = domPathOptions[0]?.path || "";
-    this.playwrightObj.ByDomPath.shadowChain = domPathOptions[0]?.shadowChain || [];
+    const rankedDomPathOptions = this.rankDomPaths([csspath, optpath, finderpath, structuralpath])
+      .filter(option => !this.hasUnstableAttributeSelector(option.path));
+    const bestDomPathOption = rankedDomPathOptions[0];
+    const structuralOption = rankedDomPathOptions.find(option => option.path === structuralpath.path);
+    const orderedDomPathOptions = structuralOption
+      ? [
+          ...rankedDomPathOptions.filter(option => option.path !== structuralOption.path),
+          structuralOption
+        ]
+      : rankedDomPathOptions;
+    const domPathOptions = orderedDomPathOptions.map(option => ({ ...option, shadowChain }));
+    this.playwrightObj.ByDomPath.csspath = bestDomPathOption?.path || "";
+    this.playwrightObj.ByDomPath.shadowChain = bestDomPathOption ? shadowChain : [];
     this.playwrightObj.ByDomPath.options = domPathOptions;
 
     // ==========================================
@@ -263,6 +280,38 @@ export class DOMParserService {
     return obj;
   }
 
+  getStructuralCssPath(el, root) {
+    if (!(el instanceof Element) || !root) return "";
+
+    const parts = [];
+    let current = el;
+
+    while (current instanceof Element && current !== root) {
+      const tagName = current.tagName.toLowerCase();
+      const parent = current.parentElement;
+
+      parts.unshift(`${tagName}:nth-of-type(${this.getElementTypeIndex(current)})`);
+
+      if (!parent || parent === root || tagName === "html") break;
+      current = parent;
+    }
+
+    return parts.join(" > ");
+  }
+
+  getElementTypeIndex(el) {
+    let index = 1;
+    let sibling = el.previousElementSibling;
+    const tagName = el.tagName;
+
+    while (sibling) {
+      if (sibling.tagName === tagName) index++;
+      sibling = sibling.previousElementSibling;
+    }
+
+    return index;
+  }
+
   hasUnstableAttributeSelector(selector) {
     if (typeof selector !== "string") return true;
     return /\[style\b(?:[~|^$*]?=)?/i.test(selector);
@@ -287,7 +336,7 @@ export class DOMParserService {
 
     const candidates = [];
     const cssatt = ["id", "attribute", "class", "tag", "nthchild"];
-    const optPri = ['id', 'class', 'name', 'placeholder', 'data-testid', 'href', 'src'];
+    const optPri = ['id', 'data-testid', 'data-thread-id', 'data-action', 'class', 'name', 'placeholder', 'href', 'src'];
 
     try {
       const selector = getCssSelector(el, {

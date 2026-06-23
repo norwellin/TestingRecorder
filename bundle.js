@@ -1,4 +1,3 @@
-window.global ||= window;
 (() => {
   var __create = Object.create;
   var __defProp = Object.defineProperty;
@@ -10061,6 +10060,9 @@ window.global ||= window;
     }
   });
 
+  // source/browserGlobalShim.js
+  globalThis.global ||= globalThis;
+
   // ContextLifecycle/ContextScanner.js
   var ContextScanner = class {
     constructor(rootDoc = document, rootWin = window, options = {}) {
@@ -10211,11 +10213,61 @@ window.global ||= window;
       if (testId) {
         return `${tagName2}[data-testid="${escapeCss(testId)}"]`;
       }
+      const containerSelector = this.buildStableAncestorSelector(frameEl);
+      if (containerSelector) {
+        return `${containerSelector} ${tagName2}`;
+      }
       const src = frameEl.getAttribute("src");
       if (src) {
         return `${tagName2}[src="${escapeCss(src)}"]`;
       }
       return `${tagName2}:nth-of-type(${index + 1})`;
+    }
+    buildStableAncestorSelector(frameEl) {
+      const escapeCss = (value) => {
+        if (globalThis.CSS?.escape) return globalThis.CSS.escape(value);
+        return String(value).replace(/"/g, '\\"');
+      };
+      let current = frameEl?.parentElement;
+      while (current && current !== this.rootDocument?.documentElement) {
+        const tagName2 = (current.tagName || "").toLowerCase();
+        if (current.id && !this.isLikelyDynamicValue(current.id)) {
+          return `#${escapeCss(current.id)}`;
+        }
+        const testId = current.getAttribute?.("data-testid");
+        if (testId) {
+          return `${tagName2}[data-testid="${escapeCss(testId)}"]`;
+        }
+        const stableDataAttr = this.getStableDataAttributeSelector(current, tagName2, escapeCss);
+        if (stableDataAttr) {
+          return stableDataAttr;
+        }
+        const classSelector = this.getStableClassSelector(current, tagName2, escapeCss);
+        if (classSelector) {
+          return classSelector;
+        }
+        current = current.parentElement;
+      }
+      return null;
+    }
+    getStableDataAttributeSelector(element, tagName2, escapeCss) {
+      const ignored = /* @__PURE__ */ new Set(["style", "class", "id"]);
+      for (const attr2 of Array.from(element.attributes || [])) {
+        if (!attr2.name.startsWith("data-") || ignored.has(attr2.name)) continue;
+        if (!attr2.value || this.isLikelyDynamicValue(attr2.value)) continue;
+        return `${tagName2}[${attr2.name}="${escapeCss(attr2.value)}"]`;
+      }
+      return null;
+    }
+    getStableClassSelector(element, tagName2, escapeCss) {
+      const stableClasses = Array.from(element.classList || []).filter((className2) => !this.isLikelyDynamicValue(className2));
+      if (!stableClasses.length) return null;
+      return `${tagName2}.${stableClasses.map(escapeCss).join(".")}`;
+    }
+    isLikelyDynamicValue(value) {
+      const text = String(value || "").trim();
+      if (!text) return true;
+      return /\d{4,}/.test(text) || /[a-f0-9]{8,}/i.test(text) || /^(active|selected|open|show|hidden|visible|disabled)$/i.test(text);
     }
     createContextId(type) {
       const id = `ctx_${type}_${this.contextCounter}`;
@@ -10311,7 +10363,7 @@ window.global ||= window;
         }, maxWait);
       });
     }
-    // 閬死?＊蝷箇?歇蝬遣蝡? Tree
+    // 視覺化顯示目前已經建立的 Tree
     printContextTree(rootContext, contextMap, depth = 0) {
       const indent = "  ".repeat(depth);
       console.log(
@@ -10348,7 +10400,7 @@ window.global ||= window;
     constructor() {
       this.contextMap = /* @__PURE__ */ new Map();
     }
-    // ===== 閮餃? =====
+    // ===== 註冊 =====
     register(context) {
       if (!context?.contextId) return null;
       const normalizedContext = {
@@ -10371,7 +10423,7 @@ window.global ||= window;
       });
       return results;
     }
-    // ===== ?亥岷 =====
+    // ===== 查詢 =====
     hasContext(contextId) {
       if (!contextId) return false;
       return this.contextMap.has(contextId);
@@ -10389,7 +10441,7 @@ window.global ||= window;
     getRootContexts() {
       return this.getAllContexts().filter((ctx) => !ctx.parentContextId);
     }
-    // ===== ???亥岷 =====
+    // ===== 關係查詢 =====
     getParent(contextId) {
       const context = this.getContext(contextId);
       if (!context?.parentContextId) return null;
@@ -10416,7 +10468,7 @@ window.global ||= window;
     getPathNames(contextId) {
       return this.getPath(contextId).map((ctx) => ctx.name);
     }
-    // ===== ?湔 =====
+    // ===== 更新 =====
     updateContext(contextId, patch = {}) {
       const existing = this.getContext(contextId);
       if (!existing) return null;
@@ -10430,7 +10482,7 @@ window.global ||= window;
       this.contextMap.set(contextId, updated);
       return updated;
     }
-    // ===== ?芷 =====
+    // ===== 刪除 =====
     removeContext(contextId) {
       const target = this.getContext(contextId);
       if (!target) return false;
@@ -10476,17 +10528,17 @@ window.global ||= window;
     constructor() {
       this.state = {
         isRecording: true,
-        // ?ˊ蝯?
+        // 錄製結果
         actions: [],
         currentActionIndex: 0,
-        // 撌脣?憪???listener
+        // 已初始化的 listener
         activeListenerContextIds: /* @__PURE__ */ new Set(),
-        // context registry data
+        // context 註冊資訊（先簡單存，之後可交給 ContextRegistry）
         contexts: /* @__PURE__ */ new Map(),
-        // ?嗅????賊?
+        // 當前動作相關
         currentAction: null,
         lastAction: null,
-        // input / click / dblclick / debounce ?怠?
+        // input / click / dblclick / debounce 暫存
         pendingActionTimers: /* @__PURE__ */ new Map(),
         // drag session
         dragSession: {
@@ -10496,13 +10548,13 @@ window.global ||= window;
           targetContextId: null,
           targetElementInfo: null
         },
-        // popup state
+        // popup 狀態
         pendingPopup: null,
-        // ?閮?
+        // 通知訂閱者用
         subscribers: /* @__PURE__ */ new Set()
       };
     }
-    // ===== ?箸霈??=====
+    // ===== 基本讀取 =====
     getState() {
       return this.state;
     }
@@ -10518,7 +10570,7 @@ window.global ||= window;
     isRecording() {
       return this.state.isRecording;
     }
-    // ===== 閮 / ? =====
+    // ===== 訂閱 / 通知 =====
     subscribe(callback) {
       if (typeof callback !== "function") return () => {
       };
@@ -10536,12 +10588,12 @@ window.global ||= window;
         }
       });
     }
-    // ===== ?ˊ?? =====
+    // ===== 錄製開關 =====
     setRecording(value) {
       this.state.isRecording = !!value;
       this.notify();
     }
-    // ===== Action 蝞∠? =====
+    // ===== Action 管理 =====
     addAction(action) {
       if (!action || typeof action !== "object") return null;
       const normalizedAction = {
@@ -10556,6 +10608,13 @@ window.global ||= window;
       this.state.currentActionIndex += 1;
       this.notify();
       return normalizedAction;
+    }
+    removeLastAction() {
+      const removedAction = this.state.actions.pop() || null;
+      this.state.lastAction = this.state.actions[this.state.actions.length - 1] || null;
+      this.state.currentAction = this.state.lastAction;
+      this.notify();
+      return removedAction;
     }
     updateCurrentAction(patch) {
       if (!this.state.currentAction || !patch || typeof patch !== "object") return;
@@ -10581,7 +10640,7 @@ window.global ||= window;
       this.state.lastAction = null;
       this.notify();
     }
-    // ===== Listener 蝞∠? =====
+    // ===== Listener 管理 =====
     hasListener(contextId) {
       if (!contextId) return false;
       return this.state.activeListenerContextIds.has(contextId);
@@ -10600,7 +10659,7 @@ window.global ||= window;
       this.state.activeListenerContextIds.clear();
       this.notify();
     }
-    // ===== Context 蝞∠? =====
+    // ===== Context 管理 =====
     registerContext(context) {
       if (!context?.contextId) return;
       this.state.contexts.set(context.contextId, context);
@@ -10627,7 +10686,7 @@ window.global ||= window;
       this.state.activeListenerContextIds.clear();
       this.notify();
     }
-    // ===== Timer / debounce 蝞∠? =====
+    // ===== Timer / debounce 管理 =====
     setPendingTimer(key, timerId) {
       if (!key) return;
       this.clearPendingTimer(key);
@@ -10652,13 +10711,14 @@ window.global ||= window;
       this.state.pendingActionTimers.clear();
     }
     // ===== Drag session =====
-    // 靽格 RecorderStore.js
+    // 修改 RecorderStore.js
     startDragSession({ sourceContextId = null, sourceElementInfo = null, sourcePath = null } = {}) {
       this.state.dragSession = {
         isDragging: true,
         sourceContextId,
         sourceElementInfo,
         sourcePath,
+        // <=== 必須新增這一行，把解析好的路徑存起來！
         targetContextId: null,
         targetElementInfo: null
       };
@@ -10685,7 +10745,7 @@ window.global ||= window;
       this.notify();
       return finishedSession;
     }
-    // ===== Popup ???=====
+    // ===== Popup 狀態 =====
     setPendingPopup(popupInfo) {
       this.state.pendingPopup = popupInfo || null;
       this.notify();
@@ -10952,10 +11012,11 @@ window.global ||= window;
   // config.js
   var DIALOG_SELECTORS = [
     '[role="dialog"]',
-    // 璅? WAI-ARIA 撠店獢?    ".modal",
-    // 撣貉? class ?迂
+    // 標準 WAI-ARIA 對話框
+    ".modal",
+    // 常見 class 名稱
     "dialog",
-    // ?? <dialog> ??
+    // 原生 <dialog> 元素
     ".gjs-mdl-container",
     // GrapesJS
     ".gjs-mdl-dialog",
@@ -16139,8 +16200,8 @@ window.global ||= window;
       const shadowChain = this.getShadowChain(e);
       let isUniqueObj = { ByRole: false, ByTitle: false, ByDomPath: false, ByText: false };
       const cssatt = ["id", "attribute", "class", "tag", "nthchild"];
-      const optPri = ["id", "class", "name", "placeholder", "data-testid", "href", "src"];
-      let csskey = 0, optkey = 0, finderkey = 0;
+      const optPri = ["id", "data-testid", "data-thread-id", "data-action", "class", "name", "placeholder", "href", "src"];
+      let csskey = 0, optkey = 0, finderkey = 0, structuralkey = 0;
       let selector2 = "";
       try {
         selector2 = getCssSelector(e, {
@@ -16169,7 +16230,7 @@ window.global ||= window;
           root: realRoot,
           priority: optPri,
           ignore: {
-            // ????????鞈?????謕?class ?啗???啗??(?豯止齒 true ???鞈?)
+            // 霈????蕪?賣瘙箏???class 閰脖?閰脩 (? true 隞?”敹賜)
             class: (className2) => this.isDynamicOrUnstableClass(className2),
             attribute: (name, value, defaultPredicate) => {
               if (name === "id") return this.isDynamicGeneratedId(value);
@@ -16189,6 +16250,7 @@ window.global ||= window;
         finder_selector = finder(e, {
           root: realRoot,
           idName: (name) => !this.isDynamicGeneratedId(name),
+          // ?芣????胯?蝛拙? Class ????閮梯◤ finder 雿輻
           className: (name) => !this.isDynamicOrUnstableClass(name)
         });
         if (this.findUniqueWithShadowChain(finder_selector, shadowChain, e)) {
@@ -16198,15 +16260,29 @@ window.global ||= window;
       } catch (err) {
         console.warn("[DOMParser] finder \u95AB??\u61AD\u671B?", err);
       }
+      const structural_selector = this.getStructuralCssPath(e, realRoot);
+      if (this.findUniqueWithShadowChain(structural_selector, shadowChain, e)) {
+        isUniqueObj.ByDomPath = true;
+        structuralkey = 1;
+      }
       let csspath = this.analyzeCssPath(selector2, csskey);
       let optpath = this.analyzeCssPath(opt_selector, optkey);
       let finderpath = this.analyzeCssPath(finder_selector, finderkey);
+      let structuralpath = this.analyzeCssPath(structural_selector, structuralkey);
       console.log("csspath: ", csspath);
       console.log("optpath: ", optpath);
       console.log("finderpath: ", finderpath);
-      const domPathOptions = this.rankDomPaths([csspath, optpath, finderpath]).filter((option) => !this.hasUnstableAttributeSelector(option.path)).map((option) => ({ ...option, shadowChain }));
-      this.playwrightObj.ByDomPath.csspath = domPathOptions[0]?.path || "";
-      this.playwrightObj.ByDomPath.shadowChain = domPathOptions[0]?.shadowChain || [];
+      console.log("structuralpath: ", structuralpath);
+      const rankedDomPathOptions = this.rankDomPaths([csspath, optpath, finderpath, structuralpath]).filter((option) => !this.hasUnstableAttributeSelector(option.path));
+      const bestDomPathOption = rankedDomPathOptions[0];
+      const structuralOption = rankedDomPathOptions.find((option) => option.path === structuralpath.path);
+      const orderedDomPathOptions = structuralOption ? [
+        ...rankedDomPathOptions.filter((option) => option.path !== structuralOption.path),
+        structuralOption
+      ] : rankedDomPathOptions;
+      const domPathOptions = orderedDomPathOptions.map((option) => ({ ...option, shadowChain }));
+      this.playwrightObj.ByDomPath.csspath = bestDomPathOption?.path || "";
+      this.playwrightObj.ByDomPath.shadowChain = bestDomPathOption ? shadowChain : [];
       this.playwrightObj.ByDomPath.options = domPathOptions;
       if (this.getPlaywrightRole(e, sourceWin)) {
         isUniqueObj.ByRole = true;
@@ -16249,7 +16325,7 @@ window.global ||= window;
       }
       return ranked.sort((a, b) => b.score - a.score);
     }
-    // ?? ????撖??奕??叟????喉????????? ID ?秋?
+    // ?? ?啣??寞?嚗?憭?喳閫??憟賜??? ID 閬?
     setCustomDynamicIdRules(rulesArray) {
       if (!Array.isArray(rulesArray)) return;
       this.customDynamicIdPatterns = rulesArray.map((ruleStr) => {
@@ -16286,6 +16362,29 @@ window.global ||= window;
       obj.n = nthMatches ? nthMatches.length : 0;
       return obj;
     }
+    getStructuralCssPath(el, root) {
+      if (!(el instanceof Element) || !root) return "";
+      const parts = [];
+      let current = el;
+      while (current instanceof Element && current !== root) {
+        const tagName2 = current.tagName.toLowerCase();
+        const parent = current.parentElement;
+        parts.unshift(`${tagName2}:nth-of-type(${this.getElementTypeIndex(current)})`);
+        if (!parent || parent === root || tagName2 === "html") break;
+        current = parent;
+      }
+      return parts.join(" > ");
+    }
+    getElementTypeIndex(el) {
+      let index = 1;
+      let sibling = el.previousElementSibling;
+      const tagName2 = el.tagName;
+      while (sibling) {
+        if (sibling.tagName === tagName2) index++;
+        sibling = sibling.previousElementSibling;
+      }
+      return index;
+    }
     hasUnstableAttributeSelector(selector2) {
       if (typeof selector2 !== "string") return true;
       return /\[style\b(?:[~|^$*]?=)?/i.test(selector2);
@@ -16306,7 +16405,7 @@ window.global ||= window;
       if (!el || !root) return "";
       const candidates = [];
       const cssatt = ["id", "attribute", "class", "tag", "nthchild"];
-      const optPri = ["id", "class", "name", "placeholder", "data-testid", "href", "src"];
+      const optPri = ["id", "data-testid", "data-thread-id", "data-action", "class", "name", "placeholder", "href", "src"];
       try {
         const selector2 = getCssSelector(el, {
           selectors: cssatt,
@@ -16495,7 +16594,7 @@ window.global ||= window;
       }
       return false;
     }
-    // ?? ????契????????蹓踝??止等??蹓??????? Class
+    // ?? ?啣?嚗?瞈曆?蝛拙??隤???蝝??? Class
     isDynamicOrUnstableClass(className2) {
       if (typeof className2 !== "string") return true;
       const val = className2.trim();
@@ -16573,7 +16672,7 @@ window.global ||= window;
     constructor() {
       this.init();
     }
-    // 撠??砍 constructor ??頛舀?箔?嚗靘踹?蝥?clearCode ???
+    // 將原本在 constructor 的邏輯抽出來，方便後續 clearCode 時呼叫
     init() {
       this.code = [];
       this.code_import = [];
@@ -16599,7 +16698,8 @@ window.global ||= window;
       return [...this.code_import, ...this.codeOutsider_up, ...this.codeWindows, ...this.code, ...this.codeOutsider_down];
     }
     // ==========================================
-    // ?啣?嚗摰寞??MainApp1.js ?????Ｘ瘜?    // ==========================================
+    // 新增：相容新版 MainApp1.js 所需的介面方法
+    // ==========================================
     appendCode(line) {
       this.codeSetter(line);
     }
@@ -16613,7 +16713,7 @@ window.global ||= window;
 
   // usecases/PlaywrightCodeGenerator.js
   var PlaywrightCodeGenerator = class {
-    // 1. 蝘駁 userActionDB 靘陷嚗?箏蝝??DOM ????Command ?
+    // 1. 移除 userActionDB 依賴，改為單純接收 DOM 服務與 Command 參照
     constructor(domService, command, pageAlias = "page") {
       this.domService = domService;
       this.command = command;
@@ -16622,7 +16722,7 @@ window.global ||= window;
       this.contextAliasMap = /* @__PURE__ */ new Map();
       this.contextMap = /* @__PURE__ */ new Map();
     }
-    // 2. ?寧?湔?蝔?蝣澆?銝莎?撠神?亙?雿漱?策 MainApp1 ??
+    // 2. 改為直接回傳程式碼字串，將寫入動作交還給 MainApp1 處理
     generate(action) {
       if (!action) {
         console.warn("generate: action \u4E0D\u5B58\u5728");
@@ -16685,7 +16785,7 @@ window.global ||= window;
       let targetpath = null;
       let inputText = action.inputText || "default";
       let inputKey = action.keyboard || "default";
-      let selectLabel = action.selectedText || "default";
+      let selectValue = action.selectedValue || "default";
       if (typeof action.getSourceElement === "function") {
         const needsSourceParsing = !sourcepath || Array.isArray(sourcepath) && sourcepath[0] === null;
         if (needsSourceParsing && action.getSourceElement()) {
@@ -16698,10 +16798,10 @@ window.global ||= window;
           const srcEl = action.getSourceElement();
           inputText = srcEl ? srcEl.innerText || srcEl.value || "" : "";
         }
-        if (action.type === "change" && !action.selectedText) {
+        if (action.type === "change" && !action.selectedValue) {
           const srcEl = action.getSourceElement();
           if (srcEl && srcEl.options && srcEl.selectedIndex >= 0) {
-            selectLabel = srcEl.options[srcEl.selectedIndex]?.text || "";
+            selectValue = srcEl.value || srcEl.options[srcEl.selectedIndex]?.value || "";
           }
         }
       }
@@ -16721,7 +16821,7 @@ window.global ||= window;
       } else if (action.type === "keyboard") {
         generatedCode = this.keyboardSetter(inputKey, sourceWindow);
       } else if (action.type === "change") {
-        generatedCode = this.changeSetter(action, sourcepath, selectLabel, sourceWindow);
+        generatedCode = this.changeSetter(action, sourcepath, selectValue, sourceWindow);
       }
       console.log("[Debug PlaywrightCodeGenerator] generatedCode", {
         actionType: action.type,
@@ -16732,9 +16832,9 @@ window.global ||= window;
       return generatedCode;
     }
     // ==========================================
-    // 隞乩??箏擃?????鋆?頛?Helper
+    // 以下為具體的生成與組裝邏輯 Helper
     // ==========================================
-    // 敺圾???葉?甈??擃???芸?)??Selector ?寞?
+    // 從解析結果中挑出權重最高(最優先)的 Selector 方法
     _getBestPath(paths) {
       if (!paths) return null;
       for (let i = 0; i < this.domService.priSize; i++) {
@@ -16742,14 +16842,16 @@ window.global ||= window;
       }
       return null;
     }
-    // ?寞?摮?頝唾嚗??Playwright 隤??粹
+    // 特殊字元跳脫，避免 Playwright 語法出錯
     replacePath(cssPath) {
       return cssPath.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     }
     quoteForCode(value) {
       return JSON.stringify(String(value ?? ""));
     }
-    // 3. 閫?? ContextId ??Playwright ??雿??詨?蝬?    // 3. 閫?? ContextId ??Playwright ??雿??詨?蝬?    // 瑼?嚗yrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    // 3. 解析 ContextId 為 Playwright 的操作變數前綴
+    // 3. 解析 ContextId 為 Playwright 的操作變數前綴
+    // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
     _getContextPrefix(winVar) {
       const context = this.contextMap.get(winVar);
       console.log("[Debug PlaywrightCodeGenerator] _getContextPrefix", {
@@ -16781,11 +16883,11 @@ window.global ||= window;
       }
       return this.pageAlias;
     }
-    // 瑼?嚗yrecorderRestructure/usecases/PlaywrightCodeGenerator.js
-    // 瑼?嚗yrecorderRestructure/usecases/PlaywrightCodeGenerator.js
-    // 瑼?嚗yrecorderRestructure/usecases/PlaywrightCodeGenerator.js
-    // 瑼?嚗yrecorderRestructure/usecases/PlaywrightCodeGenerator.js
-    // 瑼?嚗yrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
     setContexts(contexts = [], rootAlias = this.pageAlias) {
       if (!Array.isArray(contexts)) return;
       const baseAlias = rootAlias || this.pageAlias;
@@ -16855,8 +16957,8 @@ window.global ||= window;
     _isUsableIframeContext(context) {
       if (context?.type !== "iframe") return false;
       const frameElement = context.frameElement;
-      const tagName = frameElement?.tagName?.toLowerCase();
-      if (!frameElement || tagName !== "iframe" && tagName !== "frame") return false;
+      const tagName2 = frameElement?.tagName?.toLowerCase();
+      if (!frameElement || tagName2 !== "iframe" && tagName2 !== "frame") return false;
       if (frameElement.isConnected === false) return false;
       const parentContext = this.contextMap.get(context.parentContextId);
       if (parentContext?.documentRef && frameElement.ownerDocument !== parentContext.documentRef) {
@@ -16899,7 +17001,7 @@ window.global ||= window;
       });
       return generatedDeclarations;
     }
-    // 4. ?啣??梁??Locator 摮葡蝯??剁?蝯望?? switch ?摩
+    // 4. 新增共用的 Locator 字串組裝器，統整舊版 switch 邏輯
     _buildLocatorString(winPrefix, methodObj) {
       const { funName, obj } = methodObj;
       switch (funName) {
@@ -16932,7 +17034,7 @@ window.global ||= window;
       const best = this._getBestPath(sourcepath);
       if (!best) return null;
       const winPrefix = this._getContextPrefix(sourceWindow);
-      const code = `await ${this._buildLocatorString(winPrefix, best)}.selectOption({ label: ${JSON.stringify(selectedValue)} });`;
+      const code = `await ${this._buildLocatorString(winPrefix, best)}.selectOption({ value: ${JSON.stringify(selectedValue)} });`;
       this.updateUserActionDB(action, best.funName, best.obj, "source");
       return code;
     }
@@ -16987,7 +17089,7 @@ window.global ||= window;
       this.updateUserActionDB(action, best.funName, best.obj, "source");
       return `await ${locator}.fill(${this.quoteForCode(value)});`;
     }
-    // 5. 撠??砍??典???? Index ??堆??寧?湔撠?亦? Action 撖阡?撅祆批??湔 (閫??
+    // 5. 將原本對全域陣列 Index 的更新，改為直接對傳入的 Action 實體屬性做更新 (解耦)
     updateUserActionDB(action, funName, obj, targetType = "source") {
       if (!action || typeof action.setSourceMethod !== "function") return;
       let data = "";
@@ -17139,6 +17241,78 @@ window.global ||= window;
     }
   };
 
+  // interfaces/HoverInspector.js
+  var HoverInspector = class {
+    constructor(doc, win, options = {}) {
+      this.doc = doc;
+      this.win = win;
+      this.color = options.color || "#ff5fb7";
+      this.box = null;
+      this.label = null;
+      this.create();
+    }
+    create() {
+      if (!this.doc?.documentElement) return;
+      this.box = this.doc.createElement("div");
+      this.label = this.doc.createElement("div");
+      Object.assign(this.box.style, {
+        position: "fixed",
+        pointerEvents: "none",
+        zIndex: "2147483647",
+        border: `2px solid ${this.color}`,
+        outline: "1px dashed rgba(126, 66, 255, 0.9)",
+        outlineOffset: "-4px",
+        background: "rgba(255, 95, 183, 0.14)",
+        boxSizing: "border-box",
+        display: "none"
+      });
+      Object.assign(this.label.style, {
+        position: "fixed",
+        pointerEvents: "none",
+        zIndex: "2147483647",
+        maxWidth: "80vw",
+        padding: "4px 8px",
+        fontSize: "12px",
+        lineHeight: "18px",
+        fontFamily: "Consolas, Monaco, monospace",
+        color: "#4a2340",
+        background: "#fff0f7",
+        border: "1px solid #ff9fd1",
+        borderRadius: "3px",
+        boxShadow: "0 2px 10px rgba(255, 95, 183, 0.28)",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        display: "none"
+      });
+      this.doc.documentElement.appendChild(this.box);
+      this.doc.documentElement.appendChild(this.label);
+    }
+    show(element, text) {
+      if (!this.box || !this.label || !element || element === this.box || element === this.label) return;
+      const rect = element.getBoundingClientRect();
+      if (!rect.width && !rect.height) return;
+      Object.assign(this.box.style, {
+        display: "block",
+        left: `${rect.left}px`,
+        top: `${rect.top}px`,
+        width: `${rect.width}px`,
+        height: `${rect.height}px`
+      });
+      this.label.textContent = text || "";
+      const labelTop = rect.bottom + 6 > this.win.innerHeight - 28 ? Math.max(0, rect.top - 30) : rect.bottom + 6;
+      Object.assign(this.label.style, {
+        display: text ? "block" : "none",
+        left: `${Math.max(0, Math.min(rect.left, this.win.innerWidth - 40))}px`,
+        top: `${labelTop}px`
+      });
+    }
+    hide() {
+      if (this.box) this.box.style.display = "none";
+      if (this.label) this.label.style.display = "none";
+    }
+  };
+
   // interfaces/OuterEventListener.js
   var OuterEventListener = class {
     constructor(contexts, domParserService, onActionRecorded) {
@@ -17163,6 +17337,10 @@ window.global ||= window;
       this.mouseDownFlag = false;
       this.dragStepFlag = 0;
       this.suppressClickUntil = 0;
+      this.hoverInspector = new HoverInspector(this.mainDocument, this.mainWindow);
+      this.lastPreviewTarget = null;
+      this.hoverHighlightEnabled = true;
+      this.hoverPreviewSessionEnabled = false;
       this.isRecording = false;
     }
     init() {
@@ -17173,6 +17351,8 @@ window.global ||= window;
       this.mainDocument.addEventListener("click", this.clickHandler.bind(this), true);
       this.mainDocument.addEventListener("mousedown", this.mousedownHandler.bind(this), true);
       this.mainDocument.addEventListener("mousemove", this.mousemoveHandler.bind(this), true);
+      this.mainDocument.addEventListener("mouseout", this.mouseoutHandler.bind(this), true);
+      this.mainDocument.addEventListener("mouseleave", this.hideHoverPreview.bind(this), true);
       this.mainDocument.addEventListener("mouseup", this.mouseupHandler.bind(this), true);
       this.mainWindow.addEventListener("dragstart", this.dragStartHandler.bind(this));
       this.mainDocument.addEventListener("dblclick", this.dblClickHandler.bind(this), true);
@@ -17184,21 +17364,23 @@ window.global ||= window;
       });
       this.mainDocument.addEventListener("drop", this.dropHandler.bind(this), true);
       this.mainWindow.addEventListener("message", this.messageHandler.bind(this));
+      this.loadHoverHighlightPreference();
+      this.bindHoverHighlightPreference();
     }
     messageHandler(e) {
       const msg = e.data;
       switch (msg.type) {
         case "START_RECORDING":
-          this.isRecording = true;
+          this.setRecordingState(true, { allowHoverPreview: true });
           this.snapshotInitialInputValues();
           break;
         case "STOP_RECORDING":
-          this.isRecording = false;
+          this.setRecordingState(false, { allowHoverPreview: false });
           clearTimeout(this.timer);
           break;
       }
     }
-    // 蝯曹?撠??晷??Action ?瘜?
+    // 統一封裝與派發 Action 的方法
     dispatchAction(action_type, sourceElement, targetElement = null, extraData = {}) {
       const currentEventElement = sourceElement || targetElement;
       if (currentEventElement) {
@@ -17209,11 +17391,13 @@ window.global ||= window;
         sourceElement,
         targetElement,
         this.contextId,
-        // 撠?隞嗥?靘?蝬??嗅???contextId
+        // 將事件的來源綁定當前的 contextId
         targetElement ? this.contextId : ""
       );
       if (extraData.keyboard) action.setKeyboard(extraData.keyboard);
       if (extraData.inputText !== void 0) action.setInputText(extraData.inputText);
+      if (extraData.selectedValue !== void 0) action.setSelectedValue(extraData.selectedValue);
+      if (extraData.selectedText !== void 0) action.setSelectedText(extraData.selectedText);
       if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
       if (extraData.isDragStart) action.isDragStart = true;
       if (extraData.isDrop) action.isDrop = true;
@@ -17282,7 +17466,10 @@ window.global ||= window;
         this.setReloadSuppressWindow();
       }
       const action_type = isSelect ? "change" : "checkBox";
-      this.dispatchAction(action_type, e.target);
+      this.dispatchAction(action_type, e.target, null, isSelect ? {
+        selectedValue: e.target.value,
+        selectedText: e.target.options?.[e.target.selectedIndex]?.text || ""
+      } : {});
     }
     keydownHandler(e) {
       if (!this.isRecording) return;
@@ -17309,6 +17496,7 @@ window.global ||= window;
       if (!target) return;
       if (this.isRangeInput(target)) return;
       if (target.getAttribute("draggable") === "true") {
+        this.hideHoverPreview();
         this.dispatchAction("dragANDdrop", target, null, { isDragStart: true });
       }
     }
@@ -17321,11 +17509,17 @@ window.global ||= window;
       this.dragSource = this.getDragSourceElement(e.target);
       this.mouseDownFlag = true;
       this.dragStepFlag = 1;
+      this.hideHoverPreview();
     }
     mousemoveHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
       if (this.isRangeInput(e.target)) return;
       this.currentHoveredElement = this.getDragTargetElement(e.target);
+      if (this.shouldPreviewHover()) {
+        this.previewHoveredElement(this.currentHoveredElement);
+      } else {
+        this.hideHoverPreview();
+      }
       if (!this.dragStart || this.dragStepFlag !== 1) return;
       const dx = e.clientX - this.dragStart.x;
       const dy = e.clientY - this.dragStart.y;
@@ -17336,6 +17530,92 @@ window.global ||= window;
         this.mouseDownFlag = false;
         this.dispatchAction("dragANDdrop", this.dragSource, null, { isDragStart: true });
       }
+    }
+    previewHoveredElement(element) {
+      if (!element || element === this.lastPreviewTarget) return;
+      this.lastPreviewTarget = element;
+      try {
+        const sourcePath = this.domParserService.getOpenSourcePath(element, this.mainWindow);
+        this.hoverInspector?.show(element, this.formatLocatorPreview(sourcePath));
+      } catch (error) {
+        console.warn("[Recorder] Unable to preview hovered locator", error);
+        this.hoverInspector?.show(element, "");
+      }
+    }
+    shouldPreviewHover() {
+      return this.hoverPreviewSessionEnabled && this.hoverHighlightEnabled && !this.mouseDownFlag && !this.isDragging && this.dragStepFlag === 0;
+    }
+    setRecordingState(isRecording, options = {}) {
+      this.isRecording = isRecording === true;
+      this.setHoverPreviewSessionEnabled(options.allowHoverPreview === true);
+      if (!this.isRecording) this.hideHoverPreview();
+    }
+    setHoverPreviewSessionEnabled(enabled) {
+      this.hoverPreviewSessionEnabled = enabled === true;
+      if (!this.hoverPreviewSessionEnabled) this.hideHoverPreview();
+    }
+    loadHoverHighlightPreference() {
+      try {
+        if (typeof chrome === "undefined" || !chrome.storage?.local) return;
+        chrome.storage.local.get(["hoverHighlightEnabled", "hoverPreviewSessionEnabled"], (result) => {
+          this.setHoverHighlightEnabled(result.hoverHighlightEnabled !== false);
+          this.setHoverPreviewSessionEnabled(result.hoverPreviewSessionEnabled === true);
+        });
+      } catch (error) {
+        console.warn("[Recorder] Unable to load hover highlight preference", error);
+      }
+    }
+    bindHoverHighlightPreference() {
+      try {
+        if (typeof chrome === "undefined" || !chrome.storage?.onChanged) return;
+        chrome.storage.onChanged.addListener((changes, areaName) => {
+          if (areaName !== "local" || !changes.hoverHighlightEnabled) return;
+          this.setHoverHighlightEnabled(changes.hoverHighlightEnabled.newValue !== false);
+        });
+        chrome.storage.onChanged.addListener((changes, areaName) => {
+          if (areaName !== "local" || !changes.hoverPreviewSessionEnabled) return;
+          this.setHoverPreviewSessionEnabled(changes.hoverPreviewSessionEnabled.newValue === true);
+        });
+      } catch (error) {
+        console.warn("[Recorder] Unable to bind hover highlight preference", error);
+      }
+    }
+    setHoverHighlightEnabled(enabled) {
+      this.hoverHighlightEnabled = enabled !== false;
+      if (!this.hoverHighlightEnabled) this.hideHoverPreview();
+    }
+    mouseoutHandler(e) {
+      if (!e.relatedTarget) this.hideHoverPreview();
+    }
+    hideHoverPreview() {
+      this.hoverInspector?.hide();
+      this.lastPreviewTarget = null;
+    }
+    formatLocatorPreview(sourcePath) {
+      const best = this.getBestPreviewPath(sourcePath);
+      if (!best) return "";
+      const { funName, obj } = best;
+      const quote = (value) => JSON.stringify(String(value ?? ""));
+      if (funName === "ByRole") {
+        const role = quote(obj.role);
+        if (obj.name !== null && obj.name !== void 0 && obj.name !== "") {
+          const exactOption = obj.exact === false ? "" : ", exact: true";
+          const nth = obj.index !== null && obj.index !== void 0 ? `.nth(${obj.index})` : "";
+          return `getByRole(${role}, { name: ${quote(obj.name)}${exactOption} })${nth}`;
+        }
+        return `getByRole(${role})`;
+      }
+      if (funName === "ByText") return `getByText(${quote(obj.text)}, { exact: true })`;
+      if (funName === "ByTitle") return `getByTitle(${quote(obj.title)}, { exact: true })`;
+      if (funName === "ByDomPath") return `locator(${quote(obj.csspath)})`;
+      return funName;
+    }
+    getBestPreviewPath(sourcePath) {
+      if (!sourcePath) return null;
+      for (let i = 0; i < this.domParserService.priSize; i++) {
+        if (sourcePath[i]) return sourcePath[i];
+      }
+      return null;
     }
     mouseupHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
@@ -17361,7 +17641,8 @@ window.global ||= window;
       if (this.isFileInput(target)) return;
       if (this.isRangeInput(target)) return;
       if (this.isCheckboxOrCheckboxLabel(target)) return;
-      if (target.tagName === "LABEL" || target.tagName === "SELECT") return;
+      if (target.tagName === "LABEL" && !this.isRadioOrRadioLabel(target)) return;
+      if (target.tagName === "SELECT") return;
       let clickable = target;
       if (target.tagName === "INPUT") {
         const label = target.parentElement?.querySelector(`label[for="${target.id}"]`);
@@ -17399,7 +17680,7 @@ window.global ||= window;
       return element?.closest?.(".gjs-layer-move, [data-toggle-move]") || element;
     }
     getComposedEventTarget(e) {
-      const interactive = this.getFirstComposedElement(e, "button, a, [role='button'], [onclick], input, textarea, select, label");
+      const interactive = this.getFirstComposedElement(e, "button, a, [role='button'], [onclick], input, textarea, select, label, [data-thread-id], .thread-item");
       return interactive || e.target;
     }
     getFirstComposedElement(e, selector2) {
@@ -17488,11 +17769,16 @@ window.global ||= window;
       if (element.closest?.('button, a, [role="button"], [onclick]')) return false;
       return true;
     }
+    isRadioOrRadioLabel(element) {
+      if (!element) return false;
+      if (element.matches?.('input[type="radio"]')) return true;
+      return !!element.closest?.("label")?.querySelector?.('input[type="radio"]');
+    }
   };
 
   // interfaces/IframeEventListener.js
   var IframeEventListener = class {
-    // 1. 蝘駁 command, userActionDB 蝑?鞈湛??寧?交 onActionRecorded ??賢?
+    // 1. 移除 command, userActionDB 等依賴，改為接收 onActionRecorded 回呼函式
     constructor(contexts, domParserService, onActionRecorded) {
       this.contexts = contexts;
       this.iframeWindow = contexts?.iframeWindow || null;
@@ -17517,6 +17803,10 @@ window.global ||= window;
       this.dragSource = null;
       this.mouseDownFlag = false;
       this.dragStepFlag = 0;
+      this.hoverInspector = new HoverInspector(this.iframeDocument, this.iframeWindow);
+      this.lastPreviewTarget = null;
+      this.hoverHighlightEnabled = true;
+      this.hoverPreviewSessionEnabled = false;
       this.isRecording = false;
     }
     init() {
@@ -17525,19 +17815,24 @@ window.global ||= window;
         return;
       }
       this.iframeDocument.addEventListener("mousemove", this.mousemoveHandler.bind(this));
+      this.iframeDocument.addEventListener("mouseout", this.mouseoutHandler.bind(this), true);
+      this.iframeDocument.addEventListener("mouseleave", this.hideHoverPreview.bind(this), true);
       this.iframeDocument.addEventListener("mousedown", this.mousedownHandler.bind(this));
       this.iframeDocument.addEventListener("mouseup", this.mouseupHandler.bind(this));
       this.iframeDocument.addEventListener("keydown", this.keydownHandler.bind(this));
       this.iframeDocument.addEventListener("input", this.inputHandler.bind(this));
       this.iframeWindow.addEventListener("drop", this.dropHandler.bind(this));
+      this.iframeWindow.addEventListener("blur", this.hideHoverPreview.bind(this));
       this.iframeDocument.addEventListener("click", this.clickHandler.bind(this), true);
       this.iframeDocument.addEventListener("change", this.changeHandler.bind(this), true);
       this.iframeDocument.addEventListener("dragover", (e) => {
         if (this.isRecording) e.preventDefault();
       });
       this.iframeWindow.addEventListener("message", this.messageHandler.bind(this));
+      this.loadHoverHighlightPreference();
+      this.bindHoverHighlightPreference();
     }
-    // ?憓???SELECT ??Checkbox ?霈?
+    // 【新增】處理 SELECT 與 Checkbox 的改變
     changeHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
       const tag = e.target.tagName;
@@ -17553,22 +17848,25 @@ window.global ||= window;
         this.setReloadSuppressWindow();
       }
       const action_type = isSelect ? "change" : "checkBox";
-      this.dispatchAction(action_type, e.target);
+      this.dispatchAction(action_type, e.target, null, isSelect ? {
+        selectedValue: e.target.value,
+        selectedText: e.target.options?.[e.target.selectedIndex]?.text || ""
+      } : {});
     }
     messageHandler(e) {
       const msg = e.data;
       switch (msg.type) {
         case "START_RECORDING":
-          this.isRecording = true;
+          this.setRecordingState(true, { allowHoverPreview: true });
           this.snapshotInitialInputValues();
           break;
         case "STOP_RECORDING":
-          this.isRecording = false;
+          this.setRecordingState(false, { allowHoverPreview: false });
           clearTimeout(this.inputTimer);
           break;
       }
     }
-    // 2. 撱箇?蝯曹??晷??Action ?寞?
+    // 2. 建立統一的派發 Action 方法
     dispatchAction(action_type, sourceElement, targetElement = null, extraData = {}) {
       const currentEventElement = sourceElement || targetElement;
       if (currentEventElement) {
@@ -17595,6 +17893,9 @@ window.global ||= window;
         targetElement ? this.contextId : ""
       );
       if (extraData.inputText !== void 0) action.setInputText(extraData.inputText);
+      if (extraData.selectedValue !== void 0) action.setSelectedValue(extraData.selectedValue);
+      if (extraData.selectedText !== void 0) action.setSelectedText(extraData.selectedText);
+      if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
       if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
       if (extraData.isDragStart) action.isDragStart = true;
       if (extraData.isDrop) action.isDrop = true;
@@ -17666,7 +17967,8 @@ window.global ||= window;
         return;
       }
       if (this.isCheckboxOrCheckboxLabel(target)) return;
-      if (target.tagName === "LABEL" || target.tagName === "SELECT") return;
+      if (target.tagName === "LABEL" && !this.isRadioOrRadioLabel(target)) return;
+      if (target.tagName === "SELECT") return;
       console.log("[Debug IframeListener] mouseup \u89F8\u767C, isDragging:", this.isDragging);
       if (this.isDragging) {
         this.isDragging = false;
@@ -17676,23 +17978,33 @@ window.global ||= window;
         this.dragStepFlag = 0;
         this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
       } else {
+        const preParsedSourcePath = this.preParseSourcePath(target);
         this.clickFlag += 1;
         if (this.clickFlag === 1) {
           this.clickTimeOut = setTimeout(() => {
             this.clickFlag = 0;
             this.isDragging = false;
             this.dragStart = { x: 0, y: 0 };
-            this.dispatchAction("click", target);
+            this.dispatchAction("click", target, null, { preParsedSourcePath });
           }, this.DOUBLE_CLICK_DELAY);
         } else if (this.clickFlag === 2) {
           clearTimeout(this.clickTimeOut);
           this.clickFlag = 0;
           this.isDragging = false;
           this.dragStart = { x: 0, y: 0 };
-          this.dispatchAction("dbclick", target);
+          this.dispatchAction("dbclick", target, null, { preParsedSourcePath });
         }
       }
+      this.mouseDownFlag = false;
       this.dragStepFlag = 0;
+    }
+    preParseSourcePath(element) {
+      try {
+        return this.domParserService.getOpenSourcePath(element, this.iframeWindow);
+      } catch (error) {
+        console.warn("[Recorder] Unable to pre-parse iframe click locator", error);
+        return null;
+      }
     }
     mousedownHandler(e) {
       if (!this.isRecording) return;
@@ -17702,11 +18014,17 @@ window.global ||= window;
       this.dragSource = e.target;
       this.mouseDownFlag = true;
       this.dragStepFlag = 1;
+      this.hideHoverPreview();
     }
     mousemoveHandler(e) {
       if (!this.isRecording) return;
       if (this.isRangeInput(e.target)) return;
       this.currentHoveredElement = e.target;
+      if (this.shouldPreviewHover()) {
+        this.previewHoveredElement(this.currentHoveredElement);
+      } else {
+        this.hideHoverPreview();
+      }
       if (!this.dragStart || this.dragStepFlag !== 1) return;
       const dx = e.clientX - this.dragStart.x;
       const dy = e.clientY - this.dragStart.y;
@@ -17717,6 +18035,92 @@ window.global ||= window;
         this.mouseDownFlag = false;
         this.dispatchAction("dragANDdrop", this.dragSource, null, { isDragStart: true });
       }
+    }
+    previewHoveredElement(element) {
+      if (!element || element === this.lastPreviewTarget) return;
+      this.lastPreviewTarget = element;
+      try {
+        const sourcePath = this.domParserService.getOpenSourcePath(element, this.iframeWindow);
+        this.hoverInspector?.show(element, this.formatLocatorPreview(sourcePath));
+      } catch (error) {
+        console.warn("[Recorder] Unable to preview hovered iframe locator", error);
+        this.hoverInspector?.show(element, "");
+      }
+    }
+    shouldPreviewHover() {
+      return this.hoverPreviewSessionEnabled && this.hoverHighlightEnabled && !this.mouseDownFlag && !this.isDragging && this.dragStepFlag === 0;
+    }
+    setRecordingState(isRecording, options = {}) {
+      this.isRecording = isRecording === true;
+      this.setHoverPreviewSessionEnabled(options.allowHoverPreview === true);
+      if (!this.isRecording) this.hideHoverPreview();
+    }
+    setHoverPreviewSessionEnabled(enabled) {
+      this.hoverPreviewSessionEnabled = enabled === true;
+      if (!this.hoverPreviewSessionEnabled) this.hideHoverPreview();
+    }
+    loadHoverHighlightPreference() {
+      try {
+        if (typeof chrome === "undefined" || !chrome.storage?.local) return;
+        chrome.storage.local.get(["hoverHighlightEnabled", "hoverPreviewSessionEnabled"], (result) => {
+          this.setHoverHighlightEnabled(result.hoverHighlightEnabled !== false);
+          this.setHoverPreviewSessionEnabled(result.hoverPreviewSessionEnabled === true);
+        });
+      } catch (error) {
+        console.warn("[Recorder] Unable to load iframe hover highlight preference", error);
+      }
+    }
+    bindHoverHighlightPreference() {
+      try {
+        if (typeof chrome === "undefined" || !chrome.storage?.onChanged) return;
+        chrome.storage.onChanged.addListener((changes, areaName) => {
+          if (areaName !== "local" || !changes.hoverHighlightEnabled) return;
+          this.setHoverHighlightEnabled(changes.hoverHighlightEnabled.newValue !== false);
+        });
+        chrome.storage.onChanged.addListener((changes, areaName) => {
+          if (areaName !== "local" || !changes.hoverPreviewSessionEnabled) return;
+          this.setHoverPreviewSessionEnabled(changes.hoverPreviewSessionEnabled.newValue === true);
+        });
+      } catch (error) {
+        console.warn("[Recorder] Unable to bind iframe hover highlight preference", error);
+      }
+    }
+    setHoverHighlightEnabled(enabled) {
+      this.hoverHighlightEnabled = enabled !== false;
+      if (!this.hoverHighlightEnabled) this.hideHoverPreview();
+    }
+    mouseoutHandler(e) {
+      if (!e.relatedTarget) this.hideHoverPreview();
+    }
+    hideHoverPreview() {
+      this.hoverInspector?.hide();
+      this.lastPreviewTarget = null;
+    }
+    formatLocatorPreview(sourcePath) {
+      const best = this.getBestPreviewPath(sourcePath);
+      if (!best) return "";
+      const { funName, obj } = best;
+      const quote = (value) => JSON.stringify(String(value ?? ""));
+      if (funName === "ByRole") {
+        const role = quote(obj.role);
+        if (obj.name !== null && obj.name !== void 0 && obj.name !== "") {
+          const exactOption = obj.exact === false ? "" : ", exact: true";
+          const nth = obj.index !== null && obj.index !== void 0 ? `.nth(${obj.index})` : "";
+          return `getByRole(${role}, { name: ${quote(obj.name)}${exactOption} })${nth}`;
+        }
+        return `getByRole(${role})`;
+      }
+      if (funName === "ByText") return `getByText(${quote(obj.text)}, { exact: true })`;
+      if (funName === "ByTitle") return `getByTitle(${quote(obj.title)}, { exact: true })`;
+      if (funName === "ByDomPath") return `locator(${quote(obj.csspath)})`;
+      return funName;
+    }
+    getBestPreviewPath(sourcePath) {
+      if (!sourcePath) return null;
+      for (let i = 0; i < this.domParserService.priSize; i++) {
+        if (sourcePath[i]) return sourcePath[i];
+      }
+      return null;
     }
     isRangeInput(element) {
       return element?.tagName === "INPUT" && element.getAttribute("type") === "range";
@@ -17742,7 +18146,7 @@ window.global ||= window;
       }, 150);
     }
     getComposedEventTarget(e) {
-      const interactive = this.getFirstComposedElement(e, "button, a, [role='button'], [onclick], input, textarea, select, label");
+      const interactive = this.getFirstComposedElement(e, "button, a, [role='button'], [onclick], input, textarea, select, label, [data-thread-id], .thread-item");
       return interactive || e.target;
     }
     getFirstComposedElement(e, selector2) {
@@ -17818,6 +18222,11 @@ window.global ||= window;
       if (element.closest?.('button, a, [role="button"], [onclick]')) return false;
       return true;
     }
+    isRadioOrRadioLabel(element) {
+      if (!element) return false;
+      if (element.matches?.('input[type="radio"]')) return true;
+      return !!element.closest?.("label")?.querySelector?.('input[type="radio"]');
+    }
   };
 
   // custom-rules.json
@@ -17859,7 +18268,7 @@ window.global ||= window;
   // MainApp.js
   console.log("\u{1F680} [System] bundle.js \u5DF2\u7D93\u6210\u529F\u88AB Chrome \u6CE8\u5165\u5230\u9019\u500B\u7DB2\u9801\uFF01", window.location.href);
   var MainApp = class {
-    // 撱箸?摮???????蝟餌絞??閮勗?亥閮? document ??window嚗?閮剔?嗅?蝬脤???
+    // 建構子：初始化所有子系統。允許傳入自訂的 document 與 window，預設為當前網頁的
     constructor(rootDoc = document, rootWin = window) {
       console.log("\u{1F3D7}\uFE0F [MainApp] \u9032\u5165 constructor\uFF01");
       this.rootDoc = rootDoc;
@@ -17867,6 +18276,9 @@ window.global ||= window;
       this.isStarted = false;
       this.scanResult = null;
       this.activeListeners = [];
+      this.hoverPreviewSessionEnabled = false;
+      this.dynamicFrameObserver = null;
+      this.dynamicFrameScanTimer = null;
       this.setupBackgroundMessageListener();
       this.setupNativeDialogListener();
       this.registry = new ContextRegistry();
@@ -17884,10 +18296,16 @@ window.global ||= window;
       this.codeGenerator = new PlaywrightCodeGenerator(this.domParserService, this.command, this.pageAlias);
       this.navigationTracker = new NavigationTracker({
         rootWindow: this.rootWin,
-        onNavigate: (navInfo) => {
-          const action = { type: "navigate", ...navInfo, ts: Date.now() };
+        onNavigationDetected: (navInfo) => {
+          const action = {
+            type: "navigate",
+            ...navInfo,
+            url: navInfo.currentUrl || navInfo.url || window.location.href,
+            ts: Date.now()
+          };
           const newLine = this.appendGeneratedCode(action);
-          const savedAction = this.store.addAction(action);
+          this.attachGeneratedCodeToAction(action, newLine);
+          const savedAction = this.addGeneratedAction(action, newLine);
           this.syncToGlobalStorage(newLine, savedAction);
         }
       });
@@ -17905,10 +18323,10 @@ window.global ||= window;
         });
       }
     }
-    // ?? 鞎潔???寞?嚗???? Background ?喃??楊銝?/?? Popup 鈭辣
+    // 🌟 貼上這個新方法：專門處理 Background 傳來的跨世界/原生 Popup 事件
     // ==================== myrecorderRestructure/MainApp1.js ====================
-    // 撠挾?賢?? MainApp1 憿鋆⊿
-    // ?交 Background ?喃?????Popup ?
+    // 將這段函式加在 MainApp1 類別裡面
+    // 接收 Background 傳來的原生 Popup 通知
     setupBackgroundMessageListener() {
       if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.onMessage) return;
       chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -17921,7 +18339,8 @@ window.global ||= window;
             ts: Date.now()
           };
           const newLine = this.appendGeneratedCode(action);
-          const savedAction = this.store.addAction(action);
+          this.attachGeneratedCodeToAction(action, newLine);
+          const savedAction = this.addGeneratedAction(action, newLine);
           this.syncToGlobalStorage(newLine, savedAction);
           try {
             chrome.runtime.sendMessage({
@@ -17944,22 +18363,28 @@ window.global ||= window;
     setupNativeDialogListener() {
       this.rootWin.addEventListener("message", (event) => {
         const msg = event.data;
-        if (event.source !== this.rootWin) return;
         if (msg?.source !== "RECORDER_PAGE_HOOK") return;
         if (msg.type !== "RECORDER_NATIVE_DIALOG") return;
         if (!this.isStarted) return;
+        if (event.source !== this.rootWin && !this.isKnownFrameSource(event.source)) return;
         this.handleUserAction({
           type: "dialog",
           dialogType: msg.dialogType,
           message: msg.message,
           result: msg.result,
           defaultValue: msg.defaultValue,
+          frameUrl: msg.frameUrl,
+          fromIframe: msg.fromIframe === true,
           sourceWindow: "ctx_page_0",
           ts: Date.now()
         });
       });
     }
-    // 蝯曹???靘??Listener (Page/Iframe/Popup) ????雿?
+    isKnownFrameSource(sourceWindow) {
+      if (!sourceWindow || !this.registry || typeof this.registry.getContextsByType !== "function") return false;
+      return this.registry.getContextsByType("iframe").some((ctx) => ctx.windowRef === sourceWindow);
+    }
+    // 統一處理來自各個 Listener (Page/Iframe/Popup) 的互動動作
     handleUserAction(action) {
       if (!this.isStarted) return;
       console.log("[Debug MainApp] \u63A5\u6536\u5230 Action:", action.type, action);
@@ -17974,7 +18399,7 @@ window.global ||= window;
             sourceContextId: action.sourceWindow,
             sourceElementInfo: action.getSourceElement(),
             sourcePath
-            // ??摮末閫??蝯?
+            // 預先存好解析結果
           });
           return;
         }
@@ -17988,7 +18413,8 @@ window.global ||= window;
         }
       }
       const newLine = this.appendGeneratedCode(action);
-      const savedAction = this.store.addAction(action);
+      this.attachGeneratedCodeToAction(action, newLine);
+      const savedAction = this.addGeneratedAction(action, newLine);
       this.syncToGlobalStorage(newLine, savedAction);
       if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
         chrome.runtime.sendMessage({
@@ -18003,9 +18429,11 @@ window.global ||= window;
         });
       }
     }
-    // ???ˊ??    // 瑼?嚗yrecorderRestructure/MainApp.js
+    // 啟動錄製器
+    // 檔案：myrecorderRestructure/MainApp.js
     start() {
       if (this.isStarted) return this.getState();
+      this.hoverPreviewSessionEnabled = true;
       const scanner = new ContextScanner(this.rootDoc, this.rootWin);
       this.scanResult = scanner.scanAllContexts();
       this.registry.registerMany(this.scanResult.contexts);
@@ -18022,14 +18450,21 @@ window.global ||= window;
       if (gotoResult) {
         initialBatchCode.push(gotoResult);
         this.command.appendCode(gotoResult);
+        this.attachGeneratedCodeToAction(gotoAction, {
+          code: [gotoResult],
+          isReplace: false
+        });
+        this.store.addAction(gotoAction);
       }
       if (initialBatchCode.length > 0) {
         if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
           chrome.runtime.sendMessage({
             type: "APPEND_RECORD_DATA",
             newCode: initialBatchCode,
+            // 傳送陣列
             isReplace: false,
             newAction: gotoAction
+            // 關聯最後一個動作
           }).catch(() => {
           });
         }
@@ -18037,11 +18472,13 @@ window.global ||= window;
       this.isStarted = true;
       this.store.setRecording(true);
       this.bindListenersToContexts(allContexts);
+      this.startDynamicFrameWatcher();
       return this.getState();
     }
-    // ?? ??啣?嚗??蝯行??(Popup)???唳?????Ｕ?蝥?鋆賬蝙??
+    // 🌟 關鍵新增：專門給新分頁(Popup)或重新整理後的頁面「自動接續錄製」使用
     autoStart() {
       if (this.isStarted) return;
+      this.hoverPreviewSessionEnabled = false;
       console.log(`\u{1F680} [MainApp] \u5075\u6E2C\u5230\u7CFB\u7D71\u6B63\u5728\u9304\u88FD\u4E2D\uFF0C\u81EA\u52D5\u555F\u52D5\u76E3\u807D\u5668\uFF01(\u8EAB\u5206: ${this.pageAlias})`);
       const scanner = new ContextScanner(this.rootDoc, this.rootWin);
       this.scanResult = scanner.scanAllContexts();
@@ -18052,20 +18489,88 @@ window.global ||= window;
       this.isStarted = true;
       this.store.setRecording(true);
       this.bindListenersToContexts(allContexts);
+      this.startDynamicFrameWatcher();
     }
-    // ?迫?ˊ??
+    // 停止錄製器
     stop() {
       if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
         chrome.storage.local.set({ isRecordingSessionActive: false });
       }
       if (!this.isStarted) return this.getState();
+      this.stopDynamicFrameWatcher();
       this.navigationTracker.stop();
-      this.activeListeners.forEach((l) => l.isRecording = false);
+      this.activeListeners.forEach((l) => {
+        if (typeof l.setRecordingState === "function") {
+          l.setRecordingState(false, { allowHoverPreview: false });
+        } else {
+          l.isRecording = false;
+          l.hoverInspector?.hide?.();
+          l.lastPreviewTarget = null;
+        }
+      });
       this.store.setRecording(false);
       this.isStarted = false;
+      this.hoverPreviewSessionEnabled = false;
       return this.getState();
     }
-    // 摰?蔭?ˊ??(皜?????
+    startDynamicFrameWatcher() {
+      if (this.dynamicFrameObserver || !this.rootDoc?.documentElement) return;
+      if (typeof MutationObserver === "undefined") return;
+      const hasFrameNode = (node) => {
+        if (!node) return false;
+        if (node.nodeType === 1 && node.matches?.("iframe, frame")) return true;
+        return !!node.querySelector?.("iframe, frame");
+      };
+      this.dynamicFrameObserver = new MutationObserver((mutations) => {
+        const shouldRescan = mutations.some((mutation) => {
+          if (mutation.type === "childList") {
+            return Array.from(mutation.addedNodes || []).some(hasFrameNode);
+          }
+          if (mutation.type === "attributes") {
+            return mutation.target?.matches?.("iframe, frame");
+          }
+          return false;
+        });
+        if (shouldRescan) {
+          this.scheduleDynamicFrameRescan("iframe mutation");
+        }
+      });
+      this.dynamicFrameObserver.observe(this.rootDoc.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["src"]
+      });
+    }
+    stopDynamicFrameWatcher() {
+      if (this.dynamicFrameObserver) {
+        this.dynamicFrameObserver.disconnect();
+        this.dynamicFrameObserver = null;
+      }
+      if (this.dynamicFrameScanTimer) {
+        clearTimeout(this.dynamicFrameScanTimer);
+        this.dynamicFrameScanTimer = null;
+      }
+    }
+    scheduleDynamicFrameRescan(reason = "dynamic iframe") {
+      if (!this.isStarted) return;
+      clearTimeout(this.dynamicFrameScanTimer);
+      this.dynamicFrameScanTimer = setTimeout(() => {
+        this.dynamicFrameScanTimer = null;
+        this.rescanAndBindDynamicFrames(reason);
+      }, 800);
+    }
+    rescanAndBindDynamicFrames(reason = "dynamic iframe") {
+      if (!this.isStarted) return;
+      console.log("[Debug MainApp] rescan contexts for dynamic iframe", { reason });
+      const scanner = new ContextScanner(this.rootDoc, this.rootWin);
+      this.scanResult = scanner.scanAllContexts();
+      this.registry.registerMany(this.scanResult.contexts);
+      this.syncRegistryToStore();
+      this.refreshGeneratorContexts();
+      this.bindListenersToContexts(this.registry.getAllContexts());
+    }
+    // 完全重置錄製器 (清除所有資料)
     reset() {
       this.stop();
       this.registry.clear();
@@ -18081,9 +18586,9 @@ window.global ||= window;
       this.isStarted = false;
       return this.getState();
     }
-    // ???啣??箇?閬? (Popup)
-    // ???啣??箇?閬? (Popup)
-    // ???啣??箇?閬? (Popup)
+    // 處理新彈出的視窗 (Popup)
+    // 處理新彈出的視窗 (Popup)
+    // 處理新彈出的視窗 (Popup)
     handleNewPopup(popupData) {
       console.log("[pop up detected]");
       const action = {
@@ -18094,7 +18599,8 @@ window.global ||= window;
       };
       this.store.setPendingPopup(popupData);
       const newLine = this.appendGeneratedCode(action);
-      const savedAction = this.store.addAction(action);
+      this.attachGeneratedCodeToAction(action, newLine);
+      const savedAction = this.addGeneratedAction(action, newLine);
       this.syncToGlobalStorage(newLine, savedAction);
       if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
         chrome.runtime.sendMessage({
@@ -18109,12 +18615,14 @@ window.global ||= window;
         });
       }
     }
-    // 撠?Registry 鋆∠??啣?鞈??郊??Store 銝剝?銝剔恣??
+    // 將 Registry 裡的環境資料同步到 Store 中集中管理
     syncRegistryToStore() {
       this.store.registerContexts(this.registry.getAllContexts());
     }
-    // ?詨??摩嚗???雿???霅舐??撘Ⅳ摮葡?蒂摮絲靘?    // 隞乩??箏?蝔?Getter ?寞?嚗?潭?靘?憭?敺?函???隞
-    // ???ˊ?啁????雿?銵?    // ???ˊ?啁????雿?銵?(摰?蕪??
+    // 核心邏輯：將「動作資料」轉譯為「程式碼字串」並存起來
+    // 以下為各種 Getter 方法，用於提供對外取得內部狀態的介面
+    // 取得錄製到的所有動作列表
+    // 取得錄製到的所有動作列表 (安全過濾版)
     getActions() {
       return this.store.getActions().map((act) => {
         return this.decorateActionForDisplay(act);
@@ -18135,11 +18643,11 @@ window.global ||= window;
       }
       return contextId;
     }
-    // ???Ｙ?????Playwright 蝔?蝣澆?銝?
+    // 取得產生的完整 Playwright 程式碼字串
     getGeneratedCode() {
       return this.command.getCode();
     }
-    // ???游?App ??????(?虜???喟策 Popup 隞皜脫?雿輻)
+    // 取得整個 App 的綜合狀態 (通常打包傳給 Popup 介面渲染使用)
     getState() {
       return {
         isStarted: this.isStarted,
@@ -18150,7 +18658,7 @@ window.global ||= window;
         generatedCode: this.command.getCode()
       };
     }
-    // ??靘??潸?舐?底蝝啁???
+    // 取得供開發者除錯用的詳細狀態
     debugState() {
       return {
         scanResult: this.scanResult,
@@ -18160,17 +18668,25 @@ window.global ||= window;
         isStarted: this.isStarted
       };
     }
-    // [?啣?] ???箸????銝??Context ??撠???隞嗥?賢
-    // ???箸????銝??Context ??撠???隞嗥?賢
+    // [新增] 動態為掃描到的每一個 Context 掛載對應的事件監聽器
+    // 動態為掃描到的每一個 Context 掛載對應的事件監聽器
     bindListenersToContexts(contexts) {
       contexts.forEach((ctx) => {
         if (this.store.hasListener(ctx.contextId)) return;
         if (ctx.type === "iframe" && !ctx.documentRef) {
+          const frameId = ctx.frameElement?.id || "(no id)";
+          const frameName = ctx.frameElement?.name || "(no name)";
+          const frameSrc = ctx.frameElement?.getAttribute?.("src") || "(no src)";
+          const resolvedSrc = ctx.frameElement?.src || "(no resolved src)";
+          console.warn(
+            `[Debug MainApp] unable to bind iframe listener: contextId=${ctx.contextId}, id=${frameId}, name=${frameName}, selector=${ctx.frameSelector || "(no selector)"}, src=${frameSrc}, resolvedSrc=${resolvedSrc}`
+          );
           console.warn("[Debug MainApp] skip iframe listener because documentRef is null", {
             contextId: ctx.contextId,
             locator: ctx.frameSelector,
             url: ctx.url,
-            frameId: ctx.frameElement?.id || null,
+            frameId,
+            frameName,
             frameSrc: ctx.frameElement?.getAttribute?.("src") || null,
             resolvedSrc: ctx.frameElement?.src || null
           });
@@ -18179,9 +18695,9 @@ window.global ||= window;
         let listener = null;
         const listenerContexts = {
           contextId: ctx.contextId,
-          // 憒??臭蜓??敶閬?嚗停????windowRef ?嗡? mainWindow
+          // 如果是主頁或彈出視窗，就把它的 windowRef 當作 mainWindow
           mainWindow: ctx.type === "page" || ctx.type === "popup" ? ctx.windowRef : this.rootWin,
-          // 憒???iframe嚗停????windowRef 蝯?iframeWindow
+          // 如果是 iframe，就把它的 windowRef 給 iframeWindow
           iframeWindow: ctx.type === "iframe" ? ctx.windowRef : null
         };
         if (ctx.type === "page" || ctx.type === "popup") {
@@ -18199,7 +18715,13 @@ window.global ||= window;
         }
         if (listener) {
           listener.init();
-          listener.isRecording = this.isStarted;
+          if (typeof listener.setRecordingState === "function") {
+            listener.setRecordingState(this.isStarted, {
+              allowHoverPreview: this.hoverPreviewSessionEnabled === true
+            });
+          } else {
+            listener.isRecording = this.isStarted;
+          }
           this.activeListeners.push(listener);
           this.store.registerListener(ctx.contextId);
         }
@@ -18244,11 +18766,43 @@ window.global ||= window;
       });
       return { code: codeToReturn, isReplace };
     }
+    attachGeneratedCodeToAction(action, codeResult) {
+      if (!action || !codeResult || !codeResult.code) return;
+      const lines = Array.isArray(codeResult.code) ? codeResult.code : [codeResult.code];
+      action.generatedCodeLines = lines;
+      action.generatedCodeLine = lines[lines.length - 1] || "";
+      action.generatedCodeReplacesPrevious = codeResult.isReplace === true;
+    }
+    addGeneratedAction(action, codeResult) {
+      let replacedAction = null;
+      if (codeResult?.isReplace && typeof this.store.removeLastAction === "function") {
+        replacedAction = this.store.removeLastAction();
+      }
+      if (replacedAction) {
+        action.triggerAction = this.decorateActionForDisplay(replacedAction);
+      }
+      return this.store.addAction(action);
+    }
+    setHoverPreviewSessionEnabled(enabled) {
+      this.hoverPreviewSessionEnabled = enabled === true;
+      try {
+        if (typeof chrome !== "undefined" && chrome.storage?.local) {
+          chrome.storage.local.set({ hoverPreviewSessionEnabled: this.hoverPreviewSessionEnabled });
+        }
+      } catch (error) {
+        console.warn("[MainApp] Unable to persist hover preview session state", error);
+      }
+      this.activeListeners.forEach((listener) => {
+        if (typeof listener.setHoverPreviewSessionEnabled === "function") {
+          listener.setHoverPreviewSessionEnabled(this.hoverPreviewSessionEnabled);
+        }
+      });
+    }
     refreshGeneratorContexts() {
       const allContexts = this.registry.getAllContexts();
       this.codeGenerator.setContexts(allContexts, this.pageAlias);
     }
-    // ?? ??啣?嚗絞銝??憓??郊??Background ????
+    // 🌟 關鍵新增：統一處理增量同步到 Background 的機制
     syncToGlobalStorage(codeResult, action) {
       if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return;
       const safeAct = this.decorateActionForDisplay(action);
@@ -18256,7 +18810,7 @@ window.global ||= window;
         type: "APPEND_RECORD_DATA",
         newCode: codeResult ? codeResult.code : null,
         isReplace: codeResult ? codeResult.isReplace : false,
-        // ?喲?閬神閮?
+        // 傳遞覆寫訊號
         newAction: safeAct
       }).catch(() => {
       });
@@ -18319,6 +18873,9 @@ window.global ||= window;
     }
     function startRecording() {
       const instance = ensureApp();
+      if (typeof instance.setHoverPreviewSessionEnabled === "function") {
+        instance.setHoverPreviewSessionEnabled(true);
+      }
       if (!isRecording) {
         instance.start();
         isRecording = true;
@@ -18334,6 +18891,9 @@ window.global ||= window;
         app.stop();
       }
       isRecording = false;
+      if (typeof chrome !== "undefined" && chrome.storage?.local) {
+        chrome.storage.local.set({ hoverPreviewSessionEnabled: false });
+      }
       chrome.runtime.sendMessage({
         type: "RECORDER_STATUS_UPDATE",
         status: "idle"
@@ -18347,6 +18907,9 @@ window.global ||= window;
       chrome.runtime.sendMessage({ type: "RECORDER_CODE_UPDATE", code: [] });
       chrome.runtime.sendMessage({ type: "RECORDER_STATUS_UPDATE", status: "idle" });
       isRecording = false;
+      if (typeof chrome !== "undefined" && chrome.storage?.local) {
+        chrome.storage.local.set({ hoverPreviewSessionEnabled: false });
+      }
     }
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!message?.type) return;

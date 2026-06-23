@@ -1,5 +1,6 @@
 import { DOMElement } from "../entities/DOMElement";
 import { ActionInterpreter } from '../usecases/ActionInterpreter.js';
+import { HoverInspector } from "./HoverInspector.js";
 
 export class OuterEventListener {
   constructor(contexts, domParserService, onActionRecorded) {
@@ -29,6 +30,10 @@ export class OuterEventListener {
     this.mouseDownFlag = false;
     this.dragStepFlag = 0;
     this.suppressClickUntil = 0;
+    this.hoverInspector = new HoverInspector(this.mainDocument, this.mainWindow);
+    this.lastPreviewTarget = null;
+    this.hoverHighlightEnabled = true;
+    this.hoverPreviewSessionEnabled = false;
 
     // GUI 狀態控制
     this.isRecording = false;
@@ -43,6 +48,8 @@ export class OuterEventListener {
     this.mainDocument.addEventListener("click", this.clickHandler.bind(this), true);
     this.mainDocument.addEventListener("mousedown", this.mousedownHandler.bind(this), true);
     this.mainDocument.addEventListener("mousemove", this.mousemoveHandler.bind(this), true);
+    this.mainDocument.addEventListener("mouseout", this.mouseoutHandler.bind(this), true);
+    this.mainDocument.addEventListener("mouseleave", this.hideHoverPreview.bind(this), true);
     this.mainDocument.addEventListener("mouseup", this.mouseupHandler.bind(this), true);
     this.mainWindow.addEventListener("dragstart", this.dragStartHandler.bind(this));
     this.mainDocument.addEventListener('dblclick', this.dblClickHandler.bind(this), true);
@@ -58,17 +65,19 @@ export class OuterEventListener {
     
     // 處理外部控制錄製開關的訊息
     this.mainWindow.addEventListener('message', this.messageHandler.bind(this));
+    this.loadHoverHighlightPreference();
+    this.bindHoverHighlightPreference();
   }
 
   messageHandler(e) {
     const msg = e.data;
     switch (msg.type) {
       case 'START_RECORDING':
-        this.isRecording = true;
+        this.setRecordingState(true, { allowHoverPreview: true });
         this.snapshotInitialInputValues();
         break;
       case 'STOP_RECORDING':
-        this.isRecording = false;
+        this.setRecordingState(false, { allowHoverPreview: false });
         clearTimeout(this.timer);
         break;
     }
@@ -92,6 +101,8 @@ export class OuterEventListener {
     // 寫入額外資料
     if (extraData.keyboard) action.setKeyboard(extraData.keyboard);
     if (extraData.inputText !== undefined) action.setInputText(extraData.inputText);
+    if (extraData.selectedValue !== undefined) action.setSelectedValue(extraData.selectedValue);
+    if (extraData.selectedText !== undefined) action.setSelectedText(extraData.selectedText);
     if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
 
     // 【請補上這兩行】將拖拉標記附加到 action 上，否則 MainApp1 會認不出來！
@@ -182,7 +193,10 @@ export class OuterEventListener {
     }
 
     const action_type = isSelect ? 'change' : 'checkBox';
-    this.dispatchAction(action_type, e.target);
+    this.dispatchAction(action_type, e.target, null, isSelect ? {
+      selectedValue: e.target.value,
+      selectedText: e.target.options?.[e.target.selectedIndex]?.text || ""
+    } : {});
   }
 
   keydownHandler(e) {
@@ -213,6 +227,7 @@ export class OuterEventListener {
     if (this.isRangeInput(target)) return;
 
     if (target.getAttribute("draggable") === "true") {
+      this.hideHoverPreview();
       // 僅向上通報拖拉起始事件，廣播工作交由 MainApp 負責
       this.dispatchAction("dragANDdrop", target, null, { isDragStart: true });
     }
@@ -227,12 +242,18 @@ export class OuterEventListener {
     this.dragSource = this.getDragSourceElement(e.target);
     this.mouseDownFlag = true;
     this.dragStepFlag = 1;
+    this.hideHoverPreview();
   }
 
   mousemoveHandler(e) {
     if (!this.isRecording || !e.isTrusted) return;
     if (this.isRangeInput(e.target)) return;
     this.currentHoveredElement = this.getDragTargetElement(e.target);
+    if (this.shouldPreviewHover()) {
+      this.previewHoveredElement(this.currentHoveredElement);
+    } else {
+      this.hideHoverPreview();
+    }
 
     if (!this.dragStart || this.dragStepFlag !== 1) return;
 
@@ -247,6 +268,108 @@ export class OuterEventListener {
 
       this.dispatchAction("dragANDdrop", this.dragSource, null, { isDragStart: true });
     }
+  }
+
+  previewHoveredElement(element) {
+    if (!element || element === this.lastPreviewTarget) return;
+    this.lastPreviewTarget = element;
+
+    try {
+      const sourcePath = this.domParserService.getOpenSourcePath(element, this.mainWindow);
+      this.hoverInspector?.show(element, this.formatLocatorPreview(sourcePath));
+    } catch (error) {
+      console.warn("[Recorder] Unable to preview hovered locator", error);
+      this.hoverInspector?.show(element, "");
+    }
+  }
+
+  shouldPreviewHover() {
+    return this.hoverPreviewSessionEnabled && this.hoverHighlightEnabled && !this.mouseDownFlag && !this.isDragging && this.dragStepFlag === 0;
+  }
+
+  setRecordingState(isRecording, options = {}) {
+    this.isRecording = isRecording === true;
+    this.setHoverPreviewSessionEnabled(options.allowHoverPreview === true);
+    if (!this.isRecording) this.hideHoverPreview();
+  }
+
+  setHoverPreviewSessionEnabled(enabled) {
+    this.hoverPreviewSessionEnabled = enabled === true;
+    if (!this.hoverPreviewSessionEnabled) this.hideHoverPreview();
+  }
+
+  loadHoverHighlightPreference() {
+    try {
+      if (typeof chrome === "undefined" || !chrome.storage?.local) return;
+      chrome.storage.local.get(["hoverHighlightEnabled", "hoverPreviewSessionEnabled"], (result) => {
+        this.setHoverHighlightEnabled(result.hoverHighlightEnabled !== false);
+        this.setHoverPreviewSessionEnabled(result.hoverPreviewSessionEnabled === true);
+      });
+    } catch (error) {
+      console.warn("[Recorder] Unable to load hover highlight preference", error);
+    }
+  }
+
+  bindHoverHighlightPreference() {
+    try {
+      if (typeof chrome === "undefined" || !chrome.storage?.onChanged) return;
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== "local" || !changes.hoverHighlightEnabled) return;
+        this.setHoverHighlightEnabled(changes.hoverHighlightEnabled.newValue !== false);
+      });
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== "local" || !changes.hoverPreviewSessionEnabled) return;
+        this.setHoverPreviewSessionEnabled(changes.hoverPreviewSessionEnabled.newValue === true);
+      });
+    } catch (error) {
+      console.warn("[Recorder] Unable to bind hover highlight preference", error);
+    }
+  }
+
+  setHoverHighlightEnabled(enabled) {
+    this.hoverHighlightEnabled = enabled !== false;
+    if (!this.hoverHighlightEnabled) this.hideHoverPreview();
+  }
+
+  mouseoutHandler(e) {
+    if (!e.relatedTarget) this.hideHoverPreview();
+  }
+
+  hideHoverPreview() {
+    this.hoverInspector?.hide();
+    this.lastPreviewTarget = null;
+  }
+
+  formatLocatorPreview(sourcePath) {
+    const best = this.getBestPreviewPath(sourcePath);
+    if (!best) return "";
+
+    const { funName, obj } = best;
+    const quote = (value) => JSON.stringify(String(value ?? ""));
+
+    if (funName === "ByRole") {
+      const role = quote(obj.role);
+      if (obj.name !== null && obj.name !== undefined && obj.name !== "") {
+        const exactOption = obj.exact === false ? "" : ", exact: true";
+        const nth = obj.index !== null && obj.index !== undefined ? `.nth(${obj.index})` : "";
+        return `getByRole(${role}, { name: ${quote(obj.name)}${exactOption} })${nth}`;
+      }
+      return `getByRole(${role})`;
+    }
+
+    if (funName === "ByText") return `getByText(${quote(obj.text)}, { exact: true })`;
+    if (funName === "ByTitle") return `getByTitle(${quote(obj.title)}, { exact: true })`;
+    if (funName === "ByDomPath") return `locator(${quote(obj.csspath)})`;
+
+    return funName;
+  }
+
+  getBestPreviewPath(sourcePath) {
+    if (!sourcePath) return null;
+    for (let i = 0; i < this.domParserService.priSize; i++) {
+      if (sourcePath[i]) return sourcePath[i];
+    }
+    return null;
   }
 
   mouseupHandler(e) {
@@ -276,7 +399,8 @@ export class OuterEventListener {
     if (this.isFileInput(target)) return;
     if (this.isRangeInput(target)) return;
     if (this.isCheckboxOrCheckboxLabel(target)) return;
-    if (target.tagName === "LABEL" || target.tagName === "SELECT") return;
+    if (target.tagName === "LABEL" && !this.isRadioOrRadioLabel(target)) return;
+    if (target.tagName === "SELECT") return;
     
     let clickable = target;
     if (target.tagName === "INPUT") {
@@ -324,7 +448,7 @@ export class OuterEventListener {
   }
 
   getComposedEventTarget(e) {
-    const interactive = this.getFirstComposedElement(e, "button, a, [role='button'], [onclick], input, textarea, select, label");
+    const interactive = this.getFirstComposedElement(e, "button, a, [role='button'], [onclick], input, textarea, select, label, [data-thread-id], .thread-item");
     return interactive || e.target;
   }
 
@@ -437,5 +561,11 @@ export class OuterEventListener {
     if (element.closest?.('button, a, [role="button"], [onclick]')) return false;
 
     return true;
+  }
+
+  isRadioOrRadioLabel(element) {
+    if (!element) return false;
+    if (element.matches?.('input[type="radio"]')) return true;
+    return !!element.closest?.("label")?.querySelector?.('input[type="radio"]');
   }
 }
