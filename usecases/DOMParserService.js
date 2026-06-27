@@ -135,7 +135,7 @@ export class DOMParserService {
       isUniqueObj.ByDomPath = true;
       structuralkey = 1;
     }
-
+    console.log("structural select: ",structural_selector);
     // ==========================================
     // 3. 閰摯?奎?剜?雿?DOM Path
     // ==========================================
@@ -271,12 +271,71 @@ export class DOMParserService {
   }
 
   getStructuralCssPath(el, root) {
-    if (!(el instanceof Element) || !root) return "";
+    if (el?.nodeType !== 1 || !root) return "";
 
+    const candidates = [];
+    const addCandidate = (selector) => {
+      if (!selector || typeof selector !== "string") return;
+
+      let isUniqueTarget = false;
+      try {
+        const matches = Array.from(root.querySelectorAll(selector));
+        isUniqueTarget = matches.length === 1 && matches[0] === el;
+      } catch (e) {
+        return;
+      }
+
+      candidates.push(this.analyzeCssPath(selector, isUniqueTarget ? 1 : 0));
+    };
+
+    try {
+      addCandidate(finder(el, {
+        root,
+        idName: () => false,
+        className: () => false,
+        attr: () => false,
+        tagName: () => true
+      }));
+    } catch (err) {
+      console.warn("[DOMParser] finder structural selector generation failed", err);
+    }
+
+    try {
+      addCandidate(select(el, {
+        root,
+        ignore: {
+          id: true,
+          class: true,
+          attribute: true
+        }
+      }));
+    } catch (err) {
+      console.warn("[DOMParser] optimal-select structural selector generation failed", err);
+    }
+
+    try {
+      addCandidate(getCssSelector(el, {
+        root,
+        selectors: ["tag", "nthoftype"]
+      }));
+    } catch (err) {
+      console.warn("[DOMParser] css-selector-generator structural selector generation failed", err);
+    }
+
+    const bestGeneratedPath = this.rankDomPaths(candidates)
+      .find(candidate => candidate.U === 1)?.path;
+    console.log("[structure path: ]", candidates);
+    console.log("[structure path, best: ]", bestGeneratedPath);
+    if (bestGeneratedPath) return bestGeneratedPath;
+
+    return this.getFallbackStructuralCssPath(el, root);
+  }
+
+  getFallbackStructuralCssPath(el, root) {
     const parts = [];
     let current = el;
 
-    while (current instanceof Element && current !== root) {
+    while (current?.nodeType === 1 && current !== root) {
       const tagName = current.tagName.toLowerCase();
       const parent = current.parentElement;
 

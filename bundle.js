@@ -16288,6 +16288,7 @@
         isUniqueObj.ByDomPath = true;
         structuralkey = 1;
       }
+      console.log("structural select: ", structural_selector);
       let csspath = this.analyzeCssPath(selector2, csskey);
       let optpath = this.analyzeCssPath(opt_selector, optkey);
       let finderpath = this.analyzeCssPath(finder_selector, finderkey);
@@ -16386,10 +16387,60 @@
       return obj;
     }
     getStructuralCssPath(el, root) {
-      if (!(el instanceof Element) || !root) return "";
+      if (el?.nodeType !== 1 || !root) return "";
+      const candidates = [];
+      const addCandidate = (selector2) => {
+        if (!selector2 || typeof selector2 !== "string") return;
+        let isUniqueTarget = false;
+        try {
+          const matches2 = Array.from(root.querySelectorAll(selector2));
+          isUniqueTarget = matches2.length === 1 && matches2[0] === el;
+        } catch (e) {
+          return;
+        }
+        candidates.push(this.analyzeCssPath(selector2, isUniqueTarget ? 1 : 0));
+      };
+      try {
+        addCandidate(finder(el, {
+          root,
+          idName: () => false,
+          className: () => false,
+          attr: () => false,
+          tagName: () => true
+        }));
+      } catch (err) {
+        console.warn("[DOMParser] finder structural selector generation failed", err);
+      }
+      try {
+        addCandidate((0, import_optimal_select.select)(el, {
+          root,
+          ignore: {
+            id: true,
+            class: true,
+            attribute: true
+          }
+        }));
+      } catch (err) {
+        console.warn("[DOMParser] optimal-select structural selector generation failed", err);
+      }
+      try {
+        addCandidate(getCssSelector(el, {
+          root,
+          selectors: ["tag", "nthoftype"]
+        }));
+      } catch (err) {
+        console.warn("[DOMParser] css-selector-generator structural selector generation failed", err);
+      }
+      const bestGeneratedPath = this.rankDomPaths(candidates).find((candidate) => candidate.U === 1)?.path;
+      console.log("[structure path: ]", candidates);
+      console.log("[structure path, best: ]", bestGeneratedPath);
+      if (bestGeneratedPath) return bestGeneratedPath;
+      return this.getFallbackStructuralCssPath(el, root);
+    }
+    getFallbackStructuralCssPath(el, root) {
       const parts = [];
       let current = el;
-      while (current instanceof Element && current !== root) {
+      while (current?.nodeType === 1 && current !== root) {
         const tagName2 = current.tagName.toLowerCase();
         const parent = current.parentElement;
         parts.unshift(`${tagName2}:nth-of-type(${this.getElementTypeIndex(current)})`);
@@ -17557,6 +17608,7 @@
       this.typedText = "";
       this.timer = null;
       this.initialInputValues = /* @__PURE__ */ new WeakMap();
+      this.preEditSourcePaths = /* @__PURE__ */ new WeakMap();
       this.lastUserTypedAt = /* @__PURE__ */ new WeakMap();
       this.userEditedInputs = /* @__PURE__ */ new WeakSet();
       this.composingInputs = /* @__PURE__ */ new WeakSet();
@@ -17591,6 +17643,7 @@
       this.mainDocument.addEventListener("change", this.changeHandler.bind(this), true);
       this.mainDocument.addEventListener("compositionstart", this.compositionStartHandler.bind(this), true);
       this.mainDocument.addEventListener("compositionend", this.compositionEndHandler.bind(this), true);
+      this.mainDocument.addEventListener("beforeinput", this.beforeInputHandler.bind(this), true);
       this.mainDocument.addEventListener("input", this.inputHandler.bind(this), true);
       this.mainDocument.addEventListener("dragover", (e) => {
         if (this.isRecording) e.preventDefault();
@@ -17643,6 +17696,7 @@
       if (extraData.inputText !== void 0) action.setInputText(extraData.inputText);
       if (extraData.selectedValue !== void 0) action.setSelectedValue(extraData.selectedValue);
       if (extraData.selectedText !== void 0) action.setSelectedText(extraData.selectedText);
+      if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
       if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
       if (extraData.isDragStart) action.isDragStart = true;
       if (extraData.isDrop) action.isDrop = true;
@@ -17657,6 +17711,15 @@
       e.preventDefault();
       this.currentHoveredElement = e.target;
       this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
+    }
+    beforeInputHandler(e) {
+      if (!this.isRecording || !e.isTrusted) return;
+      const element = this.getTextInputEventTarget(e) || e.target;
+      if (!this.isTextInputElement(element) || this.preEditSourcePaths.has(element)) return;
+      const sourcePath = this.domParserService.getOpenSourcePath(element, this.mainWindow);
+      if (sourcePath && Object.keys(sourcePath).length > 0) {
+        this.preEditSourcePaths.set(element, sourcePath);
+      }
     }
     inputHandler(e) {
       this.debugInputEvent("input:received", e);
@@ -18100,6 +18163,7 @@
     snapshotInitialInputValues() {
       try {
         this.initialInputValues = /* @__PURE__ */ new WeakMap();
+        this.preEditSourcePaths = /* @__PURE__ */ new WeakMap();
         this.userEditedInputs = /* @__PURE__ */ new WeakSet();
         this.composingInputs = /* @__PURE__ */ new WeakSet();
         this.mainDocument?.querySelectorAll?.("input, textarea, [contenteditable='true']").forEach((element) => {
@@ -18142,12 +18206,15 @@
           return;
         }
         this.currentHoveredElement = element;
+        const preParsedSourcePath = this.preEditSourcePaths.get(element) || null;
         this.debugInputTarget("scheduleTextInputRecord:dispatch-input", element, {
           value: this.getInputValue(element)
         });
         this.dispatchAction("input", this.currentHoveredElement, null, {
-          inputText: this.getInputValue(element)
+          inputText: this.getInputValue(element),
+          preParsedSourcePath
         });
+        this.preEditSourcePaths.delete(element);
       }, delay);
     }
     isTextEditingKey(e) {
@@ -18258,6 +18325,7 @@
       this.typedText = "";
       this.timer = null;
       this.initialInputValues = /* @__PURE__ */ new WeakMap();
+      this.preEditSourcePaths = /* @__PURE__ */ new WeakMap();
       this.lastUserTypedAt = /* @__PURE__ */ new WeakMap();
       this.userEditedInputs = /* @__PURE__ */ new WeakSet();
       this.composingInputs = /* @__PURE__ */ new WeakSet();
@@ -18292,6 +18360,7 @@
       this.iframeDocument.addEventListener("change", this.changeHandler.bind(this), true);
       this.iframeDocument.addEventListener("compositionstart", this.compositionStartHandler.bind(this), true);
       this.iframeDocument.addEventListener("compositionend", this.compositionEndHandler.bind(this), true);
+      this.iframeDocument.addEventListener("beforeinput", this.beforeInputHandler.bind(this), true);
       this.iframeDocument.addEventListener("input", this.inputHandler.bind(this), true);
       this.iframeDocument.addEventListener("dragover", (e) => {
         if (this.isRecording) e.preventDefault();
@@ -18344,6 +18413,7 @@
       if (extraData.inputText !== void 0) action.setInputText(extraData.inputText);
       if (extraData.selectedValue !== void 0) action.setSelectedValue(extraData.selectedValue);
       if (extraData.selectedText !== void 0) action.setSelectedText(extraData.selectedText);
+      if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
       if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
       if (extraData.isDragStart) action.isDragStart = true;
       if (extraData.isDrop) action.isDrop = true;
@@ -18359,6 +18429,15 @@
       e.preventDefault();
       this.currentHoveredElement = this.getDragTargetElement(e.target);
       this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
+    }
+    beforeInputHandler(e) {
+      if (!this.isRecording || !e.isTrusted) return;
+      const element = this.getTextInputEventTarget(e) || e.target;
+      if (!this.isTextInputElement(element) || this.preEditSourcePaths.has(element)) return;
+      const sourcePath = this.domParserService.getOpenSourcePath(element, this.iframeWindow);
+      if (sourcePath && Object.keys(sourcePath).length > 0) {
+        this.preEditSourcePaths.set(element, sourcePath);
+      }
     }
     inputHandler(e) {
       this.debugInputEvent("input:received", e);
@@ -18801,6 +18880,7 @@
     snapshotInitialInputValues() {
       try {
         this.initialInputValues = /* @__PURE__ */ new WeakMap();
+        this.preEditSourcePaths = /* @__PURE__ */ new WeakMap();
         this.userEditedInputs = /* @__PURE__ */ new WeakSet();
         this.composingInputs = /* @__PURE__ */ new WeakSet();
         this.iframeDocument?.querySelectorAll?.("input, textarea, [contenteditable='true']").forEach((element) => {
@@ -18843,12 +18923,15 @@
           return;
         }
         this.currentHoveredElement = element;
+        const preParsedSourcePath = this.preEditSourcePaths.get(element) || null;
         this.debugInputTarget("scheduleTextInputRecord:dispatch-input", element, {
           value: this.getInputValue(element)
         });
         this.dispatchAction("input", this.currentHoveredElement, null, {
-          inputText: this.getInputValue(element)
+          inputText: this.getInputValue(element),
+          preParsedSourcePath
         });
+        this.preEditSourcePaths.delete(element);
       }, delay);
     }
     isTextEditingKey(e) {

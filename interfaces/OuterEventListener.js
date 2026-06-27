@@ -21,6 +21,7 @@ export class OuterEventListener {
     this.typedText = "";
     this.timer = null;
     this.initialInputValues = new WeakMap();
+    this.preEditSourcePaths = new WeakMap();
     this.lastUserTypedAt = new WeakMap();
     this.userEditedInputs = new WeakSet();
     this.composingInputs = new WeakSet();
@@ -59,6 +60,7 @@ export class OuterEventListener {
     this.mainDocument.addEventListener("change", this.changeHandler.bind(this), true);
     this.mainDocument.addEventListener("compositionstart", this.compositionStartHandler.bind(this), true);
     this.mainDocument.addEventListener("compositionend", this.compositionEndHandler.bind(this), true);
+    this.mainDocument.addEventListener("beforeinput", this.beforeInputHandler.bind(this), true);
     this.mainDocument.addEventListener("input", this.inputHandler.bind(this), true);
     
     // 必須 preventDefault 才能觸發 drop
@@ -120,6 +122,7 @@ export class OuterEventListener {
     if (extraData.inputText !== undefined) action.setInputText(extraData.inputText);
     if (extraData.selectedValue !== undefined) action.setSelectedValue(extraData.selectedValue);
     if (extraData.selectedText !== undefined) action.setSelectedText(extraData.selectedText);
+    if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
     if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
 
     // 【請補上這兩行】將拖拉標記附加到 action 上，否則 MainApp1 會認不出來！
@@ -140,6 +143,18 @@ export class OuterEventListener {
     this.currentHoveredElement = e.target;
     
     this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
+  }
+
+  beforeInputHandler(e) {
+    if (!this.isRecording || !e.isTrusted) return;
+
+    const element = this.getTextInputEventTarget(e) || e.target;
+    if (!this.isTextInputElement(element) || this.preEditSourcePaths.has(element)) return;
+
+    const sourcePath = this.domParserService.getOpenSourcePath(element, this.mainWindow);
+    if (sourcePath && Object.keys(sourcePath).length > 0) {
+      this.preEditSourcePaths.set(element, sourcePath);
+    }
   }
 
   inputHandler(e) {
@@ -661,6 +676,7 @@ export class OuterEventListener {
   snapshotInitialInputValues() {
     try {
       this.initialInputValues = new WeakMap();
+      this.preEditSourcePaths = new WeakMap();
       this.userEditedInputs = new WeakSet();
       this.composingInputs = new WeakSet();
       this.mainDocument?.querySelectorAll?.("input, textarea, [contenteditable='true']").forEach((element) => {
@@ -709,12 +725,15 @@ export class OuterEventListener {
         return;
       }
       this.currentHoveredElement = element;
+      const preParsedSourcePath = this.preEditSourcePaths.get(element) || null;
       this.debugInputTarget("scheduleTextInputRecord:dispatch-input", element, {
         value: this.getInputValue(element)
       });
       this.dispatchAction("input", this.currentHoveredElement, null, {
-        inputText: this.getInputValue(element)
+        inputText: this.getInputValue(element),
+        preParsedSourcePath
       });
+      this.preEditSourcePaths.delete(element);
     }, delay);
   }
 
