@@ -50,31 +50,21 @@ export class DOMParserService {
     const realRoot = e.getRootNode();
     const isElementInDocument = ownerDoc?.contains(e) || (realRoot?.host && ownerDoc?.contains(realRoot.host));
     if (!ownerDoc || !isElementInDocument) {
-      console.warn("[DOMParser] ??撌脖??冽?撅祉??辣銝哨??岫閫??憭望?", e);
       return null;
     }
 
-    console.log("[Debug DOMParser] 甇?閫????:", e);
-
     this.cleanInfo();
-    this.setInfo(e); // ?ㄐ??甇交??this.currentDoc
+    this.setInfo(e); 
     this.clearPlaywrightObj();
     const shadowChain = this.getShadowChain(e);
-
-    // ????隞塚?閮??車憿???Locator ?臬?賢銝?曉??
+    console.log("[Shadow chain info: ]",e, shadowChain);
     let isUniqueObj = { ByRole: false, ByTitle: false, ByDomPath: false, ByText: false };
 
-    // ==========================================
-    // 1. 蝯曹??惇?批??閮剖? (靽? class嚗?鈭斤???蕪?典?澆祟??
-    // ==========================================
     const cssatt = ["id", "attribute", "class", "tag", "nthchild"];
     const optPri = ['id', 'data-testid', 'data-thread-id', 'data-action', 'class', 'name', 'placeholder', 'href', 'src'];
 
     let csskey = 0, optkey = 0, finderkey = 0, structuralkey = 0;
 
-    // ==========================================
-    // 2. ?之 CSS Selector 憟辣閫?? (? ID ??Class ???璈)
-    // ==========================================
 
     // (A) css-selector-generator
     let selector = "";
@@ -474,6 +464,7 @@ export class DOMParserService {
         this.playwrightObj.ByRole.name = name;
         this.playwrightObj.ByRole.role = "button";
         this.playwrightObj.ByRole.exact = false;
+        this.playwrightObj.ByRole.index = this.getFuzzyRoleNameIndex(el, "button", name, container);
         return true;
       }
     }
@@ -500,10 +491,14 @@ export class DOMParserService {
 
       // ?? 靽格迤 2嚗??文?潛? isUnique嚗閬?Ｖ????(index !== -1) 撠梯??箸???
       if (index !== -1) {
+        const hasIconRisk = this.hasGeneratedIconNameRisk(el);
         this.playwrightObj.ByRole.index = index;
         this.playwrightObj.ByRole.name = name || null;
         this.playwrightObj.ByRole.role = role;
-        this.playwrightObj.ByRole.exact = !this.hasGeneratedIconNameRisk(el);
+        this.playwrightObj.ByRole.exact = !hasIconRisk;
+        if (hasIconRisk) {
+          this.playwrightObj.ByRole.index = this.getFuzzyRoleNameIndex(el, role, name, container);
+        }
         
         return true; // ?迂? true嚗?敺??Ｙ??典隞亥?銝?.nth(index)
       }
@@ -536,8 +531,35 @@ export class DOMParserService {
 
   hasGeneratedIconNameRisk(el) {
     return !!el.querySelector?.(
-      'i[class*="fa"], span[class*="fa-"], [class*="material-icons"], [class*="icon-"]'
+      'i[class*="fa"], span[class*="fa-"], [class*="glyphicon"], [class*="material-icons"], [class*="icon-"]'
     );
+  }
+
+  getFuzzyRoleNameIndex(el, role, name, container) {
+    const targetName = String(name || "").trim().replace(/\s+/g, " ");
+    if (!targetName) return null;
+
+    try {
+      const lowerTargetName = targetName.toLocaleLowerCase();
+      const roleMatches = queryAllByRole(container, role);
+      const fuzzyMatches = roleMatches.filter((candidate) => {
+        let candidateName = "";
+        try {
+          candidateName = computeAccessibleName(candidate);
+        } catch (e) {
+          return false;
+        }
+
+        const normalizedCandidateName = String(candidateName || "").trim().replace(/\s+/g, " ");
+        return normalizedCandidateName.toLocaleLowerCase().includes(lowerTargetName);
+      });
+
+      const fuzzyIndex = fuzzyMatches.indexOf(el);
+      return fuzzyIndex === -1 ? null : fuzzyIndex;
+    } catch (e) {
+      console.warn("[DOMParser] Fuzzy role name index check failed", e);
+      return null;
+    }
   }
 
   isUniqueIonButtonText(el, text, container) {
@@ -646,9 +668,7 @@ export class DOMParserService {
     const value = id.trim();
     if (!value) return false;
 
-// ==========================================
-    // 1. 瑼Ｘ?摰儔 Excel 閬???憒?憭??亥身摰?
-    // ==========================================
+
     for (const pattern of this.customDynamicIdPatterns) {
       if (pattern.test(value)) {
         console.log(`[DOMParser] ??啁泵?摰儔(Excel)閬?????ID: ${value}`);
@@ -656,26 +676,11 @@ export class DOMParserService {
       }
     }
 
-    // ==========================================
-    // 2. 瑼Ｘ???砌??貉?撣貉?獢???? ID ?孵噩
-    // ==========================================
-    
-    // ?凋?蝣?(憒? ihim, iiq4k)
     const grapesLikeId = /^i[a-z0-9]{3,5}$/i;
-
-    // Ionic 獢
     const ionicGeneratedId = /^ion-(input|textarea|select|checkbox|radio|toggle|range|datetime)-\d+(-lbl)?$/i;
-
-    // 撣貉? UUID (憒? 123e4567-e89b-12d3-a456-426614174000)
     const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-    // ?? Hash ?Ｙ??鈭Ⅳ
     const hashLike = /^[a-z0-9_-]{10,}$/i;
-
-    // 撣貉??曆誨 UI 獢 (MUI, Radix, Chakra, Element Plus 蝑? ?Ｙ??葆?詨? ID
     const frameworkDynamic = /^(mui-|radix-|chakra-|el-|headlessui-|rc-tabs-).*\d+.*$/i;
-
-    // 蝝摮?ID (敺??頂蝯望???銵典??亦鞈?摨急?瘞渲???ID嚗扔銝帘摰?
     const pureNumbers = /^\d+$/;
 
     return (

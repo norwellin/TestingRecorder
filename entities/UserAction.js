@@ -5,6 +5,8 @@ export class UserAction {
     this.target = target;
     this.sourceWindow = sourceWindow;//存放變數名稱，main window無變數就叫window
     this.targetWindow = targetWindow;
+    this.sourceContext = null;
+    this.targetContext = null;
     this.sourceMethod = null;
     this.sourceData = null;
     this.sourceDomPathChain = [];
@@ -37,6 +39,12 @@ export class UserAction {
   }
   setTargetWindow(targetWindow){
     this.targetWindow = targetWindow;
+  }
+  setSourceContext(sourceContext){
+    this.sourceContext = sourceContext || null;
+  }
+  setTargetContext(targetContext){
+    this.targetContext = targetContext || null;
   }
   setSourceMethod(sourceMethod){
     this.sourceMethod = sourceMethod;
@@ -73,6 +81,12 @@ export class UserAction {
   }
   getTargetWindow(){
     return this.targetWindow;
+  }
+  getSourceContext(){
+    return this.sourceContext;
+  }
+  getTargetContext(){
+    return this.targetContext;
   }
   getSourceMethod(){
     return this.sourceMethod;

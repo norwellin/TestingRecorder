@@ -131,7 +131,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         codeBody,
         fullCode
       });
-      
+      // 🚨 【必須新增這段】在這裡統一廣播最新的「完整總表」給 UI 面板顯示
+      chrome.runtime.sendMessage({
+        type: "RECORDER_ACTIONS_UPDATE",
+        action: currentAction
+      }).catch(() => {});
+
+      chrome.runtime.sendMessage({
+        type: "RECORDER_CODE_UPDATE",
+        code: fullCode
+      }).catch(() => {});
       sendResponse({ ok: true });
       return;
     }

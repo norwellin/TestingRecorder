@@ -12,6 +12,7 @@ export class ContextScanner {
     this.rootDocument = resolvedRoot.document;
     this.rootWindow = resolvedRoot.window;
     this.contextCounter = 0;
+    this.iframePathMap = new Map();
   }
 
   async scanAllContextsAsync() {
@@ -166,35 +167,51 @@ export class ContextScanner {
       if (globalThis.CSS?.escape) return globalThis.CSS.escape(value);
       return String(value).replace(/"/g, '\\"');
     };
+    const uniqueFrameSelector = (selector) => {
+      if (!selector) return null;
+      try {
+        const root = frameEl.ownerDocument || this.rootDocument;
+        const matches = Array.from(root.querySelectorAll(selector));
+        return matches.length === 1 && matches[0] === frameEl ? selector : null;
+      } catch (error) {
+        return null;
+      }
+    };
 
     const tagName = (frameEl.tagName || 'iframe').toLowerCase();
 
     if (frameEl.id) {
-      return `${tagName}#${escapeCss(frameEl.id)}`;
+      const selector = uniqueFrameSelector(`${tagName}#${escapeCss(frameEl.id)}`);
+      if (selector) return selector;
     }
 
     if (frameEl.name) {
-      return `${tagName}[name="${escapeCss(frameEl.name)}"]`;
+      const selector = uniqueFrameSelector(`${tagName}[name="${escapeCss(frameEl.name)}"]`);
+      if (selector) return selector;
     }
 
     const title = frameEl.getAttribute('title');
     if (title) {
-      return `${tagName}[title="${escapeCss(title)}"]`;
+      const selector = uniqueFrameSelector(`${tagName}[title="${escapeCss(title)}"]`);
+      if (selector) return selector;
     }
 
     const testId = frameEl.getAttribute('data-testid');
     if (testId) {
-      return `${tagName}[data-testid="${escapeCss(testId)}"]`;
+      const selector = uniqueFrameSelector(`${tagName}[data-testid="${escapeCss(testId)}"]`);
+      if (selector) return selector;
     }
 
     const containerSelector = this.buildStableAncestorSelector(frameEl);
     if (containerSelector) {
-      return `${containerSelector} ${tagName}`;
+      const selector = uniqueFrameSelector(`${containerSelector} ${tagName}`);
+      if (selector) return selector;
     }
 
     const src = frameEl.getAttribute('src');
     if (src) {
-      return `${tagName}[src="${escapeCss(src)}"]`;
+      const selector = uniqueFrameSelector(`${tagName}[src="${escapeCss(src)}"]`);
+      if (selector) return selector;
     }
 
     return `${tagName}:nth-of-type(${index + 1})`;
@@ -236,7 +253,7 @@ export class ContextScanner {
   }
 
   getStableDataAttributeSelector(element, tagName, escapeCss) {
-    const ignored = new Set(['style', 'class', 'id']);
+    const ignored = new Set(['style', 'class', 'id', 'data-gjs-type']);
     for (const attr of Array.from(element.attributes || [])) {
       if (!attr.name.startsWith('data-') || ignored.has(attr.name)) continue;
       if (!attr.value || this.isLikelyDynamicValue(attr.value)) continue;

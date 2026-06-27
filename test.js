@@ -143,8 +143,8 @@ document.addEventListener("DOMContentLoaded", async function () {
         const cell = createCell("", "action-element");
 
         if (action.type === "dragANDdrop") {
-            appendLabeledElement(cell, "來源", action.sourceData, action.sourceMethod, action.sourceDomPathOptions, index, "source");
-            appendLabeledElement(cell, "目標", action.targetData, action.targetMethod, action.targetDomPathOptions, index, "target");
+            appendLabeledElement(cell, "來源", action.sourceData, action.sourceMethod, action.sourceDomPathOptions, action.sourceDomPathChain, index, "source");
+            appendLabeledElement(cell, "目標", action.targetData, action.targetMethod, action.targetDomPathOptions, action.targetDomPathChain, index, "target");
             return cell;
         }
 
@@ -162,37 +162,63 @@ document.addEventListener("DOMContentLoaded", async function () {
                 action.triggerAction.sourceData || getActionValue(action.triggerAction),
                 action.triggerAction.sourceMethod,
                 null,
+                null,
                 index,
                 "source"
             );
             return cell;
         }
 
-        appendDomPathOrText(cell, action.sourceData || getActionValue(action), action.sourceMethod, action.sourceDomPathOptions, index, "source");
+        appendDomPathOrText(cell, action.sourceData || getActionValue(action), action.sourceMethod, action.sourceDomPathOptions, action.sourceDomPathChain, index, "source");
         return cell;
     }
 
-    function appendLabeledElement(parent, label, value, method, options, actionIndex, field) {
+    function appendLabeledElement(parent, label, value, method, options, chain, actionIndex, field) {
         const wrapper = document.createElement("div");
         const prefix = document.createElement("span");
         prefix.textContent = `${label}: `;
         wrapper.appendChild(prefix);
-        appendDomPathOrText(wrapper, value, method, options, actionIndex, field);
+        appendDomPathOrText(wrapper, value, method, options, chain, actionIndex, field);
         parent.appendChild(wrapper);
     }
 
-    function appendDomPathOrText(parent, value, method, options, actionIndex, field) {
+    function formatDomPathParts(path, chain = []) {
+        const hostChain = Array.isArray(chain)
+            ? chain.map(step => step?.hostSelector).filter(Boolean)
+            : [];
+
+        return [...hostChain, path].filter(Boolean).join(" >> ");
+    }
+
+    function formatDomPathOption(option, fallbackChain = []) {
+        if (typeof option === "string") return formatDomPathParts(option, fallbackChain);
+
+        const chain = Array.isArray(option?.shadowChain)
+            ? option.shadowChain.map(step => step?.hostSelector).filter(Boolean)
+            : [];
+
+        return [...chain, option?.path].filter(Boolean).join(" >> ");
+    }
+
+    function sameDomPathChain(left = [], right = []) {
+        const leftSelectors = Array.isArray(left) ? left.map(step => step?.hostSelector).filter(Boolean) : [];
+        const rightSelectors = Array.isArray(right) ? right.map(step => step?.hostSelector).filter(Boolean) : [];
+        return leftSelectors.join("\n") === rightSelectors.join("\n");
+    }
+
+    function appendDomPathOrText(parent, value, method, options, chain, actionIndex, field) {
         if (method === "ByDomPath" && Array.isArray(options) && options.length) {
             const select = document.createElement("select");
             select.className = "dompath-select";
             options.forEach((option, optionIndex) => {
                 const path = typeof option === "string" ? option : option.path;
+                const optionChain = typeof option === "string" ? [] : option?.shadowChain || [];
                 if (!path) return;
 
                 const item = document.createElement("option");
                 item.value = String(optionIndex);
-                item.textContent = `${optionIndex + 1}. ${path}`;
-                item.selected = path === value;
+                item.textContent = `${optionIndex + 1}. ${formatDomPathOption(option, chain)}`;
+                item.selected = path === value && sameDomPathChain(optionChain, chain);
                 select.appendChild(item);
             });
 
@@ -215,7 +241,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
 
         const span = document.createElement("span");
-        span.textContent = value || "";
+        span.textContent = method === "ByDomPath" ? formatDomPathParts(value, chain) : value || "";
         parent.appendChild(span);
     }
 
@@ -413,12 +439,12 @@ document.addEventListener("DOMContentLoaded", async function () {
         const escapedOldPath = escapePathForCode(oldPath);
         const escapedNewPath = escapePathForCode(newPath);
         const hasShadowChain = Array.isArray(newChain) && newChain.length > 0;
+        const dragIndex = line.includes(".dragTo(") ? line.indexOf(".dragTo(") : -1;
 
         if (hasShadowChain) {
             const locatorChain = buildDomPathLocatorChain(newPath, newChain);
 
-            if (line.includes(".dragTo(")) {
-                const dragIndex = line.indexOf(".dragTo(");
+            if (dragIndex >= 0) {
                 if (field === "source") {
                     return replaceLastLocatorChain(line.slice(0, dragIndex), locatorChain) + line.slice(dragIndex);
                 }
@@ -428,16 +454,16 @@ document.addEventListener("DOMContentLoaded", async function () {
             return replaceLastLocatorChain(line, locatorChain);
         }
 
+        if (dragIndex >= 0) {
+            const locatorChain = `.locator("${escapedNewPath}")`;
+            if (field === "source") {
+                return replaceLastLocatorChain(line.slice(0, dragIndex), locatorChain) + line.slice(dragIndex);
+            }
+            return line.slice(0, dragIndex) + replaceLastLocatorChain(line.slice(dragIndex), locatorChain);
+        }
+
         if (escapedOldPath && line.includes(escapedOldPath)) {
             return line.replace(escapedOldPath, escapedNewPath);
-        }
-
-        if (field === "target" && line.includes(".dragTo(")) {
-            return line.replace(/(\.dragTo\([\s\S]*?locator\(")([^"]*)("\))/, `$1${escapedNewPath}$3`);
-        }
-
-        if (field === "source" && line.includes(".dragTo(")) {
-            return line.replace(/^(.*?locator\(")([^"]*)("\)[\s\S]*?\.dragTo\([\s\S]*)$/, `$1${escapedNewPath}$3`);
         }
 
         return replaceLastLocatorPath(line, escapedNewPath);

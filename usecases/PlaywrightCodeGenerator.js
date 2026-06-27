@@ -21,6 +21,7 @@ export class PlaywrightCodeGenerator {
       return null;
     }
     console.log("Generating code for action: ", action);
+    this.mergeActionContextSnapshots(action);
 
     // ==========================================
     // A. 處理無 DOM 元素的環境級別動作 (新架構新增)
@@ -93,6 +94,15 @@ export class PlaywrightCodeGenerator {
     // B. 處理基於 DOM 的互動動作
     // ==========================================
     let sourcepath = action.preParsedSourcePath || null;
+    console.log("[RecorderDebug][CodeGenerator generate] initial source path", {
+      actionType: action.type,
+      sourceWindow: action.sourceWindow,
+      hasPreParsedSourcePath: !!action.preParsedSourcePath,
+      preParsedSummary: this.summarizeDebugSourcePath(action.preParsedSourcePath),
+      sourceElement: this.describeDebugElement(
+        typeof action.getSourceElement === 'function' ? action.getSourceElement() : null
+      )
+    });
     let targetpath = null;
     let inputText = action.inputText || "default";
     let inputKey = action.keyboard || "default";
@@ -105,10 +115,20 @@ export class PlaywrightCodeGenerator {
        // 【🌟 核心修改 🌟】
        // 判斷是否需要重新解析 source：如果預解析沒拿到東西，才去解析
        const needsSourceParsing = !sourcepath || (Array.isArray(sourcepath) && sourcepath[0] === null);
+       console.log("[RecorderDebug][CodeGenerator generate] parse decision", {
+         actionType: action.type,
+         hasSourcePath: !!sourcepath,
+         needsSourceParsing,
+         currentSourcePathSummary: this.summarizeDebugSourcePath(sourcepath)
+       });
        
        if (needsSourceParsing && action.getSourceElement()) {
            // 只有一般動作 (click, input) 或是 dragStart 漏抓，才會進來這裡
            sourcepath = this.domService.getOpenSourcePath(action.getSourceElement(), action.getSourceWindow(), action.type);
+           console.log("[RecorderDebug][CodeGenerator generate] reparsed source path", {
+             actionType: action.type,
+             sourcePathSummary: this.summarizeDebugSourcePath(sourcepath)
+           });
        }
        
        // 【解析 target】 (Drop 的目標在放開滑鼠當下是活著的，所以現場解析沒問題)
@@ -157,6 +177,12 @@ export class PlaywrightCodeGenerator {
       sourcepath,
       generatedCode
     });
+    console.log("[RecorderDebug][CodeGenerator generate] final", {
+      actionType: action.type,
+      sourceWindow,
+      sourcePathSummary: this.summarizeDebugSourcePath(sourcepath),
+      generatedCode
+    });
 
     return generatedCode;
   }
@@ -166,6 +192,46 @@ export class PlaywrightCodeGenerator {
   // ==========================================
 
   // 從解析結果中挑出權重最高(最優先)的 Selector 方法
+  summarizeDebugSourcePath(sourcePath) {
+    if (!sourcePath) return null;
+
+    const summary = {};
+    Object.keys(sourcePath).forEach((key) => {
+      const item = sourcePath[key];
+      if (!item) return;
+      summary[key] = {
+        funName: item.funName,
+        csspath: item.obj?.csspath || null,
+        shadowChain: item.obj?.shadowChain || [],
+        options: Array.isArray(item.obj?.options)
+          ? item.obj.options.map(option => ({
+              path: option.path,
+              shadowChain: option.shadowChain || [],
+              score: option.score,
+              U: option.U
+            }))
+          : []
+      };
+    });
+    return summary;
+  }
+
+  describeDebugElement(element) {
+    if (!element || element.nodeType !== 1) return String(element);
+
+    const attrs = {};
+    ["id", "class", "type", "part", "tab", "value", "data-gjs-type", "role", "aria-label"].forEach((name) => {
+      const value = element.getAttribute?.(name);
+      if (value !== null && value !== undefined && value !== "") attrs[name] = value;
+    });
+
+    return {
+      tagName: element.tagName,
+      attrs,
+      text: (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80)
+    };
+  }
+
   _getBestPath(paths) {
     if (!paths) return null;
     for (let i = 0; i < this.domService.priSize; i++) {
@@ -187,6 +253,20 @@ export class PlaywrightCodeGenerator {
   // 3. 解析 ContextId 為 Playwright 的操作變數前綴
   // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
 
+mergeActionContextSnapshots(action) {
+    [action?.sourceContext, action?.targetContext].forEach(snapshot => {
+      if (!snapshot?.contextId) return;
+      const existing = this.contextMap.get(snapshot.contextId) || {};
+      this.contextMap.set(snapshot.contextId, {
+        ...existing,
+        ...snapshot,
+        frameElement: existing.frameElement || null,
+        windowRef: existing.windowRef || null,
+        documentRef: existing.documentRef || null
+      });
+    });
+}
+
 _getContextPrefix(winVar) {
     const context = this.contextMap.get(winVar);
     console.log("[Debug PlaywrightCodeGenerator] _getContextPrefix", {
@@ -198,7 +278,7 @@ _getContextPrefix(winVar) {
         url: context?.url || null
     });
     if (context?.type === 'iframe') {
-        if (this._isUsableIframeContext(context)) {
+        if (this._isUsableIframeContext(context) || context.frameSelector) {
             return this._buildFrameLocatorChain(context);
         }
 
@@ -263,7 +343,7 @@ setContexts(contexts = [], rootAlias = this.pageAlias) {
       let current = context;
 
       while (current?.type === 'iframe') {
-          if (!this._isUsableIframeContext(current)) {
+          if (!this._isUsableIframeContext(current) && !current.frameSelector) {
               console.warn("[PlaywrightCodeGenerator] skipped unusable iframe context in locator chain", {
                   contextId: current.contextId,
                   parentContextId: current.parentContextId,
@@ -289,7 +369,7 @@ setContexts(contexts = [], rootAlias = this.pageAlias) {
           }))
       });
       chain.forEach(frameContext => {
-          const selector = this._frameSelectorToLocatorSelector(frameContext.frameSelector);
+          const selector = this._frameSelectorToLocatorSelector(frameContext);
           console.log("[Debug PlaywrightCodeGenerator] frame selector resolved", {
               contextId: frameContext.contextId,
               rawFrameSelector: frameContext.frameSelector,
@@ -329,9 +409,98 @@ setContexts(contexts = [], rootAlias = this.pageAlias) {
       return true;
   }
 
-  _frameSelectorToLocatorSelector(frameSelector) {
-      if (!frameSelector) return 'iframe';
-      return frameSelector;
+  _frameSelectorToLocatorSelector(frameContextOrSelector) {
+      if (typeof frameContextOrSelector === "string") return frameContextOrSelector || "iframe";
+
+      const context = frameContextOrSelector || {};
+      const frameElement = context.frameElement;
+      const rebuiltSelector = this._buildLiveFrameSelector(frameElement);
+
+      if (rebuiltSelector) return rebuiltSelector;
+
+      const snapshotSelector = this._buildSnapshotFrameSelector(context);
+      if (snapshotSelector) return snapshotSelector;
+
+      const frameSelector = context.frameSelector;
+      if (!frameSelector) return "iframe";
+
+      if (this._selectorTargetsFrameElement(frameSelector, frameElement, context.parentContextId)) {
+          return frameSelector;
+      }
+
+      const tagName = frameElement?.tagName?.toLowerCase?.();
+      if (/^\s*(iframe|frame)([#.\[:\s]|$)/i.test(frameSelector)) {
+          return frameSelector;
+      }
+      if (this._selectorResolvesToFrameElement(frameSelector, context.parentContextId)) {
+          return frameSelector;
+      }
+      if (tagName === "iframe" || tagName === "frame") {
+          return `${frameSelector} ${tagName}`;
+      }
+
+      return `${frameSelector} iframe`;
+  }
+
+  _buildLiveFrameSelector(frameElement) {
+      const tagName = frameElement?.tagName?.toLowerCase?.();
+      if (tagName !== "iframe" && tagName !== "frame") return "";
+
+      const escapeCss = (value) => {
+          if (globalThis.CSS?.escape) return globalThis.CSS.escape(value);
+          return String(value).replace(/"/g, '\\"');
+      };
+
+      if (frameElement.id) return `${tagName}#${escapeCss(frameElement.id)}`;
+      if (frameElement.name) return `${tagName}[name="${escapeCss(frameElement.name)}"]`;
+
+      const title = frameElement.getAttribute?.("title");
+      if (title) return `${tagName}[title="${escapeCss(title)}"]`;
+
+      const testId = frameElement.getAttribute?.("data-testid");
+      if (testId) return `${tagName}[data-testid="${escapeCss(testId)}"]`;
+
+      return "";
+  }
+
+  _buildSnapshotFrameSelector(context) {
+      const escapeCss = (value) => {
+          if (globalThis.CSS?.escape) return globalThis.CSS.escape(value);
+          return String(value).replace(/"/g, '\\"');
+      };
+
+      if (context?.frameId) return `iframe#${escapeCss(context.frameId)}`;
+      if (context?.frameName) return `iframe[name="${escapeCss(context.frameName)}"]`;
+      if (context?.frameTitle) return `iframe[title="${escapeCss(context.frameTitle)}"]`;
+      if (context?.frameSrc) return `iframe[src="${escapeCss(context.frameSrc)}"]`;
+      return "";
+  }
+
+  _selectorTargetsFrameElement(selector, frameElement, parentContextId) {
+      if (!selector || !frameElement) return false;
+
+      try {
+          const parentDoc = this.contextMap.get(parentContextId)?.documentRef || frameElement.ownerDocument;
+          const matches = Array.from(parentDoc.querySelectorAll(selector));
+          return matches.length === 1 && matches[0] === frameElement;
+      } catch (error) {
+          return false;
+      }
+  }
+
+  _selectorResolvesToFrameElement(selector, parentContextId) {
+      if (!selector) return false;
+
+      try {
+          const parentDoc = this.contextMap.get(parentContextId)?.documentRef;
+          if (!parentDoc) return false;
+          const matches = Array.from(parentDoc.querySelectorAll(selector));
+          if (matches.length !== 1) return false;
+          const tagName = matches[0]?.tagName?.toLowerCase?.();
+          return tagName === "iframe" || tagName === "frame";
+      } catch (error) {
+          return false;
+      }
   }
 
 declareContexts(contexts, rootAlias) {
@@ -437,8 +606,9 @@ declareContexts(contexts, rootAlias) {
     const bestTar = this._getBestPath(targetpath);
     if (!bestSou || !bestTar) return null;
 
-    const souWinPrefix = this._getContextPrefix(sourceWindow);
-    const tarWinPrefix = this._getContextPrefix(targetWindow);
+    this.mergeActionContextSnapshots(action);
+    const souWinPrefix = this._getActionContextPrefix(action, "source", sourceWindow);
+    const tarWinPrefix = this._getActionContextPrefix(action, "target", targetWindow);
 
     const souLocator = this._buildLocatorString(souWinPrefix, bestSou);
     const tarLocator = this._buildLocatorString(tarWinPrefix, bestTar);
@@ -447,6 +617,12 @@ declareContexts(contexts, rootAlias) {
     this.updateUserActionDB(action, bestTar.funName, bestTar.obj, "target");
 
     return `await ${souLocator}.dragTo(${tarLocator});`;
+  }
+
+  _getActionContextPrefix(action, field, fallbackContextId) {
+    const context = field === "target" ? action?.targetContext : action?.sourceContext;
+    if (context?.contextId) return this._getContextPrefix(context.contextId);
+    return this._getContextPrefix(fallbackContextId);
   }
 
   clickSetter(action, sourcepath, sourceWindow) {
@@ -523,6 +699,14 @@ declareContexts(contexts, rootAlias) {
         action.targetDomPathChain = obj.shadowChain || [];
         action.targetDomPathOptions = Array.isArray(obj.options) ? obj.options : [];
       }
+      console.log("[RecorderDebug][CodeGenerator updateUserActionDB] target stored", {
+        actionType: action.type,
+        funName,
+        data,
+        csspath: obj.csspath,
+        shadowChain: obj.shadowChain || [],
+        options: obj.options || []
+      });
     } else {
       action.setSourceMethod(funName);
       action.setSourceData(data);
@@ -530,6 +714,14 @@ declareContexts(contexts, rootAlias) {
         action.sourceDomPathChain = obj.shadowChain || [];
         action.sourceDomPathOptions = Array.isArray(obj.options) ? obj.options : [];
       }
+      console.log("[RecorderDebug][CodeGenerator updateUserActionDB] source stored", {
+        actionType: action.type,
+        funName,
+        data,
+        csspath: obj.csspath,
+        shadowChain: obj.shadowChain || [],
+        options: obj.options || []
+      });
     }
   }
 

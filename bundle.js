@@ -1,4 +1,5 @@
-(() => {
+﻿(() => {
+  window.global ||= window;
   var __create = Object.create;
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -10060,9 +10061,6 @@
     }
   });
 
-  // source/browserGlobalShim.js
-  globalThis.global ||= globalThis;
-
   // ContextLifecycle/ContextScanner.js
   var ContextScanner = class {
     constructor(rootDoc = document, rootWin = window, options = {}) {
@@ -10077,6 +10075,7 @@
       this.rootDocument = resolvedRoot.document;
       this.rootWindow = resolvedRoot.window;
       this.contextCounter = 0;
+      this.iframePathMap = /* @__PURE__ */ new Map();
     }
     async scanAllContextsAsync() {
       if (this.options.waitForDynamicFrames) {
@@ -10198,28 +10197,44 @@
         if (globalThis.CSS?.escape) return globalThis.CSS.escape(value);
         return String(value).replace(/"/g, '\\"');
       };
+      const uniqueFrameSelector = (selector2) => {
+        if (!selector2) return null;
+        try {
+          const root = frameEl.ownerDocument || this.rootDocument;
+          const matches2 = Array.from(root.querySelectorAll(selector2));
+          return matches2.length === 1 && matches2[0] === frameEl ? selector2 : null;
+        } catch (error) {
+          return null;
+        }
+      };
       const tagName2 = (frameEl.tagName || "iframe").toLowerCase();
       if (frameEl.id) {
-        return `${tagName2}#${escapeCss(frameEl.id)}`;
+        const selector2 = uniqueFrameSelector(`${tagName2}#${escapeCss(frameEl.id)}`);
+        if (selector2) return selector2;
       }
       if (frameEl.name) {
-        return `${tagName2}[name="${escapeCss(frameEl.name)}"]`;
+        const selector2 = uniqueFrameSelector(`${tagName2}[name="${escapeCss(frameEl.name)}"]`);
+        if (selector2) return selector2;
       }
       const title = frameEl.getAttribute("title");
       if (title) {
-        return `${tagName2}[title="${escapeCss(title)}"]`;
+        const selector2 = uniqueFrameSelector(`${tagName2}[title="${escapeCss(title)}"]`);
+        if (selector2) return selector2;
       }
       const testId = frameEl.getAttribute("data-testid");
       if (testId) {
-        return `${tagName2}[data-testid="${escapeCss(testId)}"]`;
+        const selector2 = uniqueFrameSelector(`${tagName2}[data-testid="${escapeCss(testId)}"]`);
+        if (selector2) return selector2;
       }
       const containerSelector = this.buildStableAncestorSelector(frameEl);
       if (containerSelector) {
-        return `${containerSelector} ${tagName2}`;
+        const selector2 = uniqueFrameSelector(`${containerSelector} ${tagName2}`);
+        if (selector2) return selector2;
       }
       const src = frameEl.getAttribute("src");
       if (src) {
-        return `${tagName2}[src="${escapeCss(src)}"]`;
+        const selector2 = uniqueFrameSelector(`${tagName2}[src="${escapeCss(src)}"]`);
+        if (selector2) return selector2;
       }
       return `${tagName2}:nth-of-type(${index + 1})`;
     }
@@ -10251,7 +10266,7 @@
       return null;
     }
     getStableDataAttributeSelector(element, tagName2, escapeCss) {
-      const ignored = /* @__PURE__ */ new Set(["style", "class", "id"]);
+      const ignored = /* @__PURE__ */ new Set(["style", "class", "id", "data-gjs-type"]);
       for (const attr2 of Array.from(element.attributes || [])) {
         if (!attr2.name.startsWith("data-") || ignored.has(attr2.name)) continue;
         if (!attr2.value || this.isLikelyDynamicValue(attr2.value)) continue;
@@ -10544,8 +10559,10 @@
         dragSession: {
           isDragging: false,
           sourceContextId: null,
+          sourceContext: null,
           sourceElementInfo: null,
           targetContextId: null,
+          targetContext: null,
           targetElementInfo: null
         },
         // popup 狀態
@@ -10712,21 +10729,24 @@
     }
     // ===== Drag session =====
     // 修改 RecorderStore.js
-    startDragSession({ sourceContextId = null, sourceElementInfo = null, sourcePath = null } = {}) {
+    startDragSession({ sourceContextId = null, sourceContext = null, sourceElementInfo = null, sourcePath = null } = {}) {
       this.state.dragSession = {
         isDragging: true,
         sourceContextId,
+        sourceContext,
         sourceElementInfo,
         sourcePath,
         // <=== 必須新增這一行，把解析好的路徑存起來！
         targetContextId: null,
+        targetContext: null,
         targetElementInfo: null
       };
       this.notify();
     }
-    updateDragTarget({ targetContextId = null, targetElementInfo = null } = {}) {
+    updateDragTarget({ targetContextId = null, targetContext = null, targetElementInfo = null } = {}) {
       if (!this.state.dragSession.isDragging) return;
       this.state.dragSession.targetContextId = targetContextId;
+      this.state.dragSession.targetContext = targetContext;
       this.state.dragSession.targetElementInfo = targetElementInfo;
       this.notify();
     }
@@ -10738,8 +10758,10 @@
       this.state.dragSession = {
         isDragging: false,
         sourceContextId: null,
+        sourceContext: null,
         sourceElementInfo: null,
         targetContextId: null,
+        targetContext: null,
         targetElementInfo: null
       };
       this.notify();
@@ -10770,8 +10792,10 @@
       this.state.dragSession = {
         isDragging: false,
         sourceContextId: null,
+        sourceContext: null,
         sourceElementInfo: null,
         targetContextId: null,
+        targetContext: null,
         targetElementInfo: null
       };
       this.state.pendingPopup = null;
@@ -16190,14 +16214,13 @@
       const realRoot = e.getRootNode();
       const isElementInDocument = ownerDoc?.contains(e) || realRoot?.host && ownerDoc?.contains(realRoot.host);
       if (!ownerDoc || !isElementInDocument) {
-        console.warn("[DOMParser] ?\uF077?\u648C\u8116??\u51BD?\u6485\u7949??\uF2E8\u8FA3\u929D\u54E8??\uE91C\u5CAB\u95AB??\u61AD\u671B?", e);
         return null;
       }
-      console.log("[Debug DOMParser] \u7507?\uEBED\u95AB???\uF077?:", e);
       this.cleanInfo();
       this.setInfo(e);
       this.clearPlaywrightObj();
       const shadowChain = this.getShadowChain(e);
+      console.log("[Shadow chain info: ]", e, shadowChain);
       let isUniqueObj = { ByRole: false, ByTitle: false, ByDomPath: false, ByText: false };
       const cssatt = ["id", "attribute", "class", "tag", "nthchild"];
       const optPri = ["id", "data-testid", "data-thread-id", "data-action", "class", "name", "placeholder", "href", "src"];
@@ -16519,6 +16542,7 @@
           this.playwrightObj.ByRole.name = name2;
           this.playwrightObj.ByRole.role = "button";
           this.playwrightObj.ByRole.exact = false;
+          this.playwrightObj.ByRole.index = this.getFuzzyRoleNameIndex(el, "button", name2, container);
           return true;
         }
       }
@@ -16537,10 +16561,14 @@
         const matches2 = queryAllByRoleWithSuggestions(container, role, options);
         const index = matches2.indexOf(el);
         if (index !== -1) {
+          const hasIconRisk = this.hasGeneratedIconNameRisk(el);
           this.playwrightObj.ByRole.index = index;
           this.playwrightObj.ByRole.name = name || null;
           this.playwrightObj.ByRole.role = role;
-          this.playwrightObj.ByRole.exact = !this.hasGeneratedIconNameRisk(el);
+          this.playwrightObj.ByRole.exact = !hasIconRisk;
+          if (hasIconRisk) {
+            this.playwrightObj.ByRole.index = this.getFuzzyRoleNameIndex(el, role, name, container);
+          }
           return true;
         }
         return false;
@@ -16567,8 +16595,31 @@
     }
     hasGeneratedIconNameRisk(el) {
       return !!el.querySelector?.(
-        'i[class*="fa"], span[class*="fa-"], [class*="material-icons"], [class*="icon-"]'
+        'i[class*="fa"], span[class*="fa-"], [class*="glyphicon"], [class*="material-icons"], [class*="icon-"]'
       );
+    }
+    getFuzzyRoleNameIndex(el, role, name, container) {
+      const targetName = String(name || "").trim().replace(/\s+/g, " ");
+      if (!targetName) return null;
+      try {
+        const lowerTargetName = targetName.toLocaleLowerCase();
+        const roleMatches = queryAllByRoleWithSuggestions(container, role);
+        const fuzzyMatches2 = roleMatches.filter((candidate) => {
+          let candidateName = "";
+          try {
+            candidateName = computeAccessibleName2(candidate);
+          } catch (e) {
+            return false;
+          }
+          const normalizedCandidateName = String(candidateName || "").trim().replace(/\s+/g, " ");
+          return normalizedCandidateName.toLocaleLowerCase().includes(lowerTargetName);
+        });
+        const fuzzyIndex = fuzzyMatches2.indexOf(el);
+        return fuzzyIndex === -1 ? null : fuzzyIndex;
+      } catch (e) {
+        console.warn("[DOMParser] Fuzzy role name index check failed", e);
+        return null;
+      }
     }
     isUniqueIonButtonText(el, text, container) {
       if (el.tagName !== "ION-BUTTON") return false;
@@ -16729,6 +16780,7 @@
         return null;
       }
       console.log("Generating code for action: ", action);
+      this.mergeActionContextSnapshots(action);
       if (action.type === "navigate") {
         return `await page.goto('${action.url}');`;
       }
@@ -16782,14 +16834,33 @@
         return `const ${popupName} = await ${this.pageAlias}.waitForEvent('popup');`;
       }
       let sourcepath = action.preParsedSourcePath || null;
+      console.log("[RecorderDebug][CodeGenerator generate] initial source path", {
+        actionType: action.type,
+        sourceWindow: action.sourceWindow,
+        hasPreParsedSourcePath: !!action.preParsedSourcePath,
+        preParsedSummary: this.summarizeDebugSourcePath(action.preParsedSourcePath),
+        sourceElement: this.describeDebugElement(
+          typeof action.getSourceElement === "function" ? action.getSourceElement() : null
+        )
+      });
       let targetpath = null;
       let inputText = action.inputText || "default";
       let inputKey = action.keyboard || "default";
       let selectValue = action.selectedValue || "default";
       if (typeof action.getSourceElement === "function") {
         const needsSourceParsing = !sourcepath || Array.isArray(sourcepath) && sourcepath[0] === null;
+        console.log("[RecorderDebug][CodeGenerator generate] parse decision", {
+          actionType: action.type,
+          hasSourcePath: !!sourcepath,
+          needsSourceParsing,
+          currentSourcePathSummary: this.summarizeDebugSourcePath(sourcepath)
+        });
         if (needsSourceParsing && action.getSourceElement()) {
           sourcepath = this.domService.getOpenSourcePath(action.getSourceElement(), action.getSourceWindow(), action.type);
+          console.log("[RecorderDebug][CodeGenerator generate] reparsed source path", {
+            actionType: action.type,
+            sourcePathSummary: this.summarizeDebugSourcePath(sourcepath)
+          });
         }
         if (action.type === "dragANDdrop" && typeof action.getTargetElement === "function" && action.getTargetElement()) {
           targetpath = this.domService.getOpenSourcePath(action.getTargetElement(), action.getTargetWindow());
@@ -16829,12 +16900,51 @@
         sourcepath,
         generatedCode
       });
+      console.log("[RecorderDebug][CodeGenerator generate] final", {
+        actionType: action.type,
+        sourceWindow,
+        sourcePathSummary: this.summarizeDebugSourcePath(sourcepath),
+        generatedCode
+      });
       return generatedCode;
     }
     // ==========================================
     // 以下為具體的生成與組裝邏輯 Helper
     // ==========================================
     // 從解析結果中挑出權重最高(最優先)的 Selector 方法
+    summarizeDebugSourcePath(sourcePath) {
+      if (!sourcePath) return null;
+      const summary = {};
+      Object.keys(sourcePath).forEach((key) => {
+        const item = sourcePath[key];
+        if (!item) return;
+        summary[key] = {
+          funName: item.funName,
+          csspath: item.obj?.csspath || null,
+          shadowChain: item.obj?.shadowChain || [],
+          options: Array.isArray(item.obj?.options) ? item.obj.options.map((option) => ({
+            path: option.path,
+            shadowChain: option.shadowChain || [],
+            score: option.score,
+            U: option.U
+          })) : []
+        };
+      });
+      return summary;
+    }
+    describeDebugElement(element) {
+      if (!element || element.nodeType !== 1) return String(element);
+      const attrs = {};
+      ["id", "class", "type", "part", "tab", "value", "data-gjs-type", "role", "aria-label"].forEach((name) => {
+        const value = element.getAttribute?.(name);
+        if (value !== null && value !== void 0 && value !== "") attrs[name] = value;
+      });
+      return {
+        tagName: element.tagName,
+        attrs,
+        text: (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80)
+      };
+    }
     _getBestPath(paths) {
       if (!paths) return null;
       for (let i = 0; i < this.domService.priSize; i++) {
@@ -16852,6 +16962,19 @@
     // 3. 解析 ContextId 為 Playwright 的操作變數前綴
     // 3. 解析 ContextId 為 Playwright 的操作變數前綴
     // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    mergeActionContextSnapshots(action) {
+      [action?.sourceContext, action?.targetContext].forEach((snapshot) => {
+        if (!snapshot?.contextId) return;
+        const existing = this.contextMap.get(snapshot.contextId) || {};
+        this.contextMap.set(snapshot.contextId, {
+          ...existing,
+          ...snapshot,
+          frameElement: existing.frameElement || null,
+          windowRef: existing.windowRef || null,
+          documentRef: existing.documentRef || null
+        });
+      });
+    }
     _getContextPrefix(winVar) {
       const context = this.contextMap.get(winVar);
       console.log("[Debug PlaywrightCodeGenerator] _getContextPrefix", {
@@ -16863,7 +16986,7 @@
         url: context?.url || null
       });
       if (context?.type === "iframe") {
-        if (this._isUsableIframeContext(context)) {
+        if (this._isUsableIframeContext(context) || context.frameSelector) {
           return this._buildFrameLocatorChain(context);
         }
         console.warn("[PlaywrightCodeGenerator] iframe context is stale or mismatched; falling back to parent context", {
@@ -16910,7 +17033,7 @@
       const chain = [];
       let current = context;
       while (current?.type === "iframe") {
-        if (!this._isUsableIframeContext(current)) {
+        if (!this._isUsableIframeContext(current) && !current.frameSelector) {
           console.warn("[PlaywrightCodeGenerator] skipped unusable iframe context in locator chain", {
             contextId: current.contextId,
             parentContextId: current.parentContextId,
@@ -16935,7 +17058,7 @@
         }))
       });
       chain.forEach((frameContext) => {
-        const selector2 = this._frameSelectorToLocatorSelector(frameContext.frameSelector);
+        const selector2 = this._frameSelectorToLocatorSelector(frameContext);
         console.log("[Debug PlaywrightCodeGenerator] frame selector resolved", {
           contextId: frameContext.contextId,
           rawFrameSelector: frameContext.frameSelector,
@@ -16966,9 +17089,79 @@
       }
       return true;
     }
-    _frameSelectorToLocatorSelector(frameSelector) {
+    _frameSelectorToLocatorSelector(frameContextOrSelector) {
+      if (typeof frameContextOrSelector === "string") return frameContextOrSelector || "iframe";
+      const context = frameContextOrSelector || {};
+      const frameElement = context.frameElement;
+      const rebuiltSelector = this._buildLiveFrameSelector(frameElement);
+      if (rebuiltSelector) return rebuiltSelector;
+      const snapshotSelector = this._buildSnapshotFrameSelector(context);
+      if (snapshotSelector) return snapshotSelector;
+      const frameSelector = context.frameSelector;
       if (!frameSelector) return "iframe";
-      return frameSelector;
+      if (this._selectorTargetsFrameElement(frameSelector, frameElement, context.parentContextId)) {
+        return frameSelector;
+      }
+      const tagName2 = frameElement?.tagName?.toLowerCase?.();
+      if (/^\s*(iframe|frame)([#.\[:\s]|$)/i.test(frameSelector)) {
+        return frameSelector;
+      }
+      if (this._selectorResolvesToFrameElement(frameSelector, context.parentContextId)) {
+        return frameSelector;
+      }
+      if (tagName2 === "iframe" || tagName2 === "frame") {
+        return `${frameSelector} ${tagName2}`;
+      }
+      return `${frameSelector} iframe`;
+    }
+    _buildLiveFrameSelector(frameElement) {
+      const tagName2 = frameElement?.tagName?.toLowerCase?.();
+      if (tagName2 !== "iframe" && tagName2 !== "frame") return "";
+      const escapeCss = (value) => {
+        if (globalThis.CSS?.escape) return globalThis.CSS.escape(value);
+        return String(value).replace(/"/g, '\\"');
+      };
+      if (frameElement.id) return `${tagName2}#${escapeCss(frameElement.id)}`;
+      if (frameElement.name) return `${tagName2}[name="${escapeCss(frameElement.name)}"]`;
+      const title = frameElement.getAttribute?.("title");
+      if (title) return `${tagName2}[title="${escapeCss(title)}"]`;
+      const testId = frameElement.getAttribute?.("data-testid");
+      if (testId) return `${tagName2}[data-testid="${escapeCss(testId)}"]`;
+      return "";
+    }
+    _buildSnapshotFrameSelector(context) {
+      const escapeCss = (value) => {
+        if (globalThis.CSS?.escape) return globalThis.CSS.escape(value);
+        return String(value).replace(/"/g, '\\"');
+      };
+      if (context?.frameId) return `iframe#${escapeCss(context.frameId)}`;
+      if (context?.frameName) return `iframe[name="${escapeCss(context.frameName)}"]`;
+      if (context?.frameTitle) return `iframe[title="${escapeCss(context.frameTitle)}"]`;
+      if (context?.frameSrc) return `iframe[src="${escapeCss(context.frameSrc)}"]`;
+      return "";
+    }
+    _selectorTargetsFrameElement(selector2, frameElement, parentContextId) {
+      if (!selector2 || !frameElement) return false;
+      try {
+        const parentDoc = this.contextMap.get(parentContextId)?.documentRef || frameElement.ownerDocument;
+        const matches2 = Array.from(parentDoc.querySelectorAll(selector2));
+        return matches2.length === 1 && matches2[0] === frameElement;
+      } catch (error) {
+        return false;
+      }
+    }
+    _selectorResolvesToFrameElement(selector2, parentContextId) {
+      if (!selector2) return false;
+      try {
+        const parentDoc = this.contextMap.get(parentContextId)?.documentRef;
+        if (!parentDoc) return false;
+        const matches2 = Array.from(parentDoc.querySelectorAll(selector2));
+        if (matches2.length !== 1) return false;
+        const tagName2 = matches2[0]?.tagName?.toLowerCase?.();
+        return tagName2 === "iframe" || tagName2 === "frame";
+      } catch (error) {
+        return false;
+      }
     }
     declareContexts(contexts, rootAlias) {
       this.setContexts(contexts, rootAlias);
@@ -17049,13 +17242,19 @@
       const bestSou = this._getBestPath(sourcepath);
       const bestTar = this._getBestPath(targetpath);
       if (!bestSou || !bestTar) return null;
-      const souWinPrefix = this._getContextPrefix(sourceWindow);
-      const tarWinPrefix = this._getContextPrefix(targetWindow);
+      this.mergeActionContextSnapshots(action);
+      const souWinPrefix = this._getActionContextPrefix(action, "source", sourceWindow);
+      const tarWinPrefix = this._getActionContextPrefix(action, "target", targetWindow);
       const souLocator = this._buildLocatorString(souWinPrefix, bestSou);
       const tarLocator = this._buildLocatorString(tarWinPrefix, bestTar);
       this.updateUserActionDB(action, bestSou.funName, bestSou.obj, "source");
       this.updateUserActionDB(action, bestTar.funName, bestTar.obj, "target");
       return `await ${souLocator}.dragTo(${tarLocator});`;
+    }
+    _getActionContextPrefix(action, field, fallbackContextId) {
+      const context = field === "target" ? action?.targetContext : action?.sourceContext;
+      if (context?.contextId) return this._getContextPrefix(context.contextId);
+      return this._getContextPrefix(fallbackContextId);
     }
     clickSetter(action, sourcepath, sourceWindow) {
       const best = this._getBestPath(sourcepath);
@@ -17113,6 +17312,14 @@
           action.targetDomPathChain = obj.shadowChain || [];
           action.targetDomPathOptions = Array.isArray(obj.options) ? obj.options : [];
         }
+        console.log("[RecorderDebug][CodeGenerator updateUserActionDB] target stored", {
+          actionType: action.type,
+          funName,
+          data,
+          csspath: obj.csspath,
+          shadowChain: obj.shadowChain || [],
+          options: obj.options || []
+        });
       } else {
         action.setSourceMethod(funName);
         action.setSourceData(data);
@@ -17120,6 +17327,14 @@
           action.sourceDomPathChain = obj.shadowChain || [];
           action.sourceDomPathOptions = Array.isArray(obj.options) ? obj.options : [];
         }
+        console.log("[RecorderDebug][CodeGenerator updateUserActionDB] source stored", {
+          actionType: action.type,
+          funName,
+          data,
+          csspath: obj.csspath,
+          shadowChain: obj.shadowChain || [],
+          options: obj.options || []
+        });
       }
     }
     static initListener() {
@@ -17140,6 +17355,8 @@
       this.target = target;
       this.sourceWindow = sourceWindow;
       this.targetWindow = targetWindow;
+      this.sourceContext = null;
+      this.targetContext = null;
       this.sourceMethod = null;
       this.sourceData = null;
       this.sourceDomPathChain = [];
@@ -17171,6 +17388,12 @@
     }
     setTargetWindow(targetWindow) {
       this.targetWindow = targetWindow;
+    }
+    setSourceContext(sourceContext) {
+      this.sourceContext = sourceContext || null;
+    }
+    setTargetContext(targetContext) {
+      this.targetContext = targetContext || null;
     }
     setSourceMethod(sourceMethod) {
       this.sourceMethod = sourceMethod;
@@ -17207,6 +17430,12 @@
     }
     getTargetWindow() {
       return this.targetWindow;
+    }
+    getSourceContext() {
+      return this.sourceContext;
+    }
+    getTargetContext() {
+      return this.targetContext;
     }
     getSourceMethod() {
       return this.sourceMethod;
@@ -17322,6 +17551,7 @@
       this.domParserService = domParserService;
       this.onActionRecorded = onActionRecorded;
       this.contextId = contexts?.contextId || "page";
+      this.contextSnapshot = contexts?.contextSnapshot || null;
       this.DOMElement = new DOMElement();
       this.currentHoveredElement = null;
       this.typedText = "";
@@ -17329,6 +17559,7 @@
       this.initialInputValues = /* @__PURE__ */ new WeakMap();
       this.lastUserTypedAt = /* @__PURE__ */ new WeakMap();
       this.userEditedInputs = /* @__PURE__ */ new WeakSet();
+      this.composingInputs = /* @__PURE__ */ new WeakSet();
       this.lastColorInput = /* @__PURE__ */ new WeakMap();
       this.dragStart = { x: 0, y: 0 };
       this.isDragging = false;
@@ -17358,6 +17589,8 @@
       this.mainDocument.addEventListener("dblclick", this.dblClickHandler.bind(this), true);
       this.mainDocument.addEventListener("keydown", this.keydownHandler.bind(this));
       this.mainDocument.addEventListener("change", this.changeHandler.bind(this), true);
+      this.mainDocument.addEventListener("compositionstart", this.compositionStartHandler.bind(this), true);
+      this.mainDocument.addEventListener("compositionend", this.compositionEndHandler.bind(this), true);
       this.mainDocument.addEventListener("input", this.inputHandler.bind(this), true);
       this.mainDocument.addEventListener("dragover", (e) => {
         if (this.isRecording) e.preventDefault();
@@ -17394,6 +17627,18 @@
         // 將事件的來源綁定當前的 contextId
         targetElement ? this.contextId : ""
       );
+      if (typeof action.setSourceContext === "function") {
+        action.setSourceContext(this.contextSnapshot);
+      } else {
+        action.sourceContext = this.contextSnapshot;
+      }
+      if (targetElement) {
+        if (typeof action.setTargetContext === "function") {
+          action.setTargetContext(this.contextSnapshot);
+        } else {
+          action.targetContext = this.contextSnapshot;
+        }
+      }
       if (extraData.keyboard) action.setKeyboard(extraData.keyboard);
       if (extraData.inputText !== void 0) action.setInputText(extraData.inputText);
       if (extraData.selectedValue !== void 0) action.setSelectedValue(extraData.selectedValue);
@@ -17414,37 +17659,124 @@
       this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
     }
     inputHandler(e) {
-      if (!this.isRecording || !e.isTrusted) return;
-      if (this.shouldSuppressSyntheticPageEvent()) return;
-      const tag = e.target.tagName.toLowerCase();
-      const type = e.target.getAttribute("type");
-      const isRange = this.isRangeInput(e.target);
+      this.debugInputEvent("input:received", e);
+      if (!this.isRecording || !e.isTrusted) {
+        this.debugInputEvent("input:ignored-recording-or-untrusted", e, {
+          isRecording: this.isRecording,
+          isTrusted: e.isTrusted
+        });
+        return;
+      }
+      if (this.shouldSuppressSyntheticPageEvent()) {
+        this.debugInputEvent("input:ignored-suppressed", e);
+        return;
+      }
+      const eventTarget = this.getTextInputEventTarget(e);
+      const target = eventTarget || e.target;
+      this.debugInputEvent("input:target-resolved", e, {
+        resolvedTarget: this.describeDebugElement(target),
+        resolvedValue: this.getInputValue(target),
+        usedComposedPathTarget: !!eventTarget
+      });
+      const tag = target.tagName.toLowerCase();
+      const type = target.getAttribute("type");
+      const isRange = this.isRangeInput(target);
       if (isRange) {
         clearTimeout(this.timer);
         this.timer = setTimeout(() => {
-          this.currentHoveredElement = e.target;
+          this.currentHoveredElement = target;
           this.dispatchAction("range", this.currentHoveredElement, null, {
-            inputText: e.target.value
+            inputText: target.value
           });
         }, 250);
         return;
       }
-      if (this.isColorInput(e.target)) {
-        this.recordColorInput(e.target);
+      if (this.isColorInput(target)) {
+        this.recordColorInput(target);
         return;
       }
-      const isTextInput = tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type)) || tag === "textarea" || e.target.isContentEditable;
-      if (!isTextInput) return;
-      if (!this.shouldRecordTextInputEvent(e.target)) return;
-      clearTimeout(this.timer);
-      const target = e.target;
-      this.timer = setTimeout(() => {
-        if (!this.isRecording || !this.shouldRecordTextInputEvent(target)) return;
-        this.currentHoveredElement = target;
-        this.dispatchAction("input", this.currentHoveredElement, null, {
-          inputText: this.getInputValue(target)
+      const isTextInput = tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type)) || tag === "textarea" || target.isContentEditable || this.isValueBackedTextHost(target);
+      if (!isTextInput) {
+        this.debugInputEvent("input:ignored-not-text-input", e, {
+          resolvedTarget: this.describeDebugElement(target),
+          tag,
+          type,
+          hasStringValue: typeof target?.value === "string",
+          isContentEditable: target?.isContentEditable === true
         });
-      }, 500);
+        return;
+      }
+      this.markTextInputEdited(target);
+      if (e.isComposing || this.composingInputs.has(target)) {
+        this.debugInputEvent("input:ignored-composing", e, {
+          isComposing: e.isComposing,
+          composingSetHasTarget: this.composingInputs.has(target),
+          value: this.getInputValue(target)
+        });
+        return;
+      }
+      if (!this.shouldRecordTextInputEvent(target)) {
+        this.debugInputEvent("input:ignored-should-record-false", e, {
+          value: this.getInputValue(target),
+          initialValue: this.initialInputValues.get(target),
+          userEdited: this.userEditedInputs.has(target)
+        });
+        return;
+      }
+      this.debugInputEvent("input:schedule-record", e, {
+        value: this.getInputValue(target)
+      });
+      this.scheduleTextInputRecord(target);
+    }
+    compositionStartHandler(e) {
+      this.debugInputEvent("compositionstart:received", e);
+      const target = this.getTextInputEventTarget(e);
+      if (!this.isRecording || !e.isTrusted || !this.isTextInputElement(target)) {
+        this.debugInputEvent("compositionstart:ignored", e, {
+          isRecording: this.isRecording,
+          isTrusted: e.isTrusted,
+          resolvedTarget: this.describeDebugElement(target)
+        });
+        return;
+      }
+      this.composingInputs.add(target);
+      this.markTextInputEdited(target);
+      this.debugInputEvent("compositionstart:tracked", e, {
+        resolvedTarget: this.describeDebugElement(target),
+        value: this.getInputValue(target)
+      });
+    }
+    compositionEndHandler(e) {
+      this.debugInputEvent("compositionend:received", e);
+      const target = this.getTextInputEventTarget(e);
+      const hasTrustedInputBeforeCompositionEnd = target && (this.userEditedInputs.has(target) || this.composingInputs.has(target));
+      if (!this.isRecording || !e.isTrusted && !hasTrustedInputBeforeCompositionEnd || !this.isTextInputElement(target)) {
+        this.debugInputEvent("compositionend:ignored", e, {
+          isRecording: this.isRecording,
+          isTrusted: e.isTrusted,
+          hasTrustedInputBeforeCompositionEnd,
+          resolvedTarget: this.describeDebugElement(target)
+        });
+        return;
+      }
+      this.composingInputs.delete(target);
+      this.markTextInputEdited(target);
+      if (this.shouldSuppressSyntheticPageEvent()) {
+        this.debugInputEvent("compositionend:ignored-suppressed", e);
+        return;
+      }
+      if (!this.shouldRecordTextInputEvent(target)) {
+        this.debugInputEvent("compositionend:ignored-should-record-false", e, {
+          value: this.getInputValue(target),
+          initialValue: this.initialInputValues.get(target),
+          userEdited: this.userEditedInputs.has(target)
+        });
+        return;
+      }
+      this.debugInputEvent("compositionend:schedule-record", e, {
+        value: this.getInputValue(target)
+      });
+      this.scheduleTextInputRecord(target, 100);
     }
     changeHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
@@ -17473,12 +17805,12 @@
     }
     keydownHandler(e) {
       if (!this.isRecording) return;
-      if (e.isTrusted && e.target && this.isTextEditingKey(e) && this.isTextInputElement(e.target)) {
-        this.lastUserTypedAt.set(e.target, Date.now());
-        this.userEditedInputs.add(e.target);
+      const target = this.getTextInputEventTarget(e);
+      if (e.isTrusted && target && this.isTextEditingKey(e) && this.isTextInputElement(target)) {
+        this.markTextInputEdited(target);
       }
       if (e.key === "Backspace") {
-        this.currentHoveredElement = e.target;
+        this.currentHoveredElement = target || e.target;
         this.dispatchAction("keyboard", this.currentHoveredElement, null, {
           keyboard: e.key
         });
@@ -17536,6 +17868,7 @@
       this.lastPreviewTarget = element;
       try {
         const sourcePath = this.domParserService.getOpenSourcePath(element, this.mainWindow);
+        console.log("[Source Path in Page]: ", sourcePath);
         this.hoverInspector?.show(element, this.formatLocatorPreview(sourcePath));
       } catch (error) {
         console.warn("[Recorder] Unable to preview hovered locator", error);
@@ -17607,7 +17940,13 @@
       }
       if (funName === "ByText") return `getByText(${quote(obj.text)}, { exact: true })`;
       if (funName === "ByTitle") return `getByTitle(${quote(obj.title)}, { exact: true })`;
-      if (funName === "ByDomPath") return `locator(${quote(obj.csspath)})`;
+      if (funName === "ByDomPath") {
+        const chain = Array.isArray(obj.shadowChain) ? obj.shadowChain : [];
+        return [
+          ...chain.map((step) => `locator(${quote(step.hostSelector)})`),
+          `locator(${quote(obj.csspath)})`
+        ].join(".");
+      }
       return funName;
     }
     getBestPreviewPath(sourcePath) {
@@ -17643,14 +17982,21 @@
       if (this.isCheckboxOrCheckboxLabel(target)) return;
       if (target.tagName === "LABEL" && !this.isRadioOrRadioLabel(target)) return;
       if (target.tagName === "SELECT") return;
+      const clickableSelector = this.getClickableSelector();
       let clickable = target;
       if (target.tagName === "INPUT") {
         const label = target.parentElement?.querySelector(`label[for="${target.id}"]`);
-        clickable = label || target.closest(`button, a, [role="button"], [onclick], i, svg`) || target;
+        clickable = label || target.closest(clickableSelector) || target;
       } else {
-        clickable = target.closest(`button, a, [role="button"], [onclick], i, svg`) || target;
+        clickable = target.closest(clickableSelector) || target;
       }
       this.currentHoveredElement = clickable;
+      console.log("[RecorderDebug][Outer clickHandler] dispatch click target", {
+        rawTarget: this.describeDebugElement(e.target),
+        composedTarget: this.describeDebugElement(target),
+        clickable: this.describeDebugElement(clickable),
+        clickableRoot: this.describeDebugRoot(clickable?.getRootNode?.())
+      });
       this.dispatchAction("click", this.currentHoveredElement);
     }
     isRangeInput(element) {
@@ -17680,8 +18026,28 @@
       return element?.closest?.(".gjs-layer-move, [data-toggle-move]") || element;
     }
     getComposedEventTarget(e) {
-      const interactive = this.getFirstComposedElement(e, "button, a, [role='button'], [onclick], input, textarea, select, label, [data-thread-id], .thread-item");
-      return interactive || e.target;
+      const debugPath = this.describeDebugComposedPath(e);
+      const ionicInteractive = this.getFirstComposedElement(e, this.getIonicInteractiveSelector());
+      const nativeInteractive = this.getFirstComposedElement(e, this.getNativeInteractiveSelector());
+      const resolved = ionicInteractive || nativeInteractive || e.target;
+      console.log("[RecorderDebug][Outer getComposedEventTarget]", {
+        rawTarget: this.describeDebugElement(e.target),
+        composedPath: debugPath,
+        nativeInteractive: this.describeDebugElement(nativeInteractive),
+        ionicInteractive: this.describeDebugElement(ionicInteractive),
+        resolved: this.describeDebugElement(resolved),
+        resolvedRoot: this.describeDebugRoot(resolved?.getRootNode?.())
+      });
+      return resolved;
+    }
+    getNativeInteractiveSelector() {
+      return "button, a, [role='button'], [onclick], input, textarea, select, label, [data-thread-id], .thread-item";
+    }
+    getIonicInteractiveSelector() {
+      return "ion-tab-button, ion-button, ion-segment-button, ion-menu-button, ion-back-button, ion-item[button], ion-item[routerlink], ion-item[href], ion-card[button], ion-card[routerlink], ion-card[href], ion-card-content[button], ion-card-content[routerlink], ion-card-content[href]";
+    }
+    getClickableSelector() {
+      return `${this.getNativeInteractiveSelector()}, i, svg, ${this.getIonicInteractiveSelector()}`;
     }
     getFirstComposedElement(e, selector2) {
       const path = typeof e.composedPath === "function" ? e.composedPath() : [];
@@ -17692,6 +18058,31 @@
         if (closest) return closest;
       }
       return null;
+    }
+    describeDebugComposedPath(e) {
+      const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+      return path.slice(0, 8).map((item) => this.describeDebugElement(item));
+    }
+    describeDebugElement(element) {
+      if (!element || element.nodeType !== 1) return String(element);
+      const attrs = {};
+      ["id", "class", "type", "part", "tab", "value", "data-gjs-type", "role", "aria-label"].forEach((name) => {
+        const value = element.getAttribute?.(name);
+        if (value !== null && value !== void 0 && value !== "") attrs[name] = value;
+      });
+      return {
+        tagName: element.tagName,
+        attrs,
+        text: (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80)
+      };
+    }
+    describeDebugRoot(root) {
+      if (!root) return null;
+      return {
+        nodeType: root.nodeType,
+        isShadowRoot: root.nodeType === Node.DOCUMENT_FRAGMENT_NODE && !!root.host,
+        host: this.describeDebugElement(root.host)
+      };
     }
     isMouseDragCandidate(element) {
       return !!element?.closest?.(".gjs-layer-move, [data-toggle-move]");
@@ -17710,6 +18101,7 @@
       try {
         this.initialInputValues = /* @__PURE__ */ new WeakMap();
         this.userEditedInputs = /* @__PURE__ */ new WeakSet();
+        this.composingInputs = /* @__PURE__ */ new WeakSet();
         this.mainDocument?.querySelectorAll?.("input, textarea, [contenteditable='true']").forEach((element) => {
           this.initialInputValues.set(element, this.getInputValue(element));
         });
@@ -17718,14 +18110,45 @@
       }
     }
     getInputValue(element) {
-      return element?.value ?? element?.innerText ?? "";
+      return element?.value ?? element?.innerText ?? element?.textContent ?? "";
     }
     shouldRecordTextInputEvent(element) {
       if (!this.userEditedInputs.has(element)) return false;
       const value = this.getInputValue(element);
       if (this.initialInputValues.get(element) === value) return false;
-      const lastTypedAt = this.lastUserTypedAt.get(element) || 0;
-      return Date.now() - lastTypedAt <= 1500;
+      return true;
+    }
+    markTextInputEdited(element) {
+      if (!this.isTextInputElement(element)) return;
+      this.lastUserTypedAt.set(element, Date.now());
+      this.userEditedInputs.add(element);
+    }
+    scheduleTextInputRecord(element, delay = 500) {
+      clearTimeout(this.timer);
+      this.debugInputTarget("scheduleTextInputRecord:set-timer", element, {
+        delay,
+        value: this.getInputValue(element)
+      });
+      this.timer = setTimeout(() => {
+        if (!this.isRecording || this.composingInputs.has(element) || !this.shouldRecordTextInputEvent(element)) {
+          this.debugInputTarget("scheduleTextInputRecord:timer-ignored", element, {
+            isRecording: this.isRecording,
+            composingSetHasTarget: this.composingInputs.has(element),
+            shouldRecord: this.shouldRecordTextInputEvent(element),
+            value: this.getInputValue(element),
+            initialValue: this.initialInputValues.get(element),
+            userEdited: this.userEditedInputs.has(element)
+          });
+          return;
+        }
+        this.currentHoveredElement = element;
+        this.debugInputTarget("scheduleTextInputRecord:dispatch-input", element, {
+          value: this.getInputValue(element)
+        });
+        this.dispatchAction("input", this.currentHoveredElement, null, {
+          inputText: this.getInputValue(element)
+        });
+      }, delay);
     }
     isTextEditingKey(e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return false;
@@ -17734,7 +18157,51 @@
     isTextInputElement(element) {
       const tag = element?.tagName?.toLowerCase();
       const type = element?.getAttribute?.("type");
-      return tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type)) || tag === "textarea" || element?.isContentEditable;
+      return tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type)) || tag === "textarea" || element?.isContentEditable || this.isValueBackedTextHost(element);
+    }
+    isValueBackedTextHost(element) {
+      if (!element || element.nodeType !== 1) return false;
+      const tag = element.tagName?.toLowerCase?.() || "";
+      if (["ion-input", "ion-textarea", "md-input", "vaadin-text-field", "vaadin-text-area"].includes(tag)) return true;
+      if (element.getAttribute?.("contenteditable") === "true") return true;
+      if (typeof element.value !== "string") return false;
+      return element.matches?.("[role='textbox'], [data-gjs-type='text'], [data-field], [data-testid], [aria-label]") || tag.includes("input") || tag.includes("textarea");
+    }
+    getTextInputEventTarget(e) {
+      const path = typeof e?.composedPath === "function" ? e.composedPath() : [];
+      for (const item of path) {
+        if (this.isTextInputElement(item) || this.isRangeInput(item) || this.isColorInput(item)) return item;
+      }
+      return this.isTextInputElement(e?.target) || this.isRangeInput(e?.target) || this.isColorInput(e?.target) ? e.target : null;
+    }
+    debugInputEvent(stage, e, extra = {}) {
+      try {
+        const path = typeof e?.composedPath === "function" ? e.composedPath() : [];
+        console.log("[RecorderInputDebug][Outer]", stage, {
+          eventType: e?.type,
+          isTrusted: e?.isTrusted,
+          isComposing: e?.isComposing,
+          inputType: e?.inputType,
+          data: e?.data,
+          rawTarget: this.describeDebugElement(e?.target),
+          rawValue: this.getInputValue(e?.target),
+          path: path.slice(0, 6).map((item) => this.describeDebugElement(item)),
+          ...extra
+        });
+      } catch (error) {
+        console.warn("[RecorderInputDebug][Outer] log failed", stage, error);
+      }
+    }
+    debugInputTarget(stage, element, extra = {}) {
+      try {
+        console.log("[RecorderInputDebug][Outer]", stage, {
+          target: this.describeDebugElement(element),
+          value: this.getInputValue(element),
+          ...extra
+        });
+      } catch (error) {
+        console.warn("[RecorderInputDebug][Outer] log failed", stage, error);
+      }
     }
     setReloadSuppressWindow(ms = 1500) {
       try {
@@ -17778,7 +18245,6 @@
 
   // interfaces/IframeEventListener.js
   var IframeEventListener = class {
-    // 1. 移除 command, userActionDB 等依賴，改為接收 onActionRecorded 回呼函式
     constructor(contexts, domParserService, onActionRecorded) {
       this.contexts = contexts;
       this.iframeWindow = contexts?.iframeWindow || null;
@@ -17786,16 +18252,15 @@
       this.domParserService = domParserService;
       this.onActionRecorded = onActionRecorded;
       this.contextId = contexts?.contextId || "iframe";
+      this.contextSnapshot = contexts?.contextSnapshot || null;
       this.DOMElement = new DOMElement();
       this.currentHoveredElement = null;
-      this.clickFlag = 0;
-      this.clickTimeOut = null;
-      this.DOUBLE_CLICK_DELAY = 250;
-      this.inputTimer = 0;
-      this.INPUT_DELAY = 500;
+      this.typedText = "";
+      this.timer = null;
       this.initialInputValues = /* @__PURE__ */ new WeakMap();
       this.lastUserTypedAt = /* @__PURE__ */ new WeakMap();
       this.userEditedInputs = /* @__PURE__ */ new WeakSet();
+      this.composingInputs = /* @__PURE__ */ new WeakSet();
       this.lastColorInput = /* @__PURE__ */ new WeakMap();
       this.dragStart = { x: 0, y: 0 };
       this.isDragging = false;
@@ -17803,6 +18268,7 @@
       this.dragSource = null;
       this.mouseDownFlag = false;
       this.dragStepFlag = 0;
+      this.suppressClickUntil = 0;
       this.hoverInspector = new HoverInspector(this.iframeDocument, this.iframeWindow);
       this.lastPreviewTarget = null;
       this.hoverHighlightEnabled = true;
@@ -17811,32 +18277,218 @@
     }
     init() {
       if (!this.iframeWindow || !this.iframeDocument) {
-        console.warn("iframe \u4E0D\u5B58\u5728\uFF0C\u8DF3\u904E IframeEventListener.init()");
+        console.warn("iframe does not exist, skip IframeEventListener2.init()");
         return;
       }
-      this.iframeDocument.addEventListener("mousemove", this.mousemoveHandler.bind(this));
+      this.iframeDocument.addEventListener("click", this.clickHandler.bind(this), true);
+      this.iframeDocument.addEventListener("mousedown", this.mousedownHandler.bind(this), true);
+      this.iframeDocument.addEventListener("mousemove", this.mousemoveHandler.bind(this), true);
       this.iframeDocument.addEventListener("mouseout", this.mouseoutHandler.bind(this), true);
       this.iframeDocument.addEventListener("mouseleave", this.hideHoverPreview.bind(this), true);
-      this.iframeDocument.addEventListener("mousedown", this.mousedownHandler.bind(this));
-      this.iframeDocument.addEventListener("mouseup", this.mouseupHandler.bind(this));
+      this.iframeDocument.addEventListener("mouseup", this.mouseupHandler.bind(this), true);
+      this.iframeWindow.addEventListener("dragstart", this.dragStartHandler.bind(this));
+      this.iframeDocument.addEventListener("dblclick", this.dblClickHandler.bind(this), true);
       this.iframeDocument.addEventListener("keydown", this.keydownHandler.bind(this));
-      this.iframeDocument.addEventListener("input", this.inputHandler.bind(this));
-      this.iframeWindow.addEventListener("drop", this.dropHandler.bind(this));
-      this.iframeWindow.addEventListener("blur", this.hideHoverPreview.bind(this));
-      this.iframeDocument.addEventListener("click", this.clickHandler.bind(this), true);
       this.iframeDocument.addEventListener("change", this.changeHandler.bind(this), true);
+      this.iframeDocument.addEventListener("compositionstart", this.compositionStartHandler.bind(this), true);
+      this.iframeDocument.addEventListener("compositionend", this.compositionEndHandler.bind(this), true);
+      this.iframeDocument.addEventListener("input", this.inputHandler.bind(this), true);
       this.iframeDocument.addEventListener("dragover", (e) => {
         if (this.isRecording) e.preventDefault();
       });
+      this.iframeDocument.addEventListener("drop", this.dropHandler.bind(this), true);
+      this.iframeWindow.addEventListener("blur", this.hideHoverPreview.bind(this));
       this.iframeWindow.addEventListener("message", this.messageHandler.bind(this));
       this.loadHoverHighlightPreference();
       this.bindHoverHighlightPreference();
     }
-    // 【新增】處理 SELECT 與 Checkbox 的改變
+    messageHandler(e) {
+      const msg = e.data;
+      switch (msg.type) {
+        case "START_RECORDING":
+          this.setRecordingState(true, { allowHoverPreview: true });
+          this.snapshotInitialInputValues();
+          break;
+        case "STOP_RECORDING":
+          this.setRecordingState(false, { allowHoverPreview: false });
+          clearTimeout(this.timer);
+          break;
+      }
+    }
+    dispatchAction(action_type, sourceElement, targetElement = null, extraData = {}) {
+      const currentEventElement = sourceElement || targetElement;
+      if (currentEventElement) {
+        this.DOMElement.setElementData(currentEventElement, action_type);
+      }
+      console.log("[dispatch action: ]");
+      const action = ActionInterpreter.interpretDrag(
+        action_type,
+        sourceElement,
+        targetElement,
+        this.contextId,
+        targetElement ? this.contextId : ""
+      );
+      if (typeof action.setSourceContext === "function") {
+        action.setSourceContext(this.contextSnapshot);
+      } else {
+        action.sourceContext = this.contextSnapshot;
+      }
+      if (targetElement) {
+        if (typeof action.setTargetContext === "function") {
+          action.setTargetContext(this.contextSnapshot);
+        } else {
+          action.targetContext = this.contextSnapshot;
+        }
+      }
+      if (extraData.keyboard) action.setKeyboard(extraData.keyboard);
+      if (extraData.inputText !== void 0) action.setInputText(extraData.inputText);
+      if (extraData.selectedValue !== void 0) action.setSelectedValue(extraData.selectedValue);
+      if (extraData.selectedText !== void 0) action.setSelectedText(extraData.selectedText);
+      if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
+      if (extraData.isDragStart) action.isDragStart = true;
+      if (extraData.isDrop) action.isDrop = true;
+      if (typeof this.onActionRecorded === "function") {
+        this.onActionRecorded(action);
+      } else {
+        console.warn("IframeEventListener2: onActionRecorded callback is not bound", action);
+      }
+      console.log("[dispatch action: ]", action);
+    }
+    dropHandler(e) {
+      if (!this.isRecording) return;
+      e.preventDefault();
+      this.currentHoveredElement = this.getDragTargetElement(e.target);
+      this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
+    }
+    inputHandler(e) {
+      this.debugInputEvent("input:received", e);
+      if (!this.isRecording || !e.isTrusted) {
+        this.debugInputEvent("input:ignored-recording-or-untrusted", e, {
+          isRecording: this.isRecording,
+          isTrusted: e.isTrusted
+        });
+        return;
+      }
+      if (this.shouldSuppressSyntheticPageEvent()) {
+        this.debugInputEvent("input:ignored-suppressed", e);
+        return;
+      }
+      const eventTarget = this.getTextInputEventTarget(e);
+      const target = eventTarget || e.target;
+      this.debugInputEvent("input:target-resolved", e, {
+        resolvedTarget: this.describeDebugElement(target),
+        resolvedValue: this.getInputValue(target),
+        usedComposedPathTarget: !!eventTarget
+      });
+      const tag = target.tagName.toLowerCase();
+      const type = target.getAttribute("type");
+      const isRange = this.isRangeInput(target);
+      if (isRange) {
+        clearTimeout(this.timer);
+        this.timer = setTimeout(() => {
+          this.currentHoveredElement = target;
+          this.dispatchAction("range", this.currentHoveredElement, null, {
+            inputText: target.value
+          });
+        }, 250);
+        return;
+      }
+      if (this.isColorInput(target)) {
+        this.recordColorInput(target);
+        return;
+      }
+      const isTextInput = tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type)) || tag === "textarea" || target.isContentEditable || this.isValueBackedTextHost(target);
+      if (!isTextInput) {
+        this.debugInputEvent("input:ignored-not-text-input", e, {
+          resolvedTarget: this.describeDebugElement(target),
+          tag,
+          type,
+          hasStringValue: typeof target?.value === "string",
+          isContentEditable: target?.isContentEditable === true
+        });
+        return;
+      }
+      this.markTextInputEdited(target);
+      if (e.isComposing || this.composingInputs.has(target)) {
+        this.debugInputEvent("input:ignored-composing", e, {
+          isComposing: e.isComposing,
+          composingSetHasTarget: this.composingInputs.has(target),
+          value: this.getInputValue(target)
+        });
+        return;
+      }
+      if (!this.shouldRecordTextInputEvent(target)) {
+        this.debugInputEvent("input:ignored-should-record-false", e, {
+          value: this.getInputValue(target),
+          initialValue: this.initialInputValues.get(target),
+          userEdited: this.userEditedInputs.has(target)
+        });
+        return;
+      }
+      this.debugInputEvent("input:schedule-record", e, {
+        value: this.getInputValue(target)
+      });
+      this.scheduleTextInputRecord(target);
+    }
+    compositionStartHandler(e) {
+      this.debugInputEvent("compositionstart:received", e);
+      const target = this.getTextInputEventTarget(e);
+      if (!this.isRecording || !e.isTrusted || !this.isTextInputElement(target)) {
+        this.debugInputEvent("compositionstart:ignored", e, {
+          isRecording: this.isRecording,
+          isTrusted: e.isTrusted,
+          resolvedTarget: this.describeDebugElement(target)
+        });
+        return;
+      }
+      this.composingInputs.add(target);
+      this.markTextInputEdited(target);
+      this.debugInputEvent("compositionstart:tracked", e, {
+        resolvedTarget: this.describeDebugElement(target),
+        value: this.getInputValue(target)
+      });
+    }
+    compositionEndHandler(e) {
+      this.debugInputEvent("compositionend:received", e);
+      const target = this.getTextInputEventTarget(e);
+      const hasTrustedInputBeforeCompositionEnd = target && (this.userEditedInputs.has(target) || this.composingInputs.has(target));
+      if (!this.isRecording || !e.isTrusted && !hasTrustedInputBeforeCompositionEnd || !this.isTextInputElement(target)) {
+        this.debugInputEvent("compositionend:ignored", e, {
+          isRecording: this.isRecording,
+          isTrusted: e.isTrusted,
+          hasTrustedInputBeforeCompositionEnd,
+          resolvedTarget: this.describeDebugElement(target)
+        });
+        return;
+      }
+      this.composingInputs.delete(target);
+      this.markTextInputEdited(target);
+      if (this.shouldSuppressSyntheticPageEvent()) {
+        this.debugInputEvent("compositionend:ignored-suppressed", e);
+        return;
+      }
+      if (!this.shouldRecordTextInputEvent(target)) {
+        this.debugInputEvent("compositionend:ignored-should-record-false", e, {
+          value: this.getInputValue(target),
+          initialValue: this.initialInputValues.get(target),
+          userEdited: this.userEditedInputs.has(target)
+        });
+        return;
+      }
+      this.debugInputEvent("compositionend:schedule-record", e, {
+        value: this.getInputValue(target)
+      });
+      this.scheduleTextInputRecord(target, 100);
+    }
     changeHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
       const tag = e.target.tagName;
       const type = e.target.type;
+      if (this.isRangeInput(e.target)) return;
+      if (this.isColorInput(e.target)) {
+        this.recordColorInput(e.target);
+        return;
+      }
       const isSelect = tag === "SELECT";
       const isCheckbox = tag === "INPUT" && type === "checkbox";
       if (!isSelect && !isCheckbox) return;
@@ -17853,173 +18505,52 @@
         selectedText: e.target.options?.[e.target.selectedIndex]?.text || ""
       } : {});
     }
-    messageHandler(e) {
-      const msg = e.data;
-      switch (msg.type) {
-        case "START_RECORDING":
-          this.setRecordingState(true, { allowHoverPreview: true });
-          this.snapshotInitialInputValues();
-          break;
-        case "STOP_RECORDING":
-          this.setRecordingState(false, { allowHoverPreview: false });
-          clearTimeout(this.inputTimer);
-          break;
-      }
-    }
-    // 2. 建立統一的派發 Action 方法
-    dispatchAction(action_type, sourceElement, targetElement = null, extraData = {}) {
-      const currentEventElement = sourceElement || targetElement;
-      if (currentEventElement) {
-        this.DOMElement.setElementData(currentEventElement, action_type);
-      }
-      console.log("[Debug IframeEventListener] dispatchAction", {
-        actionType: action_type,
-        contextId: this.contextId,
-        sourceTag: sourceElement?.tagName || null,
-        sourceId: sourceElement?.id || null,
-        sourceClass: sourceElement?.className || null,
-        sourceDataGjsType: sourceElement?.getAttribute?.("data-gjs-type") || null,
-        targetTag: targetElement?.tagName || null,
-        targetId: targetElement?.id || null,
-        targetClass: targetElement?.className || null,
-        targetDataGjsType: targetElement?.getAttribute?.("data-gjs-type") || null,
-        extraData
-      });
-      const action = ActionInterpreter.interpretDrag(
-        action_type,
-        sourceElement,
-        targetElement,
-        this.contextId,
-        targetElement ? this.contextId : ""
-      );
-      if (extraData.inputText !== void 0) action.setInputText(extraData.inputText);
-      if (extraData.selectedValue !== void 0) action.setSelectedValue(extraData.selectedValue);
-      if (extraData.selectedText !== void 0) action.setSelectedText(extraData.selectedText);
-      if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
-      if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
-      if (extraData.isDragStart) action.isDragStart = true;
-      if (extraData.isDrop) action.isDrop = true;
-      if (typeof this.onActionRecorded === "function") {
-        this.onActionRecorded(action);
-      } else {
-        console.warn("IframeEventListener: onActionRecorded callback \u5C1A\u672A\u7D81\u5B9A", action);
-      }
-    }
-    clickHandler(e) {
-      if (!this.isRecording || !e.isTrusted) return;
-      if (this.shouldSuppressSyntheticPageEvent()) return;
-      if (this.isFileInput(e.target)) return;
-    }
-    dropHandler(e) {
-      if (!this.isRecording) return;
-      this.currentHoveredElement = e.target;
-      this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
-    }
-    inputHandler(e) {
-      if (!this.isRecording || !e.isTrusted) return;
-      if (this.shouldSuppressSyntheticPageEvent()) return;
-      const tag = e.target.tagName.toLowerCase();
-      const type = e.target.getAttribute("type");
-      const isRange = this.isRangeInput(e.target);
-      if (isRange) {
-        clearTimeout(this.inputTimer);
-        this.inputTimer = setTimeout(() => {
-          this.currentHoveredElement = e.target;
-          this.dispatchAction("range", this.currentHoveredElement, null, {
-            inputText: e.target.value
-          });
-        }, 250);
-        return;
-      }
-      const isTextInput = tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type)) || tag === "textarea" || e.target.isContentEditable;
-      if (!isTextInput) return;
-      if (!this.shouldRecordTextInputEvent(e.target)) return;
-      clearTimeout(this.inputTimer);
-      const target = e.target;
-      this.inputTimer = setTimeout(() => {
-        if (!this.isRecording || !this.shouldRecordTextInputEvent(target)) return;
-        this.currentHoveredElement = target;
-        this.dispatchAction("input", this.currentHoveredElement, null, {
-          inputText: this.getInputValue(target)
-        });
-      }, this.INPUT_DELAY);
-    }
     keydownHandler(e) {
-      if (!this.isRecording || !e.isTrusted || !e.target) return;
-      if (!this.isTextEditingKey(e) || !this.isTextInputElement(e.target)) return;
-      this.lastUserTypedAt.set(e.target, Date.now());
-      this.userEditedInputs.add(e.target);
+      if (!this.isRecording) return;
+      const target = this.getTextInputEventTarget(e);
+      if (e.isTrusted && target && this.isTextEditingKey(e) && this.isTextInputElement(target)) {
+        this.markTextInputEdited(target);
+      }
+      if (e.key === "Backspace") {
+        this.currentHoveredElement = target || e.target;
+        this.dispatchAction("keyboard", this.currentHoveredElement, null, {
+          keyboard: e.key
+        });
+      }
     }
-    mouseupHandler(e) {
+    dblClickHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
       if (this.shouldSuppressSyntheticPageEvent()) return;
-      const target = this.getComposedEventTarget(e);
-      if (this.isFileInput(target)) return;
-      if (this.isRangeInput(target)) {
-        this.isDragging = false;
-        this.dragStart = { x: 0, y: 0 };
-        this.mouseDownFlag = false;
-        this.dragStepFlag = 0;
-        return;
-      }
-      if (this.isColorInput(e.target)) {
-        this.recordColorInput(e.target);
-        return;
-      }
-      if (this.isCheckboxOrCheckboxLabel(target)) return;
-      if (target.tagName === "LABEL" && !this.isRadioOrRadioLabel(target)) return;
-      if (target.tagName === "SELECT") return;
-      console.log("[Debug IframeListener] mouseup \u89F8\u767C, isDragging:", this.isDragging);
-      if (this.isDragging) {
-        this.isDragging = false;
-        this.dragStart = { x: 0, y: 0 };
-        this.currentHoveredElement = target;
-        this.mouseDownFlag = false;
-        this.dragStepFlag = 0;
-        this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
-      } else {
-        const preParsedSourcePath = this.preParseSourcePath(target);
-        this.clickFlag += 1;
-        if (this.clickFlag === 1) {
-          this.clickTimeOut = setTimeout(() => {
-            this.clickFlag = 0;
-            this.isDragging = false;
-            this.dragStart = { x: 0, y: 0 };
-            this.dispatchAction("click", target, null, { preParsedSourcePath });
-          }, this.DOUBLE_CLICK_DELAY);
-        } else if (this.clickFlag === 2) {
-          clearTimeout(this.clickTimeOut);
-          this.clickFlag = 0;
-          this.isDragging = false;
-          this.dragStart = { x: 0, y: 0 };
-          this.dispatchAction("dbclick", target, null, { preParsedSourcePath });
-        }
-      }
-      this.mouseDownFlag = false;
-      this.dragStepFlag = 0;
+      const target = this.getClickTarget(e);
+      if (!target) return;
+      this.currentHoveredElement = target;
+      this.dispatchAction("dbclick", this.currentHoveredElement);
     }
-    preParseSourcePath(element) {
-      try {
-        return this.domParserService.getOpenSourcePath(element, this.iframeWindow);
-      } catch (error) {
-        console.warn("[Recorder] Unable to pre-parse iframe click locator", error);
-        return null;
+    dragStartHandler(e) {
+      if (!this.isRecording) return;
+      const target = e.target;
+      if (!target) return;
+      if (this.isRangeInput(target)) return;
+      if (target.getAttribute("draggable") === "true") {
+        this.hideHoverPreview();
+        this.dispatchAction("dragANDdrop", target, null, { isDragStart: true });
       }
     }
     mousedownHandler(e) {
-      if (!this.isRecording) return;
+      if (!this.isRecording || !e.isTrusted) return;
       if (this.isRangeInput(e.target)) return;
+      if (!this.isMouseDragCandidate(e.target)) return;
       this.dragStart = { x: e.clientX, y: e.clientY };
       this.isDragging = false;
-      this.dragSource = e.target;
+      this.dragSource = this.getDragSourceElement(e.target);
       this.mouseDownFlag = true;
       this.dragStepFlag = 1;
       this.hideHoverPreview();
     }
     mousemoveHandler(e) {
-      if (!this.isRecording) return;
+      if (!this.isRecording || !e.isTrusted) return;
       if (this.isRangeInput(e.target)) return;
-      this.currentHoveredElement = e.target;
+      this.currentHoveredElement = this.getDragTargetElement(e.target);
       if (this.shouldPreviewHover()) {
         this.previewHoveredElement(this.currentHoveredElement);
       } else {
@@ -18041,6 +18572,7 @@
       this.lastPreviewTarget = element;
       try {
         const sourcePath = this.domParserService.getOpenSourcePath(element, this.iframeWindow);
+        console.log("[Source Path in Iframe2]: ", sourcePath);
         this.hoverInspector?.show(element, this.formatLocatorPreview(sourcePath));
       } catch (error) {
         console.warn("[Recorder] Unable to preview hovered iframe locator", error);
@@ -18122,6 +18654,52 @@
       }
       return null;
     }
+    mouseupHandler(e) {
+      if (!this.isRecording || !e.isTrusted) return;
+      if (this.shouldSuppressSyntheticPageEvent()) return;
+      if (this.isFileInput(e.target)) return;
+      if (this.isDragging) {
+        this.isDragging = false;
+        this.dragStart = { x: 0, y: 0 };
+        this.currentHoveredElement = this.getDragTargetElement(e.target);
+        this.mouseDownFlag = false;
+        this.dragStepFlag = 0;
+        this.suppressClickUntil = Date.now() + 300;
+        this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
+        return;
+      }
+      this.resetMouseDragState();
+    }
+    clickHandler(e) {
+      if (!this.isRecording || !e.isTrusted) return;
+      if (Date.now() < this.suppressClickUntil) return;
+      if (this.shouldSuppressSyntheticPageEvent()) return;
+      const target = this.getClickTarget(e);
+      if (!target) return;
+      this.currentHoveredElement = target;
+      console.log("[RecorderDebug][Iframe2 clickHandler] dispatch click target", {
+        rawTarget: this.describeDebugElement(e.target),
+        composedTarget: this.describeDebugElement(this.getComposedEventTarget(e)),
+        clickable: this.describeDebugElement(target),
+        clickableRoot: this.describeDebugRoot(target?.getRootNode?.())
+      });
+      this.dispatchAction("click", this.currentHoveredElement);
+    }
+    getClickTarget(e) {
+      const target = this.getComposedEventTarget(e);
+      if (!target) return null;
+      if (this.isFileInput(target)) return null;
+      if (this.isRangeInput(target)) return null;
+      if (this.isCheckboxOrCheckboxLabel(target)) return null;
+      if (target.tagName === "LABEL" && !this.isRadioOrRadioLabel(target)) return null;
+      if (target.tagName === "SELECT") return null;
+      const clickableSelector = this.getClickableSelector();
+      if (target.tagName === "INPUT") {
+        const label = target.parentElement?.querySelector(`label[for="${target.id}"]`);
+        return label || target.closest(clickableSelector) || target;
+      }
+      return target.closest(clickableSelector) || target;
+    }
     isRangeInput(element) {
       return element?.tagName === "INPUT" && element.getAttribute("type") === "range";
     }
@@ -18137,17 +18715,40 @@
       const lastRecord = this.lastColorInput.get(element);
       if (lastRecord?.value === value && Date.now() - lastRecord.ts < 500) return;
       this.lastColorInput.set(element, { value, ts: Date.now() });
-      clearTimeout(this.inputTimer);
-      this.inputTimer = setTimeout(() => {
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => {
         this.currentHoveredElement = element;
         this.dispatchAction("color", this.currentHoveredElement, null, {
           inputText: value
         });
       }, 150);
     }
+    getDragSourceElement(element) {
+      return element?.closest?.(".gjs-layer-move, [data-toggle-move]") || element;
+    }
     getComposedEventTarget(e) {
-      const interactive = this.getFirstComposedElement(e, "button, a, [role='button'], [onclick], input, textarea, select, label, [data-thread-id], .thread-item");
-      return interactive || e.target;
+      const debugPath = this.describeDebugComposedPath(e);
+      const ionicInteractive = this.getFirstComposedElement(e, this.getIonicInteractiveSelector());
+      const nativeInteractive = this.getFirstComposedElement(e, this.getNativeInteractiveSelector());
+      const resolved = ionicInteractive || nativeInteractive || e.target;
+      console.log("[RecorderDebug][Iframe2 getComposedEventTarget]", {
+        rawTarget: this.describeDebugElement(e.target),
+        composedPath: debugPath,
+        nativeInteractive: this.describeDebugElement(nativeInteractive),
+        ionicInteractive: this.describeDebugElement(ionicInteractive),
+        resolved: this.describeDebugElement(resolved),
+        resolvedRoot: this.describeDebugRoot(resolved?.getRootNode?.())
+      });
+      return resolved;
+    }
+    getNativeInteractiveSelector() {
+      return "button, a, [role='button'], [onclick], input, textarea, select, label, [data-thread-id], .thread-item";
+    }
+    getIonicInteractiveSelector() {
+      return "ion-tab-button, ion-button, ion-segment-button, ion-menu-button, ion-back-button, ion-item[button], ion-item[routerlink], ion-item[href], ion-card[button], ion-card[routerlink], ion-card[href], ion-card-content[button], ion-card-content[routerlink], ion-card-content[href]";
+    }
+    getClickableSelector() {
+      return `${this.getNativeInteractiveSelector()}, i, svg, ${this.getIonicInteractiveSelector()}`;
     }
     getFirstComposedElement(e, selector2) {
       const path = typeof e.composedPath === "function" ? e.composedPath() : [];
@@ -18159,26 +18760,96 @@
       }
       return null;
     }
+    describeDebugComposedPath(e) {
+      const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+      return path.slice(0, 8).map((item) => this.describeDebugElement(item));
+    }
+    describeDebugElement(element) {
+      if (!element || element.nodeType !== 1) return String(element);
+      const attrs = {};
+      ["id", "class", "type", "part", "tab", "value", "data-gjs-type", "role", "aria-label"].forEach((name) => {
+        const value = element.getAttribute?.(name);
+        if (value !== null && value !== void 0 && value !== "") attrs[name] = value;
+      });
+      return {
+        tagName: element.tagName,
+        attrs,
+        text: (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80)
+      };
+    }
+    describeDebugRoot(root) {
+      if (!root) return null;
+      return {
+        nodeType: root.nodeType,
+        isShadowRoot: root.nodeType === Node.DOCUMENT_FRAGMENT_NODE && !!root.host,
+        host: this.describeDebugElement(root.host)
+      };
+    }
+    isMouseDragCandidate(element) {
+      return !!element?.closest?.(".gjs-layer-move, [data-toggle-move]");
+    }
+    getDragTargetElement(element) {
+      return element?.closest?.(".gjs-layer, .gjs-layer-item, [data-layer-id], [data-gjs-type]") || element;
+    }
+    resetMouseDragState() {
+      this.isDragging = false;
+      this.dragStart = { x: 0, y: 0 };
+      this.dragSource = null;
+      this.mouseDownFlag = false;
+      this.dragStepFlag = 0;
+    }
     snapshotInitialInputValues() {
       try {
         this.initialInputValues = /* @__PURE__ */ new WeakMap();
         this.userEditedInputs = /* @__PURE__ */ new WeakSet();
+        this.composingInputs = /* @__PURE__ */ new WeakSet();
         this.iframeDocument?.querySelectorAll?.("input, textarea, [contenteditable='true']").forEach((element) => {
           this.initialInputValues.set(element, this.getInputValue(element));
         });
       } catch (error) {
-        console.warn("[Recorder] Unable to snapshot initial input values", error);
+        console.warn("[Recorder] Unable to snapshot initial iframe input values", error);
       }
     }
     getInputValue(element) {
-      return element?.value ?? element?.innerText ?? "";
+      return element?.value ?? element?.innerText ?? element?.textContent ?? "";
     }
     shouldRecordTextInputEvent(element) {
       if (!this.userEditedInputs.has(element)) return false;
       const value = this.getInputValue(element);
       if (this.initialInputValues.get(element) === value) return false;
-      const lastTypedAt = this.lastUserTypedAt.get(element) || 0;
-      return Date.now() - lastTypedAt <= 1500;
+      return true;
+    }
+    markTextInputEdited(element) {
+      if (!this.isTextInputElement(element)) return;
+      this.lastUserTypedAt.set(element, Date.now());
+      this.userEditedInputs.add(element);
+    }
+    scheduleTextInputRecord(element, delay = 500) {
+      clearTimeout(this.timer);
+      this.debugInputTarget("scheduleTextInputRecord:set-timer", element, {
+        delay,
+        value: this.getInputValue(element)
+      });
+      this.timer = setTimeout(() => {
+        if (!this.isRecording || this.composingInputs.has(element) || !this.shouldRecordTextInputEvent(element)) {
+          this.debugInputTarget("scheduleTextInputRecord:timer-ignored", element, {
+            isRecording: this.isRecording,
+            composingSetHasTarget: this.composingInputs.has(element),
+            shouldRecord: this.shouldRecordTextInputEvent(element),
+            value: this.getInputValue(element),
+            initialValue: this.initialInputValues.get(element),
+            userEdited: this.userEditedInputs.has(element)
+          });
+          return;
+        }
+        this.currentHoveredElement = element;
+        this.debugInputTarget("scheduleTextInputRecord:dispatch-input", element, {
+          value: this.getInputValue(element)
+        });
+        this.dispatchAction("input", this.currentHoveredElement, null, {
+          inputText: this.getInputValue(element)
+        });
+      }, delay);
     }
     isTextEditingKey(e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return false;
@@ -18187,13 +18858,57 @@
     isTextInputElement(element) {
       const tag = element?.tagName?.toLowerCase();
       const type = element?.getAttribute?.("type");
-      return tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type)) || tag === "textarea" || element?.isContentEditable;
+      return tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type)) || tag === "textarea" || element?.isContentEditable || this.isValueBackedTextHost(element);
+    }
+    isValueBackedTextHost(element) {
+      if (!element || element.nodeType !== 1) return false;
+      const tag = element.tagName?.toLowerCase?.() || "";
+      if (["ion-input", "ion-textarea", "md-input", "vaadin-text-field", "vaadin-text-area"].includes(tag)) return true;
+      if (element.getAttribute?.("contenteditable") === "true") return true;
+      if (typeof element.value !== "string") return false;
+      return element.matches?.("[role='textbox'], [data-gjs-type='text'], [data-field], [data-testid], [aria-label]") || tag.includes("input") || tag.includes("textarea");
+    }
+    getTextInputEventTarget(e) {
+      const path = typeof e?.composedPath === "function" ? e.composedPath() : [];
+      for (const item of path) {
+        if (this.isTextInputElement(item) || this.isRangeInput(item) || this.isColorInput(item)) return item;
+      }
+      return this.isTextInputElement(e?.target) || this.isRangeInput(e?.target) || this.isColorInput(e?.target) ? e.target : null;
+    }
+    debugInputEvent(stage, e, extra = {}) {
+      try {
+        const path = typeof e?.composedPath === "function" ? e.composedPath() : [];
+        console.log("[RecorderInputDebug][Iframe]", stage, {
+          eventType: e?.type,
+          isTrusted: e?.isTrusted,
+          isComposing: e?.isComposing,
+          inputType: e?.inputType,
+          data: e?.data,
+          rawTarget: this.describeDebugElement(e?.target),
+          rawValue: this.getInputValue(e?.target),
+          path: path.slice(0, 6).map((item) => this.describeDebugElement(item)),
+          ...extra
+        });
+      } catch (error) {
+        console.warn("[RecorderInputDebug][Iframe] log failed", stage, error);
+      }
+    }
+    debugInputTarget(stage, element, extra = {}) {
+      try {
+        console.log("[RecorderInputDebug][Iframe]", stage, {
+          target: this.describeDebugElement(element),
+          value: this.getInputValue(element),
+          ...extra
+        });
+      } catch (error) {
+        console.warn("[RecorderInputDebug][Iframe] log failed", stage, error);
+      }
     }
     setReloadSuppressWindow(ms = 1500) {
       try {
         this.iframeWindow?.sessionStorage?.setItem("__recorderSuppressUntil", String(Date.now() + ms));
       } catch (error) {
-        console.warn("[Recorder] Unable to set reload suppress window", error);
+        console.warn("[Recorder] Unable to set iframe reload suppress window", error);
       }
     }
     shouldSuppressSyntheticPageEvent() {
@@ -18309,56 +19024,44 @@
           this.syncToGlobalStorage(newLine, savedAction);
         }
       });
-      if (typeof chrome !== "undefined" && chrome.storage) {
-        chrome.storage.local.get(["latestPopupAlias", "recorderStatus"], (result) => {
-          if (window.opener && result.latestPopupAlias) {
-            this.pageAlias = result.latestPopupAlias;
-            this.codeGenerator.pageAlias = this.pageAlias;
-            console.log(`\u{1F194} [MainApp] \u8A8D\u9818\u8EAB\u5206\u6210\u529F\uFF01\u6211\u7684 Playwright \u8B8A\u6578\u540D\u7A31\u662F: ${this.pageAlias}`);
-            chrome.storage.local.remove("latestPopupAlias");
-          }
-          if (result.recorderStatus === "recording") {
-            this.autoStart();
-          }
-        });
-      }
+      this.safeChromeStorageGet(["latestPopupAlias", "recorderStatus"], (result) => {
+        if (window.opener && result.latestPopupAlias) {
+          this.pageAlias = result.latestPopupAlias;
+          this.codeGenerator.pageAlias = this.pageAlias;
+          console.log(`\u{1F194} [MainApp] \u8A8D\u9818\u8EAB\u5206\u6210\u529F\uFF01\u6211\u7684 Playwright \u8B8A\u6578\u540D\u7A31\u662F: ${this.pageAlias}`);
+          this.safeChromeStorageRemove("latestPopupAlias");
+        }
+        if (result.recorderStatus === "recording") {
+          this.autoStart();
+        }
+      });
     }
     // 🌟 貼上這個新方法：專門處理 Background 傳來的跨世界/原生 Popup 事件
     // ==================== myrecorderRestructure/MainApp1.js ====================
     // 將這段函式加在 MainApp1 類別裡面
     // 接收 Background 傳來的原生 Popup 通知
     setupBackgroundMessageListener() {
-      if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.onMessage) return;
-      chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-        if (this.isStarted && message.type === "NATIVE_POPUP_DETECTED") {
-          console.log("\u{1F30D} [MainApp] \u63A5\u6536\u5230 Background \u50B3\u4F86\u7684\u65B0\u8996\u7A97\u60C5\u5831\uFF1A", message.url);
-          const action = {
-            type: "popup",
-            popupId: message.popupId,
-            url: message.url,
-            ts: Date.now()
-          };
-          const newLine = this.appendGeneratedCode(action);
-          this.attachGeneratedCodeToAction(action, newLine);
-          const savedAction = this.addGeneratedAction(action, newLine);
-          this.syncToGlobalStorage(newLine, savedAction);
-          try {
-            chrome.runtime.sendMessage({
-              type: "display_code",
-              code: this.command.codeGetter ? this.command.codeGetter() : this.getGeneratedCode()
-            }).catch(() => {
-            });
-            chrome.runtime.sendMessage({
-              type: "display_useraction",
-              action: this.getActions()
-            }).catch(() => {
-            });
-          } catch (e) {
-            console.warn("[MainApp] UI \u540C\u6B65\u5931\u6557:", e);
+      if (!this.isExtensionContextAvailable() || !chrome.runtime?.onMessage) return;
+      try {
+        chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+          if (this.isStarted && message.type === "NATIVE_POPUP_DETECTED") {
+            console.log("\u{1F30D} [MainApp] \u63A5\u6536\u5230 Background \u50B3\u4F86\u7684\u65B0\u8996\u7A97\u60C5\u5831\uFF1A", message.url);
+            const action = {
+              type: "popup",
+              popupId: message.popupId,
+              url: message.url,
+              ts: Date.now()
+            };
+            const newLine = this.appendGeneratedCode(action);
+            this.attachGeneratedCodeToAction(action, newLine);
+            const savedAction = this.addGeneratedAction(action, newLine);
+            this.syncToGlobalStorage(newLine, savedAction);
           }
-        }
-        return false;
-      });
+          return false;
+        });
+      } catch (error) {
+        this.handleExtensionContextError(error, "setup background message listener");
+      }
     }
     setupNativeDialogListener() {
       this.rootWin.addEventListener("message", (event) => {
@@ -18380,14 +19083,106 @@
         });
       });
     }
+    isExtensionContextAvailable() {
+      try {
+        return typeof chrome !== "undefined" && !!chrome.runtime?.id;
+      } catch (error) {
+        return false;
+      }
+    }
+    handleExtensionContextError(error, operation) {
+      const message = error?.message || String(error);
+      if (message.includes("Extension context invalidated")) {
+        console.warn(`[MainApp] Extension context invalidated while trying to ${operation}. Please reload the page after reloading the extension.`);
+        return true;
+      }
+      console.warn(`[MainApp] Chrome extension API failed while trying to ${operation}`, error);
+      return false;
+    }
+    safeChromeStorageGet(keys, callback) {
+      if (!this.isExtensionContextAvailable() || !chrome.storage?.local) return;
+      try {
+        chrome.storage.local.get(keys, (result) => {
+          const runtimeError = chrome.runtime?.lastError;
+          if (runtimeError) {
+            this.handleExtensionContextError(runtimeError, "read chrome storage");
+            return;
+          }
+          callback(result || {});
+        });
+      } catch (error) {
+        this.handleExtensionContextError(error, "read chrome storage");
+      }
+    }
+    safeChromeStorageSet(value) {
+      if (!this.isExtensionContextAvailable() || !chrome.storage?.local) return;
+      try {
+        chrome.storage.local.set(value, () => {
+          const runtimeError = chrome.runtime?.lastError;
+          if (runtimeError) this.handleExtensionContextError(runtimeError, "write chrome storage");
+        });
+      } catch (error) {
+        this.handleExtensionContextError(error, "write chrome storage");
+      }
+    }
+    safeChromeStorageRemove(keys) {
+      if (!this.isExtensionContextAvailable() || !chrome.storage?.local) return;
+      try {
+        chrome.storage.local.remove(keys, () => {
+          const runtimeError = chrome.runtime?.lastError;
+          if (runtimeError) this.handleExtensionContextError(runtimeError, "remove chrome storage");
+        });
+      } catch (error) {
+        this.handleExtensionContextError(error, "remove chrome storage");
+      }
+    }
+    safeChromeSendMessage(message) {
+      if (!this.isExtensionContextAvailable() || !chrome.runtime?.sendMessage) return null;
+      try {
+        const result = chrome.runtime.sendMessage(message);
+        if (result?.catch) {
+          result.catch((error) => this.handleExtensionContextError(error, "send chrome runtime message"));
+        }
+        return result;
+      } catch (error) {
+        this.handleExtensionContextError(error, "send chrome runtime message");
+        return null;
+      }
+    }
     isKnownFrameSource(sourceWindow) {
       if (!sourceWindow || !this.registry || typeof this.registry.getContextsByType !== "function") return false;
       return this.registry.getContextsByType("iframe").some((ctx) => ctx.windowRef === sourceWindow);
+    }
+    createContextSnapshot(ctx) {
+      if (!ctx) return null;
+      return {
+        contextId: ctx.contextId || null,
+        type: ctx.type || null,
+        parentContextId: ctx.parentContextId || null,
+        openerContextId: ctx.openerContextId || null,
+        frameSelector: ctx.frameSelector || null,
+        url: ctx.url || null,
+        frameId: ctx.frameElement?.id || null,
+        frameName: ctx.frameElement?.name || null,
+        frameTitle: ctx.frameElement?.getAttribute?.("title") || null,
+        frameSrc: ctx.frameElement?.getAttribute?.("src") || null,
+        resolvedFrameSrc: ctx.frameElement?.src || null
+      };
     }
     // 統一處理來自各個 Listener (Page/Iframe/Popup) 的互動動作
     handleUserAction(action) {
       if (!this.isStarted) return;
       console.log("[Debug MainApp] \u63A5\u6536\u5230 Action:", action.type, action);
+      console.log("[RecorderDebug][MainApp handleUserAction] received", {
+        actionType: action.type,
+        sourceWindow: action.sourceWindow,
+        targetWindow: action.targetWindow,
+        sourceElement: this.describeDebugElement(
+          typeof action.getSourceElement === "function" ? action.getSourceElement() : null
+        ),
+        hasPreParsedSourcePath: !!action.preParsedSourcePath,
+        preParsedSummary: this.summarizeDebugSourcePath(action.preParsedSourcePath)
+      });
       if (action.type === "dragANDdrop") {
         if (action.isDragStart) {
           const sourcePath = this.domParserService.getOpenSourcePath(
@@ -18397,6 +19192,7 @@
           console.log("[Debug MainApp] \u9810\u89E3\u6790\u5B8C\u6210\u7684\u8DEF\u5F91:", sourcePath);
           this.store.startDragSession({
             sourceContextId: action.sourceWindow,
+            sourceContext: action.sourceContext || null,
             sourceElementInfo: action.getSourceElement(),
             sourcePath
             // 預先存好解析結果
@@ -18407,6 +19203,13 @@
           const session = this.store.getDragSession();
           if (!session.isDragging) return;
           action.setSourceWindow(session.sourceContextId);
+          if (session.sourceContext) {
+            if (typeof action.setSourceContext === "function") {
+              action.setSourceContext(session.sourceContext);
+            } else {
+              action.sourceContext = session.sourceContext;
+            }
+          }
           action.setSourceElement(session.sourceElementInfo);
           action.preParsedSourcePath = session.sourcePath;
           this.store.endDragSession();
@@ -18415,19 +19218,15 @@
       const newLine = this.appendGeneratedCode(action);
       this.attachGeneratedCodeToAction(action, newLine);
       const savedAction = this.addGeneratedAction(action, newLine);
+      console.log("[RecorderDebug][MainApp handleUserAction] saved action", {
+        actionType: savedAction?.type,
+        sourceMethod: savedAction?.sourceMethod,
+        sourceData: savedAction?.sourceData,
+        sourceDomPathChain: savedAction?.sourceDomPathChain || [],
+        sourceDomPathOptions: savedAction?.sourceDomPathOptions || [],
+        generatedCodeLines: savedAction?.generatedCodeLines || []
+      });
       this.syncToGlobalStorage(newLine, savedAction);
-      if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage({
-          type: "display_code",
-          code: this.command.codeGetter ? this.command.codeGetter() : this.getGeneratedCode()
-        }).catch(() => {
-        });
-        chrome.runtime.sendMessage({
-          type: "display_useraction",
-          action: this.getActions()
-        }).catch(() => {
-        });
-      }
     }
     // 啟動錄製器
     // 檔案：myrecorderRestructure/MainApp.js
@@ -18457,17 +19256,14 @@
         this.store.addAction(gotoAction);
       }
       if (initialBatchCode.length > 0) {
-        if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
-          chrome.runtime.sendMessage({
-            type: "APPEND_RECORD_DATA",
-            newCode: initialBatchCode,
-            // 傳送陣列
-            isReplace: false,
-            newAction: gotoAction
-            // 關聯最後一個動作
-          }).catch(() => {
-          });
-        }
+        this.safeChromeSendMessage({
+          type: "APPEND_RECORD_DATA",
+          newCode: initialBatchCode,
+          // 傳送陣列
+          isReplace: false,
+          newAction: gotoAction
+          // 關聯最後一個動作
+        });
       }
       this.isStarted = true;
       this.store.setRecording(true);
@@ -18493,9 +19289,7 @@
     }
     // 停止錄製器
     stop() {
-      if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.set({ isRecordingSessionActive: false });
-      }
+      this.safeChromeStorageSet({ isRecordingSessionActive: false });
       if (!this.isStarted) return this.getState();
       this.stopDynamicFrameWatcher();
       this.navigationTracker.stop();
@@ -18602,18 +19396,6 @@
       this.attachGeneratedCodeToAction(action, newLine);
       const savedAction = this.addGeneratedAction(action, newLine);
       this.syncToGlobalStorage(newLine, savedAction);
-      if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage({
-          type: "display_code",
-          code: this.command.codeGetter ? this.command.codeGetter() : this.getGeneratedCode()
-        }).catch(() => {
-        });
-        chrome.runtime.sendMessage({
-          type: "display_useraction",
-          action: this.getActions()
-        }).catch(() => {
-        });
-      }
     }
     // 將 Registry 裡的環境資料同步到 Store 中集中管理
     syncRegistryToStore() {
@@ -18642,6 +19424,39 @@
         return this.codeGenerator._getContextPrefix(contextId);
       }
       return contextId;
+    }
+    summarizeDebugSourcePath(sourcePath) {
+      if (!sourcePath) return null;
+      const summary = {};
+      Object.keys(sourcePath).forEach((key) => {
+        const item = sourcePath[key];
+        if (!item) return;
+        summary[key] = {
+          funName: item.funName,
+          csspath: item.obj?.csspath || null,
+          shadowChain: item.obj?.shadowChain || [],
+          options: Array.isArray(item.obj?.options) ? item.obj.options.map((option) => ({
+            path: option.path,
+            shadowChain: option.shadowChain || [],
+            score: option.score,
+            U: option.U
+          })) : []
+        };
+      });
+      return summary;
+    }
+    describeDebugElement(element) {
+      if (!element || element.nodeType !== 1) return String(element);
+      const attrs = {};
+      ["id", "class", "type", "part", "tab", "value", "data-gjs-type", "role", "aria-label"].forEach((name) => {
+        const value = element.getAttribute?.(name);
+        if (value !== null && value !== void 0 && value !== "") attrs[name] = value;
+      });
+      return {
+        tagName: element.tagName,
+        attrs,
+        text: (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80)
+      };
     }
     // 取得產生的完整 Playwright 程式碼字串
     getGeneratedCode() {
@@ -18695,6 +19510,7 @@
         let listener = null;
         const listenerContexts = {
           contextId: ctx.contextId,
+          contextSnapshot: this.createContextSnapshot(ctx),
           // 如果是主頁或彈出視窗，就把它的 windowRef 當作 mainWindow
           mainWindow: ctx.type === "page" || ctx.type === "popup" ? ctx.windowRef : this.rootWin,
           // 如果是 iframe，就把它的 windowRef 給 iframeWindow
@@ -18786,9 +19602,7 @@
     setHoverPreviewSessionEnabled(enabled) {
       this.hoverPreviewSessionEnabled = enabled === true;
       try {
-        if (typeof chrome !== "undefined" && chrome.storage?.local) {
-          chrome.storage.local.set({ hoverPreviewSessionEnabled: this.hoverPreviewSessionEnabled });
-        }
+        this.safeChromeStorageSet({ hoverPreviewSessionEnabled: this.hoverPreviewSessionEnabled });
       } catch (error) {
         console.warn("[MainApp] Unable to persist hover preview session state", error);
       }
@@ -18804,15 +19618,13 @@
     }
     // 🌟 關鍵新增：統一處理增量同步到 Background 的機制
     syncToGlobalStorage(codeResult, action) {
-      if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return;
       const safeAct = this.decorateActionForDisplay(action);
-      chrome.runtime.sendMessage({
+      this.safeChromeSendMessage({
         type: "APPEND_RECORD_DATA",
         newCode: codeResult ? codeResult.code : null,
         isReplace: codeResult ? codeResult.isReplace : false,
         // 傳遞覆寫訊號
         newAction: safeAct
-      }).catch(() => {
       });
       console.log("[Debug MainApp] syncToGlobalStorage sent", {
         newCode: codeResult ? codeResult.code : null,
@@ -18827,9 +19639,70 @@
   function setupRecorderBridge({ MainApp: MainApp2 }) {
     let app = null;
     let isRecording = false;
+    function isExtensionContextAvailable() {
+      try {
+        return typeof chrome !== "undefined" && !!chrome.runtime?.id;
+      } catch (error) {
+        return false;
+      }
+    }
+    function handleExtensionContextError(error, operation) {
+      const message = error?.message || String(error);
+      if (message.includes("Extension context invalidated")) {
+        console.warn(`[Bridge] Extension context invalidated while trying to ${operation}. Please reload the page after reloading the extension.`);
+        return true;
+      }
+      console.warn(`[Bridge] Chrome extension API failed while trying to ${operation}`, error);
+      return false;
+    }
+    function safeSendMessage(message) {
+      if (!isExtensionContextAvailable() || !chrome.runtime?.sendMessage) return null;
+      try {
+        const result = chrome.runtime.sendMessage(message);
+        if (result?.catch) {
+          result.catch((error) => handleExtensionContextError(error, "send runtime message"));
+        }
+        return result;
+      } catch (error) {
+        handleExtensionContextError(error, "send runtime message");
+        return null;
+      }
+    }
+    function safeStorageGet(keys, callback) {
+      if (!isExtensionContextAvailable() || !chrome.storage?.local) return;
+      try {
+        chrome.storage.local.get(keys, (result) => {
+          const runtimeError = chrome.runtime?.lastError;
+          if (runtimeError) {
+            handleExtensionContextError(runtimeError, "read storage");
+            return;
+          }
+          callback(result || {});
+        });
+      } catch (error) {
+        handleExtensionContextError(error, "read storage");
+      }
+    }
+    function safeStorageSet(value) {
+      if (!isExtensionContextAvailable() || !chrome.storage?.local) return;
+      try {
+        chrome.storage.local.set(value, () => {
+          const runtimeError = chrome.runtime?.lastError;
+          if (runtimeError) handleExtensionContextError(runtimeError, "write storage");
+        });
+      } catch (error) {
+        handleExtensionContextError(error, "write storage");
+      }
+    }
     function ensureApp() {
+      if (!isExtensionContextAvailable()) return null;
       if (!app) {
-        app = new MainApp2(document, window);
+        try {
+          app = new MainApp2(document, window);
+        } catch (error) {
+          handleExtensionContextError(error, "create MainApp");
+          return null;
+        }
       }
       return app;
     }
@@ -18845,8 +19718,8 @@
       if (!app) return;
       const localActions = typeof app.getActions === "function" ? app.getActions() : [];
       const localCode = getGeneratedCodeLines();
-      if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.get(["globalActions", "globalCode"], (result) => {
+      if (isExtensionContextAvailable() && chrome.storage?.local) {
+        safeStorageGet(["globalActions", "globalCode"], (result) => {
           const historyActions = result.globalActions || [];
           const historyCode = result.globalCode || [];
           let mergedActions = localActions;
@@ -18856,15 +19729,15 @@
             mergedCode = [...historyCode, ...localCode.slice(-1)];
             if (typeof app.setActions === "function") app.setActions(mergedActions);
           }
-          chrome.storage.local.set({
+          safeStorageSet({
             globalActions: mergedActions,
             globalCode: mergedCode
           });
-          chrome.runtime.sendMessage({
+          safeSendMessage({
             type: "RECORDER_ACTIONS_UPDATE",
             action: mergedActions
           });
-          chrome.runtime.sendMessage({
+          safeSendMessage({
             type: "RECORDER_CODE_UPDATE",
             code: mergedCode
           });
@@ -18873,13 +19746,14 @@
     }
     function startRecording() {
       const instance = ensureApp();
+      if (!instance) return;
       if (typeof instance.setHoverPreviewSessionEnabled === "function") {
         instance.setHoverPreviewSessionEnabled(true);
       }
       if (!isRecording) {
         instance.start();
         isRecording = true;
-        chrome.runtime.sendMessage({
+        safeSendMessage({
           type: "RECORDER_STATUS_UPDATE",
           status: "recording"
         });
@@ -18891,10 +19765,8 @@
         app.stop();
       }
       isRecording = false;
-      if (typeof chrome !== "undefined" && chrome.storage?.local) {
-        chrome.storage.local.set({ hoverPreviewSessionEnabled: false });
-      }
-      chrome.runtime.sendMessage({
+      safeStorageSet({ hoverPreviewSessionEnabled: false });
+      safeSendMessage({
         type: "RECORDER_STATUS_UPDATE",
         status: "idle"
       });
@@ -18903,33 +19775,37 @@
       if (app && typeof app.reset === "function") {
         app.reset();
       }
-      chrome.runtime.sendMessage({ type: "RECORDER_ACTIONS_UPDATE", action: [] });
-      chrome.runtime.sendMessage({ type: "RECORDER_CODE_UPDATE", code: [] });
-      chrome.runtime.sendMessage({ type: "RECORDER_STATUS_UPDATE", status: "idle" });
+      safeSendMessage({ type: "RECORDER_ACTIONS_UPDATE", action: [] });
+      safeSendMessage({ type: "RECORDER_CODE_UPDATE", code: [] });
+      safeSendMessage({ type: "RECORDER_STATUS_UPDATE", status: "idle" });
       isRecording = false;
-      if (typeof chrome !== "undefined" && chrome.storage?.local) {
-        chrome.storage.local.set({ hoverPreviewSessionEnabled: false });
+      safeStorageSet({ hoverPreviewSessionEnabled: false });
+    }
+    if (isExtensionContextAvailable() && chrome.runtime?.onMessage) {
+      try {
+        chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+          if (!message?.type) return;
+          if (window !== window.top) return;
+          if (message.type === "START_RECORDING") {
+            startRecording();
+            sendResponse({ ok: true });
+            return;
+          }
+          if (message.type === "STOP_RECORDING") {
+            stopRecording();
+            sendResponse({ ok: true });
+            return;
+          }
+          if (message.type === "CLEAR_RECORDING") {
+            clearRecording();
+            sendResponse({ ok: true });
+            return;
+          }
+        });
+      } catch (error) {
+        handleExtensionContextError(error, "register runtime message listener");
       }
     }
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      if (!message?.type) return;
-      if (window !== window.top) return;
-      if (message.type === "START_RECORDING") {
-        startRecording();
-        sendResponse({ ok: true });
-        return;
-      }
-      if (message.type === "STOP_RECORDING") {
-        stopRecording();
-        sendResponse({ ok: true });
-        return;
-      }
-      if (message.type === "CLEAR_RECORDING") {
-        clearRecording();
-        sendResponse({ ok: true });
-        return;
-      }
-    });
     window.addEventListener("message", (event) => {
       if (event.source !== window || !event.data || event.data.source !== "RECORDER_EXTENSION") return;
       if (window !== window.top) return;
@@ -18937,9 +19813,9 @@
       if (event.data.type === "STOP_RECORDING") stopRecording();
       if (event.data.type === "CLEAR_RECORDING") clearRecording();
     });
-    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+    if (isExtensionContextAvailable() && chrome.storage?.local) {
       if (window === window.top) {
-        chrome.storage.local.get(["recorderStatus"], (result) => {
+        safeStorageGet(["recorderStatus"], (result) => {
           console.log(`\u{1F309} [Bridge] \u9802\u5C64\u8996\u7A97\u555F\u52D5\uFF0C\u6AA2\u67E5\u5168\u57DF\u72C0\u614B:`, result);
           if (result && result.recorderStatus === "recording") {
             console.log("\u{1F30D} [Bridge] \u5075\u6E2C\u5230\u5168\u57DF\u9304\u88FD\u72C0\u614B\u70BA ON\uFF0C\u6E96\u5099\u81EA\u52D5\u559A\u9192\uFF01");

@@ -24,8 +24,10 @@ export class RecorderStore {
       dragSession: {
         isDragging: false,
         sourceContextId: null,
+        sourceContext: null,
         sourceElementInfo: null,
         targetContextId: null,
+        targetContext: null,
         targetElementInfo: null
       },
 
@@ -228,22 +230,25 @@ export class RecorderStore {
 
   // ===== Drag session =====
   // 修改 RecorderStore.js
-startDragSession({ sourceContextId = null, sourceElementInfo = null, sourcePath = null } = {}) {
+startDragSession({ sourceContextId = null, sourceContext = null, sourceElementInfo = null, sourcePath = null } = {}) {
   this.state.dragSession = {
     isDragging: true,
     sourceContextId,
+    sourceContext,
     sourceElementInfo,
     sourcePath, // <=== 必須新增這一行，把解析好的路徑存起來！
     targetContextId: null,
+    targetContext: null,
     targetElementInfo: null
   };
   this.notify();
 }
 
-  updateDragTarget({ targetContextId = null, targetElementInfo = null } = {}) {
+  updateDragTarget({ targetContextId = null, targetContext = null, targetElementInfo = null } = {}) {
     if (!this.state.dragSession.isDragging) return;
 
     this.state.dragSession.targetContextId = targetContextId;
+    this.state.dragSession.targetContext = targetContext;
     this.state.dragSession.targetElementInfo = targetElementInfo;
     this.notify();
   }
@@ -258,8 +263,10 @@ startDragSession({ sourceContextId = null, sourceElementInfo = null, sourcePath 
     this.state.dragSession = {
       isDragging: false,
       sourceContextId: null,
+      sourceContext: null,
       sourceElementInfo: null,
       targetContextId: null,
+      targetContext: null,
       targetElementInfo: null
     };
 
@@ -296,8 +303,10 @@ startDragSession({ sourceContextId = null, sourceElementInfo = null, sourcePath 
     this.state.dragSession = {
       isDragging: false,
       sourceContextId: null,
+      sourceContext: null,
       sourceElementInfo: null,
       targetContextId: null,
+      targetContext: null,
       targetElementInfo: null
     };
     this.state.pendingPopup = null;

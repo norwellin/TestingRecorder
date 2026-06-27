@@ -14,6 +14,7 @@ export class OuterEventListener {
     this.onActionRecorded = onActionRecorded;
     // 綁定當前 Listener 所在的 contextId (例如 'page', 'popup_1', 'iframe_2')
     this.contextId = contexts?.contextId || 'page';
+    this.contextSnapshot = contexts?.contextSnapshot || null;
 
     this.DOMElement = new DOMElement();
     this.currentHoveredElement = null;
@@ -22,6 +23,7 @@ export class OuterEventListener {
     this.initialInputValues = new WeakMap();
     this.lastUserTypedAt = new WeakMap();
     this.userEditedInputs = new WeakSet();
+    this.composingInputs = new WeakSet();
     this.lastColorInput = new WeakMap();
     this.dragStart = { x: 0, y: 0 };
     this.isDragging = false;
@@ -55,6 +57,8 @@ export class OuterEventListener {
     this.mainDocument.addEventListener('dblclick', this.dblClickHandler.bind(this), true);
     this.mainDocument.addEventListener('keydown', this.keydownHandler.bind(this));
     this.mainDocument.addEventListener("change", this.changeHandler.bind(this), true);
+    this.mainDocument.addEventListener("compositionstart", this.compositionStartHandler.bind(this), true);
+    this.mainDocument.addEventListener("compositionend", this.compositionEndHandler.bind(this), true);
     this.mainDocument.addEventListener("input", this.inputHandler.bind(this), true);
     
     // 必須 preventDefault 才能觸發 drop
@@ -99,6 +103,19 @@ export class OuterEventListener {
     );
 
     // 寫入額外資料
+    if (typeof action.setSourceContext === "function") {
+      action.setSourceContext(this.contextSnapshot);
+    } else {
+      action.sourceContext = this.contextSnapshot;
+    }
+    if (targetElement) {
+      if (typeof action.setTargetContext === "function") {
+        action.setTargetContext(this.contextSnapshot);
+      } else {
+        action.targetContext = this.contextSnapshot;
+      }
+    }
+
     if (extraData.keyboard) action.setKeyboard(extraData.keyboard);
     if (extraData.inputText !== undefined) action.setInputText(extraData.inputText);
     if (extraData.selectedValue !== undefined) action.setSelectedValue(extraData.selectedValue);
@@ -126,45 +143,138 @@ export class OuterEventListener {
   }
 
   inputHandler(e) {
-    if (!this.isRecording || !e.isTrusted) return;
-    if (this.shouldSuppressSyntheticPageEvent()) return;
-    const tag = e.target.tagName.toLowerCase();
-    const type = e.target.getAttribute("type");
-    const isRange = this.isRangeInput(e.target);
+    this.debugInputEvent("input:received", e);
+    if (!this.isRecording || !e.isTrusted) {
+      this.debugInputEvent("input:ignored-recording-or-untrusted", e, {
+        isRecording: this.isRecording,
+        isTrusted: e.isTrusted
+      });
+      return;
+    }
+    if (this.shouldSuppressSyntheticPageEvent()) {
+      this.debugInputEvent("input:ignored-suppressed", e);
+      return;
+    }
+    const eventTarget = this.getTextInputEventTarget(e);
+    const target = eventTarget || e.target;
+    this.debugInputEvent("input:target-resolved", e, {
+      resolvedTarget: this.describeDebugElement(target),
+      resolvedValue: this.getInputValue(target),
+      usedComposedPathTarget: !!eventTarget
+    });
+    const tag = target.tagName.toLowerCase();
+    const type = target.getAttribute("type");
+    const isRange = this.isRangeInput(target);
 
     if (isRange) {
       clearTimeout(this.timer);
       this.timer = setTimeout(() => {
-        this.currentHoveredElement = e.target;
+        this.currentHoveredElement = target;
         this.dispatchAction("range", this.currentHoveredElement, null, {
-          inputText: e.target.value
+          inputText: target.value
         });
       }, 250);
       return;
     }
 
-    if (this.isColorInput(e.target)) {
-      this.recordColorInput(e.target);
+    if (this.isColorInput(target)) {
+      this.recordColorInput(target);
       return;
     }
 
     const isTextInput =
       (tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type))) ||
       tag === "textarea" ||
-      e.target.isContentEditable;
+      target.isContentEditable ||
+      this.isValueBackedTextHost(target);
 
-    if (!isTextInput) return; 
-    if (!this.shouldRecordTextInputEvent(e.target)) return;
-
-    clearTimeout(this.timer);
-    const target = e.target;
-    this.timer = setTimeout(() => {
-      if (!this.isRecording || !this.shouldRecordTextInputEvent(target)) return;
-      this.currentHoveredElement = target;
-      this.dispatchAction("input", this.currentHoveredElement, null, {
-        inputText: this.getInputValue(target)
+    if (!isTextInput) {
+      this.debugInputEvent("input:ignored-not-text-input", e, {
+        resolvedTarget: this.describeDebugElement(target),
+        tag,
+        type,
+        hasStringValue: typeof target?.value === "string",
+        isContentEditable: target?.isContentEditable === true
       });
-    }, 500);
+      return;
+    }
+    this.markTextInputEdited(target);
+    if (e.isComposing || this.composingInputs.has(target)) {
+      this.debugInputEvent("input:ignored-composing", e, {
+        isComposing: e.isComposing,
+        composingSetHasTarget: this.composingInputs.has(target),
+        value: this.getInputValue(target)
+      });
+      return;
+    }
+    if (!this.shouldRecordTextInputEvent(target)) {
+      this.debugInputEvent("input:ignored-should-record-false", e, {
+        value: this.getInputValue(target),
+        initialValue: this.initialInputValues.get(target),
+        userEdited: this.userEditedInputs.has(target)
+      });
+      return;
+    }
+
+    this.debugInputEvent("input:schedule-record", e, {
+      value: this.getInputValue(target)
+    });
+    this.scheduleTextInputRecord(target);
+  }
+
+  compositionStartHandler(e) {
+    this.debugInputEvent("compositionstart:received", e);
+    const target = this.getTextInputEventTarget(e);
+    if (!this.isRecording || !e.isTrusted || !this.isTextInputElement(target)) {
+      this.debugInputEvent("compositionstart:ignored", e, {
+        isRecording: this.isRecording,
+        isTrusted: e.isTrusted,
+        resolvedTarget: this.describeDebugElement(target)
+      });
+      return;
+    }
+    this.composingInputs.add(target);
+    this.markTextInputEdited(target);
+    this.debugInputEvent("compositionstart:tracked", e, {
+      resolvedTarget: this.describeDebugElement(target),
+      value: this.getInputValue(target)
+    });
+  }
+
+  compositionEndHandler(e) {
+    this.debugInputEvent("compositionend:received", e);
+    const target = this.getTextInputEventTarget(e);
+    const hasTrustedInputBeforeCompositionEnd = target && (
+      this.userEditedInputs.has(target) ||
+      this.composingInputs.has(target)
+    );
+    if (!this.isRecording || (!e.isTrusted && !hasTrustedInputBeforeCompositionEnd) || !this.isTextInputElement(target)) {
+      this.debugInputEvent("compositionend:ignored", e, {
+        isRecording: this.isRecording,
+        isTrusted: e.isTrusted,
+        hasTrustedInputBeforeCompositionEnd,
+        resolvedTarget: this.describeDebugElement(target)
+      });
+      return;
+    }
+    this.composingInputs.delete(target);
+    this.markTextInputEdited(target);
+    if (this.shouldSuppressSyntheticPageEvent()) {
+      this.debugInputEvent("compositionend:ignored-suppressed", e);
+      return;
+    }
+    if (!this.shouldRecordTextInputEvent(target)) {
+      this.debugInputEvent("compositionend:ignored-should-record-false", e, {
+        value: this.getInputValue(target),
+        initialValue: this.initialInputValues.get(target),
+        userEdited: this.userEditedInputs.has(target)
+      });
+      return;
+    }
+    this.debugInputEvent("compositionend:schedule-record", e, {
+      value: this.getInputValue(target)
+    });
+    this.scheduleTextInputRecord(target, 100);
   }
 
   changeHandler(e) {
@@ -201,12 +311,12 @@ export class OuterEventListener {
 
   keydownHandler(e) {
     if (!this.isRecording) return;
-    if (e.isTrusted && e.target && this.isTextEditingKey(e) && this.isTextInputElement(e.target)) {
-      this.lastUserTypedAt.set(e.target, Date.now());
-      this.userEditedInputs.add(e.target);
+    const target = this.getTextInputEventTarget(e);
+    if (e.isTrusted && target && this.isTextEditingKey(e) && this.isTextInputElement(target)) {
+      this.markTextInputEdited(target);
     }
     if (e.key === 'Backspace') {
-      this.currentHoveredElement = e.target;
+      this.currentHoveredElement = target || e.target;
       this.dispatchAction("keyboard", this.currentHoveredElement, null, {
         keyboard: e.key
       });
@@ -276,6 +386,7 @@ export class OuterEventListener {
 
     try {
       const sourcePath = this.domParserService.getOpenSourcePath(element, this.mainWindow);
+      console.log("[Source Path in Page]: ",sourcePath);
       this.hoverInspector?.show(element, this.formatLocatorPreview(sourcePath));
     } catch (error) {
       console.warn("[Recorder] Unable to preview hovered locator", error);
@@ -359,7 +470,13 @@ export class OuterEventListener {
 
     if (funName === "ByText") return `getByText(${quote(obj.text)}, { exact: true })`;
     if (funName === "ByTitle") return `getByTitle(${quote(obj.title)}, { exact: true })`;
-    if (funName === "ByDomPath") return `locator(${quote(obj.csspath)})`;
+    if (funName === "ByDomPath") {
+      const chain = Array.isArray(obj.shadowChain) ? obj.shadowChain : [];
+      return [
+        ...chain.map(step => `locator(${quote(step.hostSelector)})`),
+        `locator(${quote(obj.csspath)})`
+      ].join(".");
+    }
 
     return funName;
   }
@@ -402,15 +519,22 @@ export class OuterEventListener {
     if (target.tagName === "LABEL" && !this.isRadioOrRadioLabel(target)) return;
     if (target.tagName === "SELECT") return;
     
+    const clickableSelector = this.getClickableSelector();
     let clickable = target;
     if (target.tagName === "INPUT") {
       const label = target.parentElement?.querySelector(`label[for="${target.id}"]`);
-      clickable = label || target.closest(`button, a, [role="button"], [onclick], i, svg`) || target;
+      clickable = label || target.closest(clickableSelector) || target;
     } else {
-      clickable = target.closest(`button, a, [role="button"], [onclick], i, svg`) || target;
+      clickable = target.closest(clickableSelector) || target;
     }
 
     this.currentHoveredElement = clickable;
+    console.log("[RecorderDebug][Outer clickHandler] dispatch click target", {
+      rawTarget: this.describeDebugElement(e.target),
+      composedTarget: this.describeDebugElement(target),
+      clickable: this.describeDebugElement(clickable),
+      clickableRoot: this.describeDebugRoot(clickable?.getRootNode?.())
+    });
     this.dispatchAction("click", this.currentHoveredElement);
   }
 
@@ -448,8 +572,33 @@ export class OuterEventListener {
   }
 
   getComposedEventTarget(e) {
-    const interactive = this.getFirstComposedElement(e, "button, a, [role='button'], [onclick], input, textarea, select, label, [data-thread-id], .thread-item");
-    return interactive || e.target;
+    const debugPath = this.describeDebugComposedPath(e);
+    const ionicInteractive = this.getFirstComposedElement(e, this.getIonicInteractiveSelector());
+    const nativeInteractive = this.getFirstComposedElement(e, this.getNativeInteractiveSelector());
+    const resolved = ionicInteractive || nativeInteractive || e.target;
+
+    console.log("[RecorderDebug][Outer getComposedEventTarget]", {
+      rawTarget: this.describeDebugElement(e.target),
+      composedPath: debugPath,
+      nativeInteractive: this.describeDebugElement(nativeInteractive),
+      ionicInteractive: this.describeDebugElement(ionicInteractive),
+      resolved: this.describeDebugElement(resolved),
+      resolvedRoot: this.describeDebugRoot(resolved?.getRootNode?.())
+    });
+
+    return resolved;
+  }
+
+  getNativeInteractiveSelector() {
+    return "button, a, [role='button'], [onclick], input, textarea, select, label, [data-thread-id], .thread-item";
+  }
+
+  getIonicInteractiveSelector() {
+    return "ion-tab-button, ion-button, ion-segment-button, ion-menu-button, ion-back-button, ion-item[button], ion-item[routerlink], ion-item[href], ion-card[button], ion-card[routerlink], ion-card[href], ion-card-content[button], ion-card-content[routerlink], ion-card-content[href]";
+  }
+
+  getClickableSelector() {
+    return `${this.getNativeInteractiveSelector()}, i, svg, ${this.getIonicInteractiveSelector()}`;
   }
 
   getFirstComposedElement(e, selector) {
@@ -461,6 +610,36 @@ export class OuterEventListener {
       if (closest) return closest;
     }
     return null;
+  }
+
+  describeDebugComposedPath(e) {
+    const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+    return path.slice(0, 8).map(item => this.describeDebugElement(item));
+  }
+
+  describeDebugElement(element) {
+    if (!element || element.nodeType !== 1) return String(element);
+
+    const attrs = {};
+    ["id", "class", "type", "part", "tab", "value", "data-gjs-type", "role", "aria-label"].forEach((name) => {
+      const value = element.getAttribute?.(name);
+      if (value !== null && value !== undefined && value !== "") attrs[name] = value;
+    });
+
+    return {
+      tagName: element.tagName,
+      attrs,
+      text: (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80)
+    };
+  }
+
+  describeDebugRoot(root) {
+    if (!root) return null;
+    return {
+      nodeType: root.nodeType,
+      isShadowRoot: root.nodeType === Node.DOCUMENT_FRAGMENT_NODE && !!root.host,
+      host: this.describeDebugElement(root.host)
+    };
   }
 
   isMouseDragCandidate(element) {
@@ -483,6 +662,7 @@ export class OuterEventListener {
     try {
       this.initialInputValues = new WeakMap();
       this.userEditedInputs = new WeakSet();
+      this.composingInputs = new WeakSet();
       this.mainDocument?.querySelectorAll?.("input, textarea, [contenteditable='true']").forEach((element) => {
         this.initialInputValues.set(element, this.getInputValue(element));
       });
@@ -492,7 +672,7 @@ export class OuterEventListener {
   }
 
   getInputValue(element) {
-    return element?.value ?? element?.innerText ?? "";
+    return element?.value ?? element?.innerText ?? element?.textContent ?? "";
   }
 
   shouldRecordTextInputEvent(element) {
@@ -501,8 +681,41 @@ export class OuterEventListener {
     const value = this.getInputValue(element);
     if (this.initialInputValues.get(element) === value) return false;
 
-    const lastTypedAt = this.lastUserTypedAt.get(element) || 0;
-    return Date.now() - lastTypedAt <= 1500;
+    return true;
+  }
+
+  markTextInputEdited(element) {
+    if (!this.isTextInputElement(element)) return;
+    this.lastUserTypedAt.set(element, Date.now());
+    this.userEditedInputs.add(element);
+  }
+
+  scheduleTextInputRecord(element, delay = 500) {
+    clearTimeout(this.timer);
+    this.debugInputTarget("scheduleTextInputRecord:set-timer", element, {
+      delay,
+      value: this.getInputValue(element)
+    });
+    this.timer = setTimeout(() => {
+      if (!this.isRecording || this.composingInputs.has(element) || !this.shouldRecordTextInputEvent(element)) {
+        this.debugInputTarget("scheduleTextInputRecord:timer-ignored", element, {
+          isRecording: this.isRecording,
+          composingSetHasTarget: this.composingInputs.has(element),
+          shouldRecord: this.shouldRecordTextInputEvent(element),
+          value: this.getInputValue(element),
+          initialValue: this.initialInputValues.get(element),
+          userEdited: this.userEditedInputs.has(element)
+        });
+        return;
+      }
+      this.currentHoveredElement = element;
+      this.debugInputTarget("scheduleTextInputRecord:dispatch-input", element, {
+        value: this.getInputValue(element)
+      });
+      this.dispatchAction("input", this.currentHoveredElement, null, {
+        inputText: this.getInputValue(element)
+      });
+    }, delay);
   }
 
   isTextEditingKey(e) {
@@ -516,8 +729,59 @@ export class OuterEventListener {
     return (
       (tag === "input" && (!type || ["text", "search", "email", "password", "number"].includes(type))) ||
       tag === "textarea" ||
-      element?.isContentEditable
+      element?.isContentEditable ||
+      this.isValueBackedTextHost(element)
     );
+  }
+
+  isValueBackedTextHost(element) {
+    if (!element || element.nodeType !== 1) return false;
+    const tag = element.tagName?.toLowerCase?.() || "";
+    if (["ion-input", "ion-textarea", "md-input", "vaadin-text-field", "vaadin-text-area"].includes(tag)) return true;
+    if (element.getAttribute?.("contenteditable") === "true") return true;
+    if (typeof element.value !== "string") return false;
+    return element.matches?.("[role='textbox'], [data-gjs-type='text'], [data-field], [data-testid], [aria-label]") || tag.includes("input") || tag.includes("textarea");
+  }
+
+  getTextInputEventTarget(e) {
+    const path = typeof e?.composedPath === "function" ? e.composedPath() : [];
+    for (const item of path) {
+      if (this.isTextInputElement(item) || this.isRangeInput(item) || this.isColorInput(item)) return item;
+    }
+    return this.isTextInputElement(e?.target) || this.isRangeInput(e?.target) || this.isColorInput(e?.target)
+      ? e.target
+      : null;
+  }
+
+  debugInputEvent(stage, e, extra = {}) {
+    try {
+      const path = typeof e?.composedPath === "function" ? e.composedPath() : [];
+      console.log("[RecorderInputDebug][Outer]", stage, {
+        eventType: e?.type,
+        isTrusted: e?.isTrusted,
+        isComposing: e?.isComposing,
+        inputType: e?.inputType,
+        data: e?.data,
+        rawTarget: this.describeDebugElement(e?.target),
+        rawValue: this.getInputValue(e?.target),
+        path: path.slice(0, 6).map(item => this.describeDebugElement(item)),
+        ...extra
+      });
+    } catch (error) {
+      console.warn("[RecorderInputDebug][Outer] log failed", stage, error);
+    }
+  }
+
+  debugInputTarget(stage, element, extra = {}) {
+    try {
+      console.log("[RecorderInputDebug][Outer]", stage, {
+        target: this.describeDebugElement(element),
+        value: this.getInputValue(element),
+        ...extra
+      });
+    } catch (error) {
+      console.warn("[RecorderInputDebug][Outer] log failed", stage, error);
+    }
   }
 
   setReloadSuppressWindow(ms = 1500) {

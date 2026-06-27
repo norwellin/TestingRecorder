@@ -2,9 +2,79 @@ export function setupRecorderBridge({ MainApp }) {
   let app = null;
   let isRecording = false;
 
+  function isExtensionContextAvailable() {
+    try {
+      return typeof chrome !== "undefined" && !!chrome.runtime?.id;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function handleExtensionContextError(error, operation) {
+    const message = error?.message || String(error);
+    if (message.includes("Extension context invalidated")) {
+      console.warn(`[Bridge] Extension context invalidated while trying to ${operation}. Please reload the page after reloading the extension.`);
+      return true;
+    }
+
+    console.warn(`[Bridge] Chrome extension API failed while trying to ${operation}`, error);
+    return false;
+  }
+
+  function safeSendMessage(message) {
+    if (!isExtensionContextAvailable() || !chrome.runtime?.sendMessage) return null;
+
+    try {
+      const result = chrome.runtime.sendMessage(message);
+      if (result?.catch) {
+        result.catch((error) => handleExtensionContextError(error, "send runtime message"));
+      }
+      return result;
+    } catch (error) {
+      handleExtensionContextError(error, "send runtime message");
+      return null;
+    }
+  }
+
+  function safeStorageGet(keys, callback) {
+    if (!isExtensionContextAvailable() || !chrome.storage?.local) return;
+
+    try {
+      chrome.storage.local.get(keys, (result) => {
+        const runtimeError = chrome.runtime?.lastError;
+        if (runtimeError) {
+          handleExtensionContextError(runtimeError, "read storage");
+          return;
+        }
+        callback(result || {});
+      });
+    } catch (error) {
+      handleExtensionContextError(error, "read storage");
+    }
+  }
+
+  function safeStorageSet(value) {
+    if (!isExtensionContextAvailable() || !chrome.storage?.local) return;
+
+    try {
+      chrome.storage.local.set(value, () => {
+        const runtimeError = chrome.runtime?.lastError;
+        if (runtimeError) handleExtensionContextError(runtimeError, "write storage");
+      });
+    } catch (error) {
+      handleExtensionContextError(error, "write storage");
+    }
+  }
+
   function ensureApp() {
+    if (!isExtensionContextAvailable()) return null;
     if (!app) {
-      app = new MainApp(document, window);
+      try {
+        app = new MainApp(document, window);
+      } catch (error) {
+        handleExtensionContextError(error, "create MainApp");
+        return null;
+      }
     }
     return app;
   }
@@ -32,9 +102,9 @@ export function setupRecorderBridge({ MainApp }) {
     const localActions = typeof app.getActions === "function" ? app.getActions() : [];
     const localCode = getGeneratedCodeLines();
 
-    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+    if (isExtensionContextAvailable() && chrome.storage?.local) {
       // 1. 先去下載全域的歷史紀錄
-      chrome.storage.local.get(['globalActions', 'globalCode'], (result) => {
+      safeStorageGet(['globalActions', 'globalCode'], (result) => {
         const historyActions = result.globalActions || [];
         const historyCode = result.globalCode || [];
 
@@ -58,18 +128,18 @@ export function setupRecorderBridge({ MainApp }) {
         }
 
         // 3. 把最新的總表存回 Storage，供下一個視窗使用
-        chrome.storage.local.set({ 
+        safeStorageSet({ 
             globalActions: mergedActions,
             globalCode: mergedCode
         });
 
         // 4. 發送給 UI 顯示
-        chrome.runtime.sendMessage({
+        safeSendMessage({
           type: "RECORDER_ACTIONS_UPDATE",
           action: mergedActions
         });
 
-        chrome.runtime.sendMessage({
+        safeSendMessage({
           type: "RECORDER_CODE_UPDATE",
           code: mergedCode
         });
@@ -79,6 +149,7 @@ export function setupRecorderBridge({ MainApp }) {
 
   function startRecording() {
     const instance = ensureApp();
+    if (!instance) return;
     if (typeof instance.setHoverPreviewSessionEnabled === "function") {
       instance.setHoverPreviewSessionEnabled(true);
     }
@@ -86,7 +157,7 @@ export function setupRecorderBridge({ MainApp }) {
       instance.start();
       isRecording = true;
 
-      chrome.runtime.sendMessage({
+      safeSendMessage({
         type: "RECORDER_STATUS_UPDATE",
         status: "recording"
       });
@@ -102,12 +173,10 @@ export function setupRecorderBridge({ MainApp }) {
     }
 
     isRecording = false;
-    if (typeof chrome !== "undefined" && chrome.storage?.local) {
-      chrome.storage.local.set({ hoverPreviewSessionEnabled: false });
-    }
+    safeStorageSet({ hoverPreviewSessionEnabled: false });
     //pushActionsAndCode(); // 停止時把最後一次的狀態推播給背景
 
-    chrome.runtime.sendMessage({
+    safeSendMessage({
       type: "RECORDER_STATUS_UPDATE",
       status: "idle"
     });
@@ -120,21 +189,21 @@ export function setupRecorderBridge({ MainApp }) {
     }
 
     // 發送空資料給背景，同步清除 Storage 狀態
-    chrome.runtime.sendMessage({ type: "RECORDER_ACTIONS_UPDATE", action: [] });
-    chrome.runtime.sendMessage({ type: "RECORDER_CODE_UPDATE", code: [] });
-    chrome.runtime.sendMessage({ type: "RECORDER_STATUS_UPDATE", status: "idle" });
+    safeSendMessage({ type: "RECORDER_ACTIONS_UPDATE", action: [] });
+    safeSendMessage({ type: "RECORDER_CODE_UPDATE", code: [] });
+    safeSendMessage({ type: "RECORDER_STATUS_UPDATE", status: "idle" });
 
     isRecording = false;
-    if (typeof chrome !== "undefined" && chrome.storage?.local) {
-      chrome.storage.local.set({ hoverPreviewSessionEnabled: false });
-    }
+    safeStorageSet({ hoverPreviewSessionEnabled: false });
   }
 
   // ==========================================
   // 監聽器設定 (Listeners)
   // ==========================================
 
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (isExtensionContextAvailable() && chrome.runtime?.onMessage) {
+    try {
+      chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message?.type) return;
     // 🚨 關鍵修復 1：防止 iframe 接收背景指令並重複啟動
     if (window !== window.top) return;
@@ -155,7 +224,11 @@ export function setupRecorderBridge({ MainApp }) {
       sendResponse({ ok: true });
       return;
     }
-  });
+      });
+    } catch (error) {
+      handleExtensionContextError(error, "register runtime message listener");
+    }
+  }
 
   window.addEventListener("message", (event) => {
     if (event.source !== window || !event.data || event.data.source !== "RECORDER_EXTENSION") return;
@@ -178,10 +251,10 @@ export function setupRecorderBridge({ MainApp }) {
 // ==========================================
   // 🌟 關鍵修復：新視窗載入時，自動檢查全域錄製狀態
   // ==========================================
-  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+  if (isExtensionContextAvailable() && chrome.storage?.local) {
     // 🚨 確保只有最頂層的視窗才允許自動喚醒錄製器（防止 iframe 群魔亂舞）
     if (window === window.top) {
-      chrome.storage.local.get(['recorderStatus'], (result) => {
+      safeStorageGet(['recorderStatus'], (result) => {
         console.log(`🌉 [Bridge] 頂層視窗啟動，檢查全域狀態:`, result);
         
         if (result && result.recorderStatus === "recording") {

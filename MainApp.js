@@ -74,8 +74,7 @@ export class MainApp {
     });
 
     // 🌟 關鍵修復：統一處理身分認領與自動喚醒機制
-    if (typeof chrome !== "undefined" && chrome.storage) {
-      chrome.storage.local.get(['latestPopupAlias', 'recorderStatus'], (result) => {
+    this.safeChromeStorageGet(['latestPopupAlias', 'recorderStatus'], (result) => {
 
         // 1. 如果是新視窗，認領自己的專屬變數名稱 (例如 popup_123456)
         if (window.opener && result.latestPopupAlias) {
@@ -84,7 +83,7 @@ export class MainApp {
           console.log(`🆔 [MainApp] 認領身分成功！我的 Playwright 變數名稱是: ${this.pageAlias}`);
 
           // 認領完畢後，把小本本擦掉，以免其他新視窗誤認
-          chrome.storage.local.remove('latestPopupAlias');
+          this.safeChromeStorageRemove('latestPopupAlias');
         }
 
         // 2. 如果整個系統正在錄製中，這個新視窗必須「自動開工」！
@@ -92,7 +91,6 @@ export class MainApp {
           this.autoStart();
         }
       });
-    }
   }
   // 🌟 貼上這個新方法：專門處理 Background 傳來的跨世界/原生 Popup 事件
   // ==================== myrecorderRestructure/MainApp1.js ====================
@@ -100,9 +98,10 @@ export class MainApp {
 
   // 接收 Background 傳來的原生 Popup 通知
   setupBackgroundMessageListener() {
-    if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.onMessage) return;
+    if (!this.isExtensionContextAvailable() || !chrome.runtime?.onMessage) return;
 
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    try {
+      chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // 確認系統正在錄製中，且收到的是 Popup 通知
       if (this.isStarted && message.type === "NATIVE_POPUP_DETECTED") {
         console.log("🌍 [MainApp] 接收到 Background 傳來的新視窗情報：", message.url);
@@ -120,24 +119,12 @@ export class MainApp {
         this.attachGeneratedCodeToAction(action, newLine);
         const savedAction = this.addGeneratedAction(action, newLine);
         this.syncToGlobalStorage(newLine, savedAction);
-
-        // 4. 即時更新畫面 UI
-        try {
-          chrome.runtime.sendMessage({
-            type: "display_code",
-            code: this.command.codeGetter ? this.command.codeGetter() : this.getGeneratedCode()
-          }).catch(() => { });
-
-          chrome.runtime.sendMessage({
-            type: "display_useraction",
-            action: this.getActions()
-          }).catch(() => { });
-        } catch (e) {
-          console.warn("[MainApp] UI 同步失敗:", e);
-        }
       }
       return false; // 非同步安全機制
-    });
+      });
+    } catch (error) {
+      this.handleExtensionContextError(error, "setup background message listener");
+    }
   }
 
   setupNativeDialogListener() {
@@ -162,16 +149,121 @@ export class MainApp {
     });
   }
 
+  isExtensionContextAvailable() {
+    try {
+      return typeof chrome !== "undefined" && !!chrome.runtime?.id;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  handleExtensionContextError(error, operation) {
+    const message = error?.message || String(error);
+    if (message.includes("Extension context invalidated")) {
+      console.warn(`[MainApp] Extension context invalidated while trying to ${operation}. Please reload the page after reloading the extension.`);
+      return true;
+    }
+
+    console.warn(`[MainApp] Chrome extension API failed while trying to ${operation}`, error);
+    return false;
+  }
+
+  safeChromeStorageGet(keys, callback) {
+    if (!this.isExtensionContextAvailable() || !chrome.storage?.local) return;
+
+    try {
+      chrome.storage.local.get(keys, (result) => {
+        const runtimeError = chrome.runtime?.lastError;
+        if (runtimeError) {
+          this.handleExtensionContextError(runtimeError, "read chrome storage");
+          return;
+        }
+        callback(result || {});
+      });
+    } catch (error) {
+      this.handleExtensionContextError(error, "read chrome storage");
+    }
+  }
+
+  safeChromeStorageSet(value) {
+    if (!this.isExtensionContextAvailable() || !chrome.storage?.local) return;
+
+    try {
+      chrome.storage.local.set(value, () => {
+        const runtimeError = chrome.runtime?.lastError;
+        if (runtimeError) this.handleExtensionContextError(runtimeError, "write chrome storage");
+      });
+    } catch (error) {
+      this.handleExtensionContextError(error, "write chrome storage");
+    }
+  }
+
+  safeChromeStorageRemove(keys) {
+    if (!this.isExtensionContextAvailable() || !chrome.storage?.local) return;
+
+    try {
+      chrome.storage.local.remove(keys, () => {
+        const runtimeError = chrome.runtime?.lastError;
+        if (runtimeError) this.handleExtensionContextError(runtimeError, "remove chrome storage");
+      });
+    } catch (error) {
+      this.handleExtensionContextError(error, "remove chrome storage");
+    }
+  }
+
+  safeChromeSendMessage(message) {
+    if (!this.isExtensionContextAvailable() || !chrome.runtime?.sendMessage) return null;
+
+    try {
+      const result = chrome.runtime.sendMessage(message);
+      if (result?.catch) {
+        result.catch((error) => this.handleExtensionContextError(error, "send chrome runtime message"));
+      }
+      return result;
+    } catch (error) {
+      this.handleExtensionContextError(error, "send chrome runtime message");
+      return null;
+    }
+  }
+
   isKnownFrameSource(sourceWindow) {
     if (!sourceWindow || !this.registry || typeof this.registry.getContextsByType !== "function") return false;
     return this.registry
       .getContextsByType("iframe")
       .some((ctx) => ctx.windowRef === sourceWindow);
   }
+
+  createContextSnapshot(ctx) {
+    if (!ctx) return null;
+    return {
+      contextId: ctx.contextId || null,
+      type: ctx.type || null,
+      parentContextId: ctx.parentContextId || null,
+      openerContextId: ctx.openerContextId || null,
+      frameSelector: ctx.frameSelector || null,
+      url: ctx.url || null,
+      frameId: ctx.frameElement?.id || null,
+      frameName: ctx.frameElement?.name || null,
+      frameTitle: ctx.frameElement?.getAttribute?.("title") || null,
+      frameSrc: ctx.frameElement?.getAttribute?.("src") || null,
+      resolvedFrameSrc: ctx.frameElement?.src || null
+    };
+  }
+
   // 統一處理來自各個 Listener (Page/Iframe/Popup) 的互動動作
   handleUserAction(action) {
     if (!this.isStarted) return;
     console.log("[Debug MainApp] 接收到 Action:", action.type, action);
+    console.log("[RecorderDebug][MainApp handleUserAction] received", {
+      actionType: action.type,
+      sourceWindow: action.sourceWindow,
+      targetWindow: action.targetWindow,
+      sourceElement: this.describeDebugElement(
+        typeof action.getSourceElement === "function" ? action.getSourceElement() : null
+      ),
+      hasPreParsedSourcePath: !!action.preParsedSourcePath,
+      preParsedSummary: this.summarizeDebugSourcePath(action.preParsedSourcePath)
+    });
     // ===== 拖放事件 (Drag & Drop) 狀態組裝邏輯 =====
     if (action.type === "dragANDdrop") {
       if (action.isDragStart) {
@@ -183,6 +275,7 @@ export class MainApp {
         console.log("[Debug MainApp] 預解析完成的路徑:", sourcePath); // 檢查點 1
         this.store.startDragSession({
           sourceContextId: action.sourceWindow,
+          sourceContext: action.sourceContext || null,
           sourceElementInfo: action.getSourceElement(),
           sourcePath: sourcePath // 預先存好解析結果
         });
@@ -194,6 +287,13 @@ export class MainApp {
         if (!session.isDragging) return;
 
         action.setSourceWindow(session.sourceContextId);
+        if (session.sourceContext) {
+          if (typeof action.setSourceContext === "function") {
+            action.setSourceContext(session.sourceContext);
+          } else {
+            action.sourceContext = session.sourceContext;
+          }
+        }
         action.setSourceElement(session.sourceElementInfo);
         // 將預先解析好的路徑塞入 action，避免後續重複解析失敗
         action.preParsedSourcePath = session.sourcePath;
@@ -207,21 +307,16 @@ export class MainApp {
     const newLine = this.appendGeneratedCode(action);
     this.attachGeneratedCodeToAction(action, newLine);
     const savedAction = this.addGeneratedAction(action, newLine);
+    console.log("[RecorderDebug][MainApp handleUserAction] saved action", {
+      actionType: savedAction?.type,
+      sourceMethod: savedAction?.sourceMethod,
+      sourceData: savedAction?.sourceData,
+      sourceDomPathChain: savedAction?.sourceDomPathChain || [],
+      sourceDomPathOptions: savedAction?.sourceDomPathOptions || [],
+      generatedCodeLines: savedAction?.generatedCodeLines || []
+    });
     this.syncToGlobalStorage(newLine, savedAction);
 
-
-    // 把最新的狀態發送給擴充功能 UI
-    if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
-      chrome.runtime.sendMessage({
-        type: "display_code",
-        code: this.command.codeGetter ? this.command.codeGetter() : this.getGeneratedCode()
-      }).catch(() => { });
-
-      chrome.runtime.sendMessage({
-        type: "display_useraction",
-        action: this.getActions()
-      }).catch(() => { });
-    }
   }
   // 啟動錄製器
   // 檔案：myrecorderRestructure/MainApp.js
@@ -263,14 +358,12 @@ export class MainApp {
 
     // 4. 🌟 一次性同步所有初始化代碼，防止多次發送導致的覆蓋問題
     if (initialBatchCode.length > 0) {
-      if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage({
+      this.safeChromeSendMessage({
           type: "APPEND_RECORD_DATA",
           newCode: initialBatchCode, // 傳送陣列
           isReplace: false,
           newAction: gotoAction // 關聯最後一個動作
-        }).catch(() => { });
-      }
+        });
     }
 
     this.isStarted = true;
@@ -306,9 +399,7 @@ export class MainApp {
   // 停止錄製器
   stop() {
     // 🌟 新增：錄製結束，清空全域狀態
-    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.set({ isRecordingSessionActive: false });
-    }
+    this.safeChromeStorageSet({ isRecordingSessionActive: false });
     if (!this.isStarted) return this.getState();
 
 
@@ -448,18 +539,6 @@ export class MainApp {
 
     // popup 內部由新視窗自己的 MainApp.autoStart() 註冊，避免父視窗重複綁定並產生 contextId 撞名。
 
-    // 同步更新 UI
-    if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
-      chrome.runtime.sendMessage({
-        type: "display_code",
-        code: this.command.codeGetter ? this.command.codeGetter() : this.getGeneratedCode()
-      }).catch(() => { });
-
-      chrome.runtime.sendMessage({
-        type: "display_useraction",
-        action: this.getActions()
-      }).catch(() => { });
-    }
   }
 
   // 將 Registry 裡的環境資料同步到 Store 中集中管理
@@ -500,6 +579,46 @@ export class MainApp {
     }
 
     return contextId;
+  }
+
+  summarizeDebugSourcePath(sourcePath) {
+    if (!sourcePath) return null;
+
+    const summary = {};
+    Object.keys(sourcePath).forEach((key) => {
+      const item = sourcePath[key];
+      if (!item) return;
+      summary[key] = {
+        funName: item.funName,
+        csspath: item.obj?.csspath || null,
+        shadowChain: item.obj?.shadowChain || [],
+        options: Array.isArray(item.obj?.options)
+          ? item.obj.options.map(option => ({
+              path: option.path,
+              shadowChain: option.shadowChain || [],
+              score: option.score,
+              U: option.U
+            }))
+          : []
+      };
+    });
+    return summary;
+  }
+
+  describeDebugElement(element) {
+    if (!element || element.nodeType !== 1) return String(element);
+
+    const attrs = {};
+    ["id", "class", "type", "part", "tab", "value", "data-gjs-type", "role", "aria-label"].forEach((name) => {
+      const value = element.getAttribute?.(name);
+      if (value !== null && value !== undefined && value !== "") attrs[name] = value;
+    });
+
+    return {
+      tagName: element.tagName,
+      attrs,
+      text: (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80)
+    };
   }
 
   // 取得產生的完整 Playwright 程式碼字串
@@ -561,6 +680,7 @@ export class MainApp {
       // 🚨 修正 2：使用 ctx.windowRef 而不是 ctx.window
       const listenerContexts = {
         contextId: ctx.contextId,
+        contextSnapshot: this.createContextSnapshot(ctx),
         // 如果是主頁或彈出視窗，就把它的 windowRef 當作 mainWindow
         mainWindow: (ctx.type === 'page' || ctx.type === 'popup') ? ctx.windowRef : this.rootWin,
         // 如果是 iframe，就把它的 windowRef 給 iframeWindow
@@ -673,9 +793,7 @@ export class MainApp {
   setHoverPreviewSessionEnabled(enabled) {
     this.hoverPreviewSessionEnabled = enabled === true;
     try {
-      if (typeof chrome !== "undefined" && chrome.storage?.local) {
-        chrome.storage.local.set({ hoverPreviewSessionEnabled: this.hoverPreviewSessionEnabled });
-      }
+      this.safeChromeStorageSet({ hoverPreviewSessionEnabled: this.hoverPreviewSessionEnabled });
     } catch (error) {
       console.warn("[MainApp] Unable to persist hover preview session state", error);
     }
@@ -692,16 +810,14 @@ export class MainApp {
   }
   // 🌟 關鍵新增：統一處理增量同步到 Background 的機制
   syncToGlobalStorage(codeResult, action) {
-    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return;
-
     const safeAct = this.decorateActionForDisplay(action);
 
-    chrome.runtime.sendMessage({
+    this.safeChromeSendMessage({
       type: "APPEND_RECORD_DATA",
       newCode: codeResult ? codeResult.code : null,
       isReplace: codeResult ? codeResult.isReplace : false, // 傳遞覆寫訊號
       newAction: safeAct
-    }).catch(() => { });
+    });
     console.log("[Debug MainApp] syncToGlobalStorage sent", {
       newCode: codeResult ? codeResult.code : null,
       isReplace: codeResult ? codeResult.isReplace : false,
