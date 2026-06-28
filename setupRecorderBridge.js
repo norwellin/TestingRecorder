@@ -197,6 +197,17 @@ export function setupRecorderBridge({ MainApp }) {
     safeStorageSet({ hoverPreviewSessionEnabled: false });
   }
 
+  function updateRecordedAction(message) {
+    const instance = ensureApp();
+    if (!instance || typeof instance.updateRecordedAction !== "function") return false;
+
+    return !!instance.updateRecordedAction(
+      message.actionId,
+      message.actionIndex,
+      message.patch
+    );
+  }
+
   // ==========================================
   // 監聽器設定 (Listeners)
   // ==========================================
@@ -224,6 +235,11 @@ export function setupRecorderBridge({ MainApp }) {
       sendResponse({ ok: true });
       return;
     }
+
+    if (message.type === "UPDATE_RECORDED_ACTION") {
+      sendResponse({ ok: updateRecordedAction(message) });
+      return;
+    }
       });
     } catch (error) {
       handleExtensionContextError(error, "register runtime message listener");
@@ -237,6 +253,7 @@ export function setupRecorderBridge({ MainApp }) {
     if (event.data.type === "START_RECORDING") startRecording();
     if (event.data.type === "STOP_RECORDING") stopRecording();
     if (event.data.type === "CLEAR_RECORDING") clearRecording();
+    if (event.data.type === "UPDATE_RECORDED_ACTION") updateRecordedAction(event.data);
   
   
     

@@ -45,7 +45,8 @@ document.addEventListener("DOMContentLoaded", async function () {
     }
 
     // 5. ?恍皜脫??賢?嚗???蝝?????恍銝? HTML ?”
-    function updateActionsList(actions) {
+    function updateActionsList(actions, { scrollToBottom = false } = {}) {
+        const previousScrollTop = actionsDiv.scrollTop;
         actionsDiv.innerHTML = ""; // ??蝛箇???”
         actionsCountSpan.textContent = `${actions.length} ${actions.length === 1 ? "action" : "actions"}`; // ?湔蝮賣??
 
@@ -78,8 +79,11 @@ document.addEventListener("DOMContentLoaded", async function () {
             actionsDiv.appendChild(actionElement);
         });
 
-        // 霈??株???摨嚗??啁?銝蝑?
-        actionsDiv.scrollTop = actionsDiv.scrollHeight;
+        if (scrollToBottom) {
+            actionsDiv.scrollTop = actionsDiv.scrollHeight;
+        } else {
+            actionsDiv.scrollTop = previousScrollTop;
+        }
     }
     function createCell(text, className = "") {
         const div = document.createElement("div");
@@ -230,9 +234,13 @@ document.addEventListener("DOMContentLoaded", async function () {
 
                 const key = field === "target" ? "targetData" : "sourceData";
                 const chainKey = field === "target" ? "targetDomPathChain" : "sourceDomPathChain";
+                const overrideKey = field === "target"
+                    ? "targetDomPathSelectionOverridden"
+                    : "sourceDomPathSelectionOverridden";
                 const oldValue = actions[actionIndex][key];
                 actions[actionIndex][key] = nextPath;
                 actions[actionIndex][chainKey] = nextChain;
+                actions[actionIndex][overrideKey] = true;
                 await updateDomPathSelection(actionIndex, field, oldValue, nextPath, nextChain);
             });
 
@@ -419,20 +427,77 @@ document.addEventListener("DOMContentLoaded", async function () {
         return text.trim().startsWith("await ");
     }
 
-    function findCodeBodyIndexForAction(codeBody, actionIndex) {
-        let matchedActionIndex = 0;
+    function getActionMethod(action, field = "source") {
+        return field === "target" ? action?.targetMethod : action?.sourceMethod;
+    }
 
-        for (let codeIndex = 0; codeIndex < codeBody.length; codeIndex++) {
-            const action = actions[matchedActionIndex];
-            if (!action) break;
+    function matchesActionLocatorMethod(action, line, field = "source") {
+        const text = String(line || "");
+        const method = getActionMethod(action, field);
 
-            if (!matchesActionCodeLine(action, codeBody[codeIndex])) continue;
+        if (method === "ByRole") return text.includes(".getByRole(");
+        if (method === "ByTitle") return text.includes(".getByTitle(");
+        if (method === "ByText") return text.includes(".getByText(");
+        if (method === "ByPlaceholder") return text.includes(".getByPlaceholder(");
+        if (method === "ByAltText") return text.includes(".getByAltText(");
+        if (method === "ByLabel") return text.includes(".getByLabel(");
+        if (method === "ByDomPath") {
+            return text.includes(".locator(")
+                && !/\.getBy(?:Role|Title|Text|Placeholder|AltText|Label)\(/.test(text);
+        }
+        return true;
+    }
 
-            if (matchedActionIndex === actionIndex) return codeIndex;
-            matchedActionIndex++;
+    function actionContainsDomPath(action, field, path) {
+        if (!path) return true;
+
+        const dataKey = field === "target" ? "targetData" : "sourceData";
+        const optionsKey = field === "target" ? "targetDomPathOptions" : "sourceDomPathOptions";
+        if (action?.[dataKey] === path) return true;
+
+        return (action?.[optionsKey] || []).some(option => {
+            const optionPath = typeof option === "string" ? option : option?.path;
+            return optionPath === path;
+        });
+    }
+
+    function findCodeBodyIndexForAction(codeBody, actionIndex, path = null, field = "source") {
+        const action = actions[actionIndex];
+        if (!action) return -1;
+
+        for (const line of getActionGeneratedLines(action)) {
+            const occurrence = actions.slice(0, actionIndex).filter(previousAction => {
+                return getActionGeneratedLines(previousAction).includes(line);
+            }).length;
+            let codeIndex = -1;
+            let searchFrom = 0;
+            for (let index = 0; index <= occurrence; index++) {
+                codeIndex = codeBody.indexOf(line, searchFrom);
+                if (codeIndex < 0) break;
+                searchFrom = codeIndex + 1;
+            }
+            if (codeIndex >= 0 && matchesActionCodeLine(action, codeBody[codeIndex])) {
+                return codeIndex;
+            }
         }
 
-        return -1;
+        const escapedPath = escapePathForCode(path);
+        const candidates = [];
+        codeBody.forEach((line, codeIndex) => {
+            if (!matchesActionCodeLine(action, line)) return;
+            if (!matchesActionLocatorMethod(action, line, field)) return;
+            if (escapedPath && !String(line).includes(escapedPath)) return;
+            candidates.push(codeIndex);
+        });
+        if (!candidates.length) return -1;
+
+        const ordinal = actions.slice(0, actionIndex).filter(previousAction => {
+            return previousAction?.type === action.type
+                && getActionMethod(previousAction, field) === getActionMethod(action, field)
+                && actionContainsDomPath(previousAction, field, path);
+        }).length;
+
+        return candidates[Math.min(ordinal, candidates.length - 1)];
     }
 
     function replaceDomPathInCodeLine(line, field, oldPath, newPath, newChain = []) {
@@ -495,12 +560,25 @@ document.addEventListener("DOMContentLoaded", async function () {
         const codeBody = Array.isArray(storage.generatedCodeBody) ? [...storage.generatedCodeBody] : [];
         const action = actions[actionIndex];
         const actionLines = getActionGeneratedLines(action);
+        const key = field === "target" ? "targetData" : "sourceData";
+        const chainKey = field === "target" ? "targetDomPathChain" : "sourceDomPathChain";
 
         if (action && actionLines.length) {
+            const matchedCodeIndex = findCodeBodyIndexForAction(codeBody, actionIndex, oldPath, field);
             const nextLines = actionLines.map(line => replaceDomPathInCodeLine(line, field, oldPath, newPath, newChain));
             setActionGeneratedLines(action, nextLines);
+
+            if (matchedCodeIndex >= 0) {
+                codeBody[matchedCodeIndex] = replaceDomPathInCodeLine(
+                    codeBody[matchedCodeIndex],
+                    field,
+                    oldPath,
+                    newPath,
+                    newChain
+                );
+            }
         } else {
-            const codeIndex = findCodeBodyIndexForAction(codeBody, actionIndex);
+            const codeIndex = findCodeBodyIndexForAction(codeBody, actionIndex, oldPath, field);
             if (codeIndex >= 0) {
                 codeBody[codeIndex] = replaceDomPathInCodeLine(codeBody[codeIndex], field, oldPath, newPath, newChain);
             }
@@ -508,12 +586,36 @@ document.addEventListener("DOMContentLoaded", async function () {
 
         const nextCodeBody = buildCodeBodyFromActions(codeBody);
         const generatedCode = wrapPlaywrightCode(nextCodeBody);
+        const recorderPatch = {
+            [key]: newPath,
+            [chainKey]: newChain,
+            [field === "target"
+                ? "targetDomPathSelectionOverridden"
+                : "sourceDomPathSelectionOverridden"]: true,
+            generatedCodeLines: getActionGeneratedLines(action),
+            generatedCodeLine: action?.generatedCodeLine || "",
+            generatedCodeReplacesPrevious: action?.generatedCodeReplacesPrevious === true
+        };
         await chrome.storage.local.set({
             generatedAction: actions,
             generatedCodeBody: nextCodeBody,
             generatedCode
         });
         setCodeView(normalizeCode(generatedCode));
+
+        try {
+            const recorderResponse = await chrome.runtime.sendMessage({
+                type: "UPDATE_RECORDED_ACTION",
+                actionId: action?.id,
+                actionIndex,
+                patch: recorderPatch
+            });
+            if (!recorderResponse?.ok) {
+                console.warn("[Recorded Actions] Failed to synchronize selector with the recorder.");
+            }
+        } catch (error) {
+            console.warn("[Recorded Actions] Unable to contact the recorder.", error);
+        }
     }
 
     async function syncGeneratedCodeWithActions() {
@@ -533,6 +635,13 @@ document.addEventListener("DOMContentLoaded", async function () {
                 }
                 if (nextLines.join("\n") !== actionLines.join("\n")) {
                     setActionGeneratedLines(action, nextLines);
+                    changed = true;
+                }
+
+                const codeIndex = findCodeBodyIndexForAction(codeBody, actionIndex);
+                const generatedActionLine = nextLines.find(line => matchesActionCodeLine(action, line));
+                if (codeIndex >= 0 && generatedActionLine && codeBody[codeIndex] !== generatedActionLine) {
+                    codeBody[codeIndex] = generatedActionLine;
                     changed = true;
                 }
                 return;
@@ -590,7 +699,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         const { generatedCode, generatedAction, recorderStatus } = response.state;
         actions = generatedAction || [];
         setCodeView(normalizeCode(generatedCode)); // 憿舐內蝔?蝣?
-        updateActionsList(actions); // 憿舐內???”
+        updateActionsList(actions, { scrollToBottom: true }); // 憿舐內???”
         updateUI(recorderStatus === "recording"); // ???????
         await syncGeneratedCodeWithActions();
     }
@@ -602,8 +711,11 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
 
         if (changes.generatedAction) {
+            const previousActions = changes.generatedAction.oldValue || [];
             actions = changes.generatedAction.newValue || [];
-            updateActionsList(actions);
+            updateActionsList(actions, {
+                scrollToBottom: actions.length > previousActions.length
+            });
             syncGeneratedCodeWithActions();
         }
 

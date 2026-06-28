@@ -99,7 +99,10 @@ export class DOMParserService {
             priority: optPri, 
             ignore: { 
                 // 霈????蕪?賣瘙箏???class 閰脖?閰脩 (? true 隞?”敹賜)
-                class: (className) => this.isDynamicOrUnstableClass(className),
+                class: (name, value) => String(value || '')
+                    .split(/\s+/)
+                    .filter(Boolean)
+                    .some(className => this.isDynamicOrUnstableClass(className)),
                 attribute: (name, value, defaultPredicate) => {
                     if (name === 'id') return this.isDynamicGeneratedId(value);
                     return typeof defaultPredicate === 'function' ? defaultPredicate(name, value) : false;
@@ -410,7 +413,10 @@ export class DOMParserService {
         root,
         priority: optPri,
         ignore: {
-          class: (className) => this.isDynamicOrUnstableClass(className),
+          class: (name, value) => String(value || '')
+            .split(/\s+/)
+            .filter(Boolean)
+            .some(className => this.isDynamicOrUnstableClass(className)),
           attribute: (name, value, defaultPredicate) => {
             if (name === 'id') return this.isDynamicGeneratedId(value);
             return typeof defaultPredicate === 'function' ? defaultPredicate(name, value) : false;

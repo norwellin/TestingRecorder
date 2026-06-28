@@ -123,6 +123,32 @@ export class RecorderStore {
     this.notify();
   }
 
+  updateAction(actionId, actionIndex, patch) {
+    if (!patch || typeof patch !== 'object') return null;
+
+    let action = null;
+    if (actionId != null) {
+      action = this.state.actions.find(item => item?.id === actionId) || null;
+    }
+
+    if (!action && Number.isInteger(actionIndex)) {
+      action = this.state.actions[actionIndex] || null;
+    }
+
+    if (!action) return null;
+
+    Object.assign(action, patch);
+    if (this.state.currentAction?.id === action.id) {
+      this.state.currentAction = action;
+    }
+    if (this.state.lastAction?.id === action.id) {
+      this.state.lastAction = action;
+    }
+
+    this.notify();
+    return action;
+  }
+
   setCurrentAction(action) {
     this.state.currentAction = action || null;
     if (action) {

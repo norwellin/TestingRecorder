@@ -28,9 +28,11 @@ export class MainApp {
     this.hoverPreviewSessionEnabled = false;
     this.dynamicFrameObserver = null;
     this.dynamicFrameScanTimer = null;
+    this.pendingGrapesDrops = [];
 
     this.setupBackgroundMessageListener();
     this.setupNativeDialogListener();
+    this.setupGrapesDropListener();
 
 
     
@@ -146,6 +148,81 @@ export class MainApp {
         sourceWindow: "ctx_page_0",
         ts: Date.now()
       });
+    });
+  }
+
+  setupGrapesDropListener() {
+    this.rootWin.addEventListener("message", (event) => {
+      const msg = event.data;
+      if (msg?.source !== "RECORDER_PAGE_HOOK") return;
+      if (msg.type !== "RECORDER_GRAPES_DROP" && msg.type !== "RECORDER_GRAPES_READY") return;
+      if (event.source !== this.rootWin && !this.isKnownFrameSource(event.source)) return;
+
+      if (msg.type === "RECORDER_GRAPES_READY") {
+        console.info("[Recorder][GrapesJS] editor detected", {
+          frameUrl: msg.frameUrl,
+          fromIframe: msg.fromIframe === true
+        });
+        return;
+      }
+
+      if (!this.isStarted || !msg.grapesDrop) return;
+      this.handleGrapesDropMetadata({
+        ...msg.grapesDrop,
+        frameUrl: msg.frameUrl || "",
+        fromIframe: msg.fromIframe === true
+      });
+    });
+  }
+
+  handleGrapesDropMetadata(grapesDrop) {
+    const now = Date.now();
+    this.pendingGrapesDrops = this.pendingGrapesDrops
+      .filter((item) => now - Number(item?.capturedAt || now) <= 4000);
+
+    const actions = this.store?.getActions?.() || [];
+    const recentDragAction = [...actions].reverse().find((action) => {
+      if (action?.type !== "dragANDdrop") return false;
+      const actionTime = Number(action.timestamp || action.ts || 0);
+      return actionTime > 0 && Math.abs(now - actionTime) <= 4000;
+    });
+
+    if (!recentDragAction) {
+      this.pendingGrapesDrops.push(grapesDrop);
+      console.debug("[Recorder][GrapesJS] drop metadata queued", grapesDrop);
+      return;
+    }
+
+    this.attachGrapesDropToAction(recentDragAction, grapesDrop);
+    this.safeChromeSendMessage({
+      type: "RECORDER_ACTIONS_UPDATE",
+      action: this.getActions()
+    });
+  }
+
+  attachPendingGrapesDrop(action) {
+    const now = Date.now();
+    this.pendingGrapesDrops = this.pendingGrapesDrops
+      .filter((item) => now - Number(item?.capturedAt || now) <= 4000);
+    const grapesDrop = this.pendingGrapesDrops.pop();
+    if (grapesDrop) this.attachGrapesDropToAction(action, grapesDrop);
+  }
+
+  attachGrapesDropToAction(action, grapesDrop) {
+    if (!action || !grapesDrop) return;
+
+    const current = action.grapesDrop;
+    if (current?.kind === "block-add" && grapesDrop.kind !== "block-add") return;
+
+    action.grapesDrop = grapesDrop;
+    action.grapesDropDetected = true;
+    console.info("[Recorder][GrapesJS] semantic drop attached", {
+      actionId: action.id || null,
+      kind: grapesDrop.kind,
+      parent: grapesDrop.parent,
+      index: grapesDrop.index,
+      previousSibling: grapesDrop.previousSibling,
+      nextSibling: grapesDrop.nextSibling
     });
   }
 
@@ -297,6 +374,7 @@ export class MainApp {
         action.setSourceElement(session.sourceElementInfo);
         // 將預先解析好的路徑塞入 action，避免後續重複解析失敗
         action.preParsedSourcePath = session.sourcePath;
+        this.attachPendingGrapesDrop(action);
 
         this.store.endDragSession();
       }
@@ -512,6 +590,7 @@ export class MainApp {
 
     this.scanResult = null;
     this.activeListeners = [];
+    this.pendingGrapesDrops = [];
     this.isStarted = false;
     return this.getState();
   }
@@ -788,6 +867,10 @@ export class MainApp {
     }
 
     return this.store.addAction(action);
+  }
+
+  updateRecordedAction(actionId, actionIndex, patch) {
+    return this.store.updateAction(actionId, actionIndex, patch);
   }
 
   setHoverPreviewSessionEnabled(enabled) {

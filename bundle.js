@@ -1,5 +1,4 @@
-﻿(() => {
-  window.global ||= window;
+(() => {
   var __create = Object.create;
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -10639,6 +10638,26 @@
       this.state.lastAction = this.state.currentAction;
       this.notify();
     }
+    updateAction(actionId, actionIndex, patch) {
+      if (!patch || typeof patch !== "object") return null;
+      let action = null;
+      if (actionId != null) {
+        action = this.state.actions.find((item) => item?.id === actionId) || null;
+      }
+      if (!action && Number.isInteger(actionIndex)) {
+        action = this.state.actions[actionIndex] || null;
+      }
+      if (!action) return null;
+      Object.assign(action, patch);
+      if (this.state.currentAction?.id === action.id) {
+        this.state.currentAction = action;
+      }
+      if (this.state.lastAction?.id === action.id) {
+        this.state.lastAction = action;
+      }
+      this.notify();
+      return action;
+    }
     setCurrentAction(action) {
       this.state.currentAction = action || null;
       if (action) {
@@ -16254,7 +16273,7 @@
           priority: optPri,
           ignore: {
             // 霈????蕪?賣瘙箏???class 閰脖?閰脩 (? true 隞?”敹賜)
-            class: (className2) => this.isDynamicOrUnstableClass(className2),
+            class: (name, value) => String(value || "").split(/\s+/).filter(Boolean).some((className2) => this.isDynamicOrUnstableClass(className2)),
             attribute: (name, value, defaultPredicate) => {
               if (name === "id") return this.isDynamicGeneratedId(value);
               return typeof defaultPredicate === "function" ? defaultPredicate(name, value) : false;
@@ -16502,7 +16521,7 @@
           root,
           priority: optPri,
           ignore: {
-            class: (className2) => this.isDynamicOrUnstableClass(className2),
+            class: (name, value) => String(value || "").split(/\s+/).filter(Boolean).some((className2) => this.isDynamicOrUnstableClass(className2)),
             attribute: (name, value, defaultPredicate) => {
               if (name === "id") return this.isDynamicGeneratedId(value);
               return typeof defaultPredicate === "function" ? defaultPredicate(name, value) : false;
@@ -17282,12 +17301,16 @@
       this.updateUserActionDB(action, best.funName, best.obj, "source");
       return code;
     }
-    keyboardSetter(inputKey, sourceWindow) {
-      const winPrefix = this._getContextPrefix(sourceWindow);
-      if (inputKey === "Backspace") {
-        return `await ${winPrefix}.keyboard.press('Backspace');`;
+    _getKeyboardPagePrefix(sourceWindow) {
+      let context = this.contextMap.get(sourceWindow);
+      while (context?.type === "iframe") {
+        context = this.contextMap.get(context.parentContextId);
       }
-      return `await ${winPrefix}.keyboard.press(${this.quoteForCode(inputKey)});`;
+      return context ? this._getBaseContextAlias(context) : this._getContextPrefix(sourceWindow);
+    }
+    keyboardSetter(inputKey, sourceWindow) {
+      const pagePrefix = this._getKeyboardPagePrefix(sourceWindow);
+      return `await ${pagePrefix}.keyboard.press(${this.quoteForCode(inputKey)});`;
     }
     dragAndDropCodeSetter(action, targetpath, sourcepath, sourceWindow, targetWindow) {
       const bestSou = this._getBestPath(sourcepath);
@@ -17300,7 +17323,10 @@
       const tarLocator = this._buildLocatorString(tarWinPrefix, bestTar);
       this.updateUserActionDB(action, bestSou.funName, bestSou.obj, "source");
       this.updateUserActionDB(action, bestTar.funName, bestTar.obj, "target");
-      return `await ${souLocator}.dragTo(${tarLocator});`;
+      const dropX = Number(action?.dropPosition?.x);
+      const dropY = Number(action?.dropPosition?.y);
+      const targetPosition = Number.isFinite(dropX) && Number.isFinite(dropY) ? `, { targetPosition: { x: ${dropX}, y: ${dropY} } }` : "";
+      return `await ${souLocator}.dragTo(${tarLocator}${targetPosition});`;
     }
     _getActionContextPrefix(action, field, fallbackContextId) {
       const context = field === "target" ? action?.targetContext : action?.sourceContext;
@@ -17698,6 +17724,7 @@
       if (extraData.selectedText !== void 0) action.setSelectedText(extraData.selectedText);
       if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
       if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
+      if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
       if (extraData.isDragStart) action.isDragStart = true;
       if (extraData.isDrop) action.isDrop = true;
       if (typeof this.onActionRecorded === "function") {
@@ -17710,7 +17737,27 @@
       if (!this.isRecording) return;
       e.preventDefault();
       this.currentHoveredElement = e.target;
-      this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
+      this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, {
+        isDrop: true,
+        dropPosition: this.getDropPosition(e, this.currentHoveredElement)
+      });
+    }
+    getDropPosition(event, targetElement) {
+      if (!event || !targetElement?.getBoundingClientRect) return null;
+      const rect = targetElement.getBoundingClientRect();
+      if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+      const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+      const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+      return {
+        x: Math.round(x * 100) / 100,
+        y: Math.round(y * 100) / 100,
+        xRatio: Math.round(x / rect.width * 1e4) / 1e4,
+        yRatio: Math.round(y / rect.height * 1e4) / 1e4,
+        targetWidth: Math.round(rect.width * 100) / 100,
+        targetHeight: Math.round(rect.height * 100) / 100
+      };
     }
     beforeInputHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
@@ -17867,10 +17914,11 @@
       } : {});
     }
     keydownHandler(e) {
-      if (!this.isRecording) return;
+      if (!this.isRecording || !e.isTrusted || e.repeat) return;
       const target = this.getTextInputEventTarget(e);
-      if (e.isTrusted && target && this.isTextEditingKey(e) && this.isTextInputElement(target)) {
+      if (target && this.isTextEditingKey(e) && this.isTextInputElement(target)) {
         this.markTextInputEdited(target);
+        return;
       }
       if (e.key === "Backspace") {
         this.currentHoveredElement = target || e.target;
@@ -18030,7 +18078,10 @@
         this.mouseDownFlag = false;
         this.dragStepFlag = 0;
         this.suppressClickUntil = Date.now() + 300;
-        this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
+        this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, {
+          isDrop: true,
+          dropPosition: this.getDropPosition(e, this.currentHoveredElement)
+        });
         return;
       }
       this.resetMouseDragState();
@@ -18415,6 +18466,7 @@
       if (extraData.selectedText !== void 0) action.setSelectedText(extraData.selectedText);
       if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
       if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
+      if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
       if (extraData.isDragStart) action.isDragStart = true;
       if (extraData.isDrop) action.isDrop = true;
       if (typeof this.onActionRecorded === "function") {
@@ -18428,7 +18480,27 @@
       if (!this.isRecording) return;
       e.preventDefault();
       this.currentHoveredElement = this.getDragTargetElement(e.target);
-      this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
+      this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, {
+        isDrop: true,
+        dropPosition: this.getDropPosition(e, this.currentHoveredElement)
+      });
+    }
+    getDropPosition(event, targetElement) {
+      if (!event || !targetElement?.getBoundingClientRect) return null;
+      const rect = targetElement.getBoundingClientRect();
+      if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+      const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+      const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+      return {
+        x: Math.round(x * 100) / 100,
+        y: Math.round(y * 100) / 100,
+        xRatio: Math.round(x / rect.width * 1e4) / 1e4,
+        yRatio: Math.round(y / rect.height * 1e4) / 1e4,
+        targetWidth: Math.round(rect.width * 100) / 100,
+        targetHeight: Math.round(rect.height * 100) / 100
+      };
     }
     beforeInputHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
@@ -18585,10 +18657,11 @@
       } : {});
     }
     keydownHandler(e) {
-      if (!this.isRecording) return;
+      if (!this.isRecording || !e.isTrusted || e.repeat) return;
       const target = this.getTextInputEventTarget(e);
-      if (e.isTrusted && target && this.isTextEditingKey(e) && this.isTextInputElement(target)) {
+      if (target && this.isTextEditingKey(e) && this.isTextInputElement(target)) {
         this.markTextInputEdited(target);
+        return;
       }
       if (e.key === "Backspace") {
         this.currentHoveredElement = target || e.target;
@@ -18744,7 +18817,10 @@
         this.mouseDownFlag = false;
         this.dragStepFlag = 0;
         this.suppressClickUntil = Date.now() + 300;
-        this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
+        this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, {
+          isDrop: true,
+          dropPosition: this.getDropPosition(e, this.currentHoveredElement)
+        });
         return;
       }
       this.resetMouseDragState();
@@ -19077,8 +19153,10 @@
       this.hoverPreviewSessionEnabled = false;
       this.dynamicFrameObserver = null;
       this.dynamicFrameScanTimer = null;
+      this.pendingGrapesDrops = [];
       this.setupBackgroundMessageListener();
       this.setupNativeDialogListener();
+      this.setupGrapesDropListener();
       this.registry = new ContextRegistry();
       this.store = new RecorderStore();
       this.domParserService = new DOMParserService({
@@ -19164,6 +19242,68 @@
           sourceWindow: "ctx_page_0",
           ts: Date.now()
         });
+      });
+    }
+    setupGrapesDropListener() {
+      this.rootWin.addEventListener("message", (event) => {
+        const msg = event.data;
+        if (msg?.source !== "RECORDER_PAGE_HOOK") return;
+        if (msg.type !== "RECORDER_GRAPES_DROP" && msg.type !== "RECORDER_GRAPES_READY") return;
+        if (event.source !== this.rootWin && !this.isKnownFrameSource(event.source)) return;
+        if (msg.type === "RECORDER_GRAPES_READY") {
+          console.info("[Recorder][GrapesJS] editor detected", {
+            frameUrl: msg.frameUrl,
+            fromIframe: msg.fromIframe === true
+          });
+          return;
+        }
+        if (!this.isStarted || !msg.grapesDrop) return;
+        this.handleGrapesDropMetadata({
+          ...msg.grapesDrop,
+          frameUrl: msg.frameUrl || "",
+          fromIframe: msg.fromIframe === true
+        });
+      });
+    }
+    handleGrapesDropMetadata(grapesDrop) {
+      const now = Date.now();
+      this.pendingGrapesDrops = this.pendingGrapesDrops.filter((item) => now - Number(item?.capturedAt || now) <= 4e3);
+      const actions = this.store?.getActions?.() || [];
+      const recentDragAction = [...actions].reverse().find((action) => {
+        if (action?.type !== "dragANDdrop") return false;
+        const actionTime = Number(action.timestamp || action.ts || 0);
+        return actionTime > 0 && Math.abs(now - actionTime) <= 4e3;
+      });
+      if (!recentDragAction) {
+        this.pendingGrapesDrops.push(grapesDrop);
+        console.debug("[Recorder][GrapesJS] drop metadata queued", grapesDrop);
+        return;
+      }
+      this.attachGrapesDropToAction(recentDragAction, grapesDrop);
+      this.safeChromeSendMessage({
+        type: "RECORDER_ACTIONS_UPDATE",
+        action: this.getActions()
+      });
+    }
+    attachPendingGrapesDrop(action) {
+      const now = Date.now();
+      this.pendingGrapesDrops = this.pendingGrapesDrops.filter((item) => now - Number(item?.capturedAt || now) <= 4e3);
+      const grapesDrop = this.pendingGrapesDrops.pop();
+      if (grapesDrop) this.attachGrapesDropToAction(action, grapesDrop);
+    }
+    attachGrapesDropToAction(action, grapesDrop) {
+      if (!action || !grapesDrop) return;
+      const current = action.grapesDrop;
+      if (current?.kind === "block-add" && grapesDrop.kind !== "block-add") return;
+      action.grapesDrop = grapesDrop;
+      action.grapesDropDetected = true;
+      console.info("[Recorder][GrapesJS] semantic drop attached", {
+        actionId: action.id || null,
+        kind: grapesDrop.kind,
+        parent: grapesDrop.parent,
+        index: grapesDrop.index,
+        previousSibling: grapesDrop.previousSibling,
+        nextSibling: grapesDrop.nextSibling
       });
     }
     isExtensionContextAvailable() {
@@ -19295,6 +19435,7 @@
           }
           action.setSourceElement(session.sourceElementInfo);
           action.preParsedSourcePath = session.sourcePath;
+          this.attachPendingGrapesDrop(action);
           this.store.endDragSession();
         }
       }
@@ -19460,6 +19601,7 @@
       }
       this.scanResult = null;
       this.activeListeners = [];
+      this.pendingGrapesDrops = [];
       this.isStarted = false;
       return this.getState();
     }
@@ -19682,6 +19824,9 @@
       }
       return this.store.addAction(action);
     }
+    updateRecordedAction(actionId, actionIndex, patch) {
+      return this.store.updateAction(actionId, actionIndex, patch);
+    }
     setHoverPreviewSessionEnabled(enabled) {
       this.hoverPreviewSessionEnabled = enabled === true;
       try {
@@ -19864,6 +20009,15 @@
       isRecording = false;
       safeStorageSet({ hoverPreviewSessionEnabled: false });
     }
+    function updateRecordedAction(message) {
+      const instance = ensureApp();
+      if (!instance || typeof instance.updateRecordedAction !== "function") return false;
+      return !!instance.updateRecordedAction(
+        message.actionId,
+        message.actionIndex,
+        message.patch
+      );
+    }
     if (isExtensionContextAvailable() && chrome.runtime?.onMessage) {
       try {
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -19884,6 +20038,10 @@
             sendResponse({ ok: true });
             return;
           }
+          if (message.type === "UPDATE_RECORDED_ACTION") {
+            sendResponse({ ok: updateRecordedAction(message) });
+            return;
+          }
         });
       } catch (error) {
         handleExtensionContextError(error, "register runtime message listener");
@@ -19895,6 +20053,7 @@
       if (event.data.type === "START_RECORDING") startRecording();
       if (event.data.type === "STOP_RECORDING") stopRecording();
       if (event.data.type === "CLEAR_RECORDING") clearRecording();
+      if (event.data.type === "UPDATE_RECORDED_ACTION") updateRecordedAction(event.data);
     });
     if (isExtensionContextAvailable() && chrome.storage?.local) {
       if (window === window.top) {

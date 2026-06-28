@@ -115,6 +115,7 @@ export class IframeEventListener {
     if (extraData.selectedText !== undefined) action.setSelectedText(extraData.selectedText);
     if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
     if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
+    if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
 
     if (extraData.isDragStart) action.isDragStart = true;
     if (extraData.isDrop) action.isDrop = true;
@@ -131,7 +132,29 @@ export class IframeEventListener {
     if (!this.isRecording) return;
     e.preventDefault();
     this.currentHoveredElement = this.getDragTargetElement(e.target);
-    this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
+    this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, {
+      isDrop: true,
+      dropPosition: this.getDropPosition(e, this.currentHoveredElement)
+    });
+  }
+
+  getDropPosition(event, targetElement) {
+    if (!event || !targetElement?.getBoundingClientRect) return null;
+    const rect = targetElement.getBoundingClientRect();
+    if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+
+    const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+    const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+    return {
+      x: Math.round(x * 100) / 100,
+      y: Math.round(y * 100) / 100,
+      xRatio: Math.round((x / rect.width) * 10000) / 10000,
+      yRatio: Math.round((y / rect.height) * 10000) / 10000,
+      targetWidth: Math.round(rect.width * 100) / 100,
+      targetHeight: Math.round(rect.height * 100) / 100
+    };
   }
 
   beforeInputHandler(e) {
@@ -314,10 +337,11 @@ export class IframeEventListener {
   }
 
   keydownHandler(e) {
-    if (!this.isRecording) return;
+    if (!this.isRecording || !e.isTrusted || e.repeat) return;
     const target = this.getTextInputEventTarget(e);
-    if (e.isTrusted && target && this.isTextEditingKey(e) && this.isTextInputElement(target)) {
+    if (target && this.isTextEditingKey(e) && this.isTextInputElement(target)) {
       this.markTextInputEdited(target);
+      return;
     }
     if (e.key === "Backspace") {
       this.currentHoveredElement = target || e.target;
@@ -499,7 +523,10 @@ export class IframeEventListener {
       this.mouseDownFlag = false;
       this.dragStepFlag = 0;
       this.suppressClickUntil = Date.now() + 300;
-      this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, { isDrop: true });
+      this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, {
+        isDrop: true,
+        dropPosition: this.getDropPosition(e, this.currentHoveredElement)
+      });
       return;
     }
 

@@ -28,7 +28,10 @@ async function getTargetTab() {
   return targetTab || null;
 }
 
-async function sendCommandToRecorder(commandType) {
+async function sendCommandToRecorder(command) {
+  const message = typeof command === "string" ? { type: command } : command;
+  if (!message?.type) return false;
+
   const targetTab = await getTargetTab();
 
   if (!targetTab) {
@@ -41,18 +44,54 @@ async function sendCommandToRecorder(commandType) {
   }
 
   try {
-    await chrome.tabs.sendMessage(targetTab.id, { type: commandType });
+    await chrome.tabs.sendMessage(targetTab.id, message);
+    return true;
   } catch (err) {
     console.warn("tabs.sendMessage failed, trying executeScript fallback:", err);
 
     await chrome.scripting.executeScript({
       target: { tabId: targetTab.id, allFrames: true },
       func: (msg) => {
-        window.postMessage({ source: "RECORDER_EXTENSION", ...msg }, "*");
-      },
-      args: [{ type: commandType }]
+          window.postMessage({ source: "RECORDER_EXTENSION", ...msg }, "*");
+        },
+      args: [message]
     });
+    return true;
   }
+}
+
+function preserveSelectorOverrides(nextAction, storedAction) {
+  if (!nextAction || !storedAction) return nextAction;
+
+  const mergedAction = { ...nextAction };
+  let hasOverride = false;
+
+  ["source", "target"].forEach((field) => {
+    const overrideKey = `${field}DomPathSelectionOverridden`;
+    if (storedAction[overrideKey] !== true) return;
+
+    mergedAction[`${field}Data`] = storedAction[`${field}Data`];
+    mergedAction[`${field}DomPathChain`] = storedAction[`${field}DomPathChain`] || [];
+    mergedAction[overrideKey] = true;
+    hasOverride = true;
+  });
+
+  if (hasOverride) {
+    mergedAction.generatedCodeLines = storedAction.generatedCodeLines || [];
+    mergedAction.generatedCodeLine = storedAction.generatedCodeLine || "";
+    mergedAction.generatedCodeReplacesPrevious = storedAction.generatedCodeReplacesPrevious === true;
+  }
+
+  return mergedAction;
+}
+
+function mergeSelectorOverrides(nextActions, storedActions) {
+  return nextActions.map((nextAction, index) => {
+    const storedAction = nextAction?.id != null
+      ? storedActions.find(action => action?.id === nextAction.id) || storedActions[index]
+      : storedActions[index];
+    return preserveSelectorOverrides(nextAction, storedAction);
+  });
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -70,6 +109,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await chrome.storage.local.set({ recorderStatus: "idle" });
       await sendCommandToRecorder("STOP_RECORDING");
       sendResponse({ ok: true });
+      return;
+    }
+
+    if (message.type === "UPDATE_RECORDED_ACTION") {
+      const updated = await sendCommandToRecorder({
+        type: "UPDATE_RECORDED_ACTION",
+        actionId: message.actionId,
+        actionIndex: message.actionIndex,
+        patch: message.patch
+      });
+      sendResponse({ ok: updated });
       return;
     }
 
@@ -97,8 +147,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           codeBody.push(...newLines);
       }
       
+      let replacedAction = null;
       if (message.isReplace && currentAction.length > 0) {
-          currentAction.pop();
+          replacedAction = currentAction.pop();
       }
 
       if (message.newAction) {
@@ -110,7 +161,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               message.newAction.generatedCodeLine = newLines[newLines.length - 1] || "";
               message.newAction.generatedCodeReplacesPrevious = message.isReplace === true;
           }
-          currentAction.push(message.newAction);
+          currentAction.push(preserveSelectorOverrides(message.newAction, replacedAction));
       }
       
       // 🌟 在這裡單純地套上靜態外框
@@ -170,8 +221,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.type === "RECORDER_ACTIONS_UPDATE" || message.type === "display_useraction") {
+      const data = await chrome.storage.local.get(["generatedAction"]);
+      const storedActions = Array.isArray(data.generatedAction) ? data.generatedAction : [];
+      const nextActions = Array.isArray(message.action) ? message.action : [];
       await chrome.storage.local.set({
-        generatedAction: Array.isArray(message.action) ? message.action : []
+        generatedAction: mergeSelectorOverrides(nextActions, storedActions)
       });
       sendResponse({ ok: true });
       return;

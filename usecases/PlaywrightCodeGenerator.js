@@ -593,12 +593,21 @@ declareContexts(contexts, rootAlias) {
     return code;
   }
 
-  keyboardSetter(inputKey, sourceWindow) {
-    const winPrefix = this._getContextPrefix(sourceWindow);
-    if (inputKey === "Backspace") {
-      return `await ${winPrefix}.keyboard.press('Backspace');`;
+  _getKeyboardPagePrefix(sourceWindow) {
+    let context = this.contextMap.get(sourceWindow);
+
+    while (context?.type === "iframe") {
+      context = this.contextMap.get(context.parentContextId);
     }
-    return `await ${winPrefix}.keyboard.press(${this.quoteForCode(inputKey)});`;
+
+    return context
+      ? this._getBaseContextAlias(context)
+      : this._getContextPrefix(sourceWindow);
+  }
+
+  keyboardSetter(inputKey, sourceWindow) {
+    const pagePrefix = this._getKeyboardPagePrefix(sourceWindow);
+    return `await ${pagePrefix}.keyboard.press(${this.quoteForCode(inputKey)});`;
   }
 
   dragAndDropCodeSetter(action, targetpath, sourcepath, sourceWindow, targetWindow) {
@@ -616,7 +625,13 @@ declareContexts(contexts, rootAlias) {
     this.updateUserActionDB(action, bestSou.funName, bestSou.obj, "source");
     this.updateUserActionDB(action, bestTar.funName, bestTar.obj, "target");
 
-    return `await ${souLocator}.dragTo(${tarLocator});`;
+    const dropX = Number(action?.dropPosition?.x);
+    const dropY = Number(action?.dropPosition?.y);
+    const targetPosition = Number.isFinite(dropX) && Number.isFinite(dropY)
+      ? `, { targetPosition: { x: ${dropX}, y: ${dropY} } }`
+      : "";
+
+    return `await ${souLocator}.dragTo(${tarLocator}${targetPosition});`;
   }
 
   _getActionContextPrefix(action, field, fallbackContextId) {
