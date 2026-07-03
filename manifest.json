@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "My Recorder",
-  "version": "2.0",
+  "name": "My Recorder_Dom new",
+  "version": "1.0",
   "permissions": [
     "scripting",
     "tabs",

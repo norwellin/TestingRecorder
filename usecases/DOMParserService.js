@@ -1,39 +1,32 @@
-﻿// usecases 鞎痊?摩撅?
-import { DOMElement } from './../entities/DOMElement.js';
+﻿// usecases 
 import { DIALOG_SELECTORS as ds } from './../config.js';
-import { getCssSelector } from "css-selector-generator";
-import { select } from 'optimal-select'; // global: 'OptimalSelect'
 
-// ====== ?啣?嚗???@medv/finder ======
+// ====== @medv/finder ======
 import { finder } from '@medv/finder';
+import { InjectedScript } from 'playwright-injected';
 
-// ====== ?啣?嚗???Testing Library ??? API ======
-// ? getRoles
-import { queryAllByRole, queryAllByText, queryAllByTitle, getRoles } from '@testing-library/dom';
-import { computeAccessibleName } from 'dom-accessibility-api';
 
 export class DOMParserService {
   constructor(contexts = {}) {
     this.mainWindow = contexts?.mainWindow || window;
 
-    this.currentDoc = null; // ???脣??嗅?甇?????蝝??撅?Document
+    this.currentDoc = null; 
 
     this.DIALOG_SELECTORS = ds;
-    this.priSize = 4;
-    this.priority = {
-      0: "ByRole", 1: "ByTitle", 2: "ByText", 3: "ByDomPath", 4: "ByPlaceholder", 5: "ByAltText", 6: "ByLabel"
-    };
+    this.priSize = 2;
+    this.priority = { 0: "ByPlaywright", 1: "ByDomPath" };
     this.allAttributeInfo = {
       tagName: null, id: null, className: null, title: null, text: null, placeholder: null, alt: null, ariaLabel: null, role: null
     };
     this.playwrightObj = {
-      ByRole: { name: null, role: null, index: null },
-      ByLabel: {}, ByPlaceholder: {}, ByText: { text: null }, ByTitle: { title: null }, ByAltText: {}, ByDomPath: { csspath: null, shadowChain: [], options: [] }
+      ByPlaywright: { selector: null, selectors: [] },
+      ByDomPath: { csspath: null, shadowChain: [], options: [] }
     };
 
     this.weight = { WL: 0.4, Wc: 0.6, Wa: 1.0, Wcl: 1.0, Wt: 1.0, Wn: 3.0 };
-    // ?? ?啣?嚗靘??曉?憭 (靘?頧?敺? Excel JSON) 霈??摰儔 Regex 閬?
+
     this.customDynamicIdPatterns = [];
+    this.playwrightInjectedScripts = new WeakMap();
   }
 
   getDocumentByWindowType(windowType) {
@@ -54,145 +47,122 @@ export class DOMParserService {
     }
 
     this.cleanInfo();
-    this.setInfo(e); 
+    this.setInfo(e);
     this.clearPlaywrightObj();
-    const shadowChain = this.getShadowChain(e);
-    console.log("[Shadow chain info: ]",e, shadowChain);
-    let isUniqueObj = { ByRole: false, ByTitle: false, ByDomPath: false, ByText: false };
 
-    const cssatt = ["id", "attribute", "class", "tag", "nthchild"];
-    const optPri = ['id', 'data-testid', 'data-thread-id', 'data-action', 'class', 'name', 'placeholder', 'href', 'src'];
+    const generated = this.generateLocatorCandidatesWithPlaywrightInjected(e, realRoot);
+    const result = {};
+    let resultIndex = 0;
 
-    let csskey = 0, optkey = 0, finderkey = 0, structuralkey = 0;
-
-
-    // (A) css-selector-generator
-    let selector = "";
-    try {
-        selector = getCssSelector(e, { 
-            selectors: cssatt, 
-            root: realRoot,
-            blacklist: [
-                (sel) => {
-                    if (typeof sel === 'string') {
-                        // 憒???ID嚗炎?交?衣??鈭Ⅳ
-                        if (sel.startsWith('#')) return this.isDynamicGeneratedId(sel.slice(1)); 
-                        // 憒???Class嚗炎?交?衣銝帘摰?蝝??? Class
-                        if (sel.startsWith('.')) return this.isDynamicOrUnstableClass(sel.slice(1)); 
-                    }
-                    return false;
-                }
-            ]
-        });
-        if (this.findUniqueWithShadowChain(selector, shadowChain, e)) {
-            isUniqueObj.ByDomPath = true; csskey = 1;
-        }
-    } catch (err) {
-        console.warn("[DOMParser] css-selector-generator 閫??憭望?", err);
+    if (generated.playwrightSelector) {
+      this.playwrightObj.ByPlaywright = {
+        selector: generated.playwrightSelector,
+        selectors: generated.playwrightSelectors
+      };
+      result[resultIndex++] = {
+        funName: "ByPlaywright",
+        obj: this.playwrightObj.ByPlaywright
+      };
     }
 
-    // (B) optimal-select
-    let opt_selector = "";
-    try {
-        opt_selector = select(e, { 
-            root: realRoot, 
-            priority: optPri, 
-            ignore: { 
-                // 霈????蕪?賣瘙箏???class 閰脖?閰脩 (? true 隞?”敹賜)
-                class: (name, value) => String(value || '')
-                    .split(/\s+/)
-                    .filter(Boolean)
-                    .some(className => this.isDynamicOrUnstableClass(className)),
-                attribute: (name, value, defaultPredicate) => {
-                    if (name === 'id') return this.isDynamicGeneratedId(value);
-                    return typeof defaultPredicate === 'function' ? defaultPredicate(name, value) : false;
-                }
-            }
-        });
-        if (this.findUniqueWithShadowChain(opt_selector, shadowChain, e)) {
-            isUniqueObj.ByDomPath = true; optkey = 1;
-        }
-    } catch (err) {
-        console.warn("[DOMParser] optimal-select 閫??憭望?", err);
-    }
+    if (generated.finderWithoutIdSelector) {
+      const shadowChain = this.getShadowChain(e);
+      const finderCheck = this.inspectSelectorUniqueness(
+        generated.finderWithoutIdSelector,
+        shadowChain,
+        e,
+        sourceWin
+      );
 
-    // (C) @medv/finder
-    let finder_selector = "";
-    try {
-        finder_selector = finder(e, {
-            root: realRoot,
-            idName: (name) => !this.isDynamicGeneratedId(name),
-            // ?芣????胯?蝛拙? Class ????閮梯◤ finder 雿輻
-            className: (name) => !this.isDynamicOrUnstableClass(name),
-        });
-        if (this.findUniqueWithShadowChain(finder_selector, shadowChain, e)) {
-            isUniqueObj.ByDomPath = true; finderkey = 1;
-        }
-    } catch (err) {
-        console.warn("[DOMParser] finder 閫??憭望?", err);
-    }
-
-    // (D) 純 HTML 結構關聯 path：只使用 tag 與兄弟位置，不依賴 id/class/attribute/text
-    const structural_selector = this.getStructuralCssPath(e, realRoot);
-    if (this.findUniqueWithShadowChain(structural_selector, shadowChain, e)) {
-      isUniqueObj.ByDomPath = true;
-      structuralkey = 1;
-    }
-    console.log("structural select: ",structural_selector);
-    // ==========================================
-    // 3. 閰摯?奎?剜?雿?DOM Path
-    // ==========================================
-    let csspath = this.analyzeCssPath(selector, csskey);
-    let optpath = this.analyzeCssPath(opt_selector, optkey);
-    let finderpath = this.analyzeCssPath(finder_selector, finderkey);
-    let structuralpath = this.analyzeCssPath(structural_selector, structuralkey);
-
-    console.log("csspath: ", csspath);
-    console.log("optpath: ", optpath);
-    console.log("finderpath: ", finderpath);
-    console.log("structuralpath: ", structuralpath);
-    
-    // ?拍??????頂蝯?(Class ?擃??湔?脩蔑 [style]) ?詨?敺?韐振
-    const rankedDomPathOptions = this.rankDomPaths([csspath, optpath, finderpath, structuralpath])
-      .filter(option => !this.hasUnstableAttributeSelector(option.path));
-    const bestDomPathOption = rankedDomPathOptions[0];
-    const structuralOption = rankedDomPathOptions.find(option => option.path === structuralpath.path);
-    const orderedDomPathOptions = structuralOption
-      ? [
-          ...rankedDomPathOptions.filter(option => option.path !== structuralOption.path),
-          structuralOption
-        ]
-      : rankedDomPathOptions;
-    const domPathOptions = orderedDomPathOptions.map(option => ({ ...option, shadowChain }));
-    this.playwrightObj.ByDomPath.csspath = bestDomPathOption?.path || "";
-    this.playwrightObj.ByDomPath.shadowChain = bestDomPathOption ? shadowChain : [];
-    this.playwrightObj.ByDomPath.options = domPathOptions;
-
-    // ==========================================
-    // 4. Playwright ?寞?隤儔摰??? (ByRole, ByTitle, ByText)
-    // ==========================================
-    if (this.getPlaywrightRole(e, sourceWin)) {
-      isUniqueObj.ByRole = true;
-    }
-    if (this.checkUniqueByTitle(e)) {
-      isUniqueObj.ByTitle = true;
-    }
-    if (this.checkUniqueByText(e)) {
-      isUniqueObj.ByText = true;
-    }
-
-    // ==========================================
-    // 5. ??芸?蝝?(Priority) 頛詨蝯?
-    // ==========================================
-    let newObj = {};
-    for (let i = 0; i < this.priSize; i++) {
-      let key = this.priority[i];
-      if (isUniqueObj[key]) {
-          newObj[i] = { funName: key, obj: this.playwrightObj[key] };
+      if (finderCheck.isUnique) {
+        const finderPath = this.analyzeCssPath(generated.finderWithoutIdSelector, 1);
+        this.playwrightObj.ByDomPath = {
+          csspath: generated.finderWithoutIdSelector,
+          shadowChain,
+          options: [{ ...finderPath, shadowChain }]
+        };
+        result[resultIndex++] = {
+          funName: "ByDomPath",
+          obj: this.playwrightObj.ByDomPath
+        };
       }
     }
-    
-    return newObj;
+
+    console.log("[DOMParser] locator candidates", {
+      playwright: generated.playwrightSelector,
+      playwrightAlternatives: generated.playwrightSelectors,
+      finderWithoutId: generated.finderWithoutIdSelector
+    });
+    return resultIndex ? result : null;
+  }
+
+  getPlaywrightInjectedScript(targetDocument) {
+    if (!targetDocument) {
+      throw new Error("[DOMParser] playwright-injected requires an owner document");
+    }
+
+    let injected = this.playwrightInjectedScripts.get(targetDocument);
+    if (injected) return injected;
+
+    const targetWindow = targetDocument.defaultView;
+    if (!targetWindow) {
+      throw new Error("[DOMParser] The target document does not have a window");
+    }
+
+    injected = new InjectedScript(targetWindow, {
+      isUnderTest: false,
+      sdkLanguage: "javascript",
+      testIdAttributeName: "data-testid",
+      stableRafCount: 0,
+      browserName: "chromium",
+      customEngines: []
+    });
+    this.playwrightInjectedScripts.set(targetDocument, injected);
+    return injected;
+  }
+
+  generateLocatorCandidatesWithPlaywrightInjected(el, root = el?.getRootNode?.()) {
+    if (el?.nodeType !== 1 || !root) {
+      return {
+        playwrightSelector: "",
+        playwrightSelectors: [],
+        finderWithoutIdSelector: ""
+      };
+    }
+
+    let playwrightSelector = "";
+    let playwrightSelectors = [];
+    try {
+      const injected = this.getPlaywrightInjectedScript(el.ownerDocument);
+      const generated = injected.generateSelector(el, {
+        testIdAttributeName: "data-testid",
+        multiple: true,
+        root
+      });
+      playwrightSelector = generated.selector || "";
+      playwrightSelectors = [...new Set(
+        [generated.selector, ...(generated.selectors || [])].filter(Boolean)
+      )];
+    } catch (err) {
+      console.warn("[DOMParser] playwright-injected selector generation failed", err);
+    }
+
+    let finderWithoutIdSelector = "";
+    try {
+      finderWithoutIdSelector = finder(el, {
+        root,
+        idName: () => false,
+        className: name => !this.isDynamicOrUnstableClass(name)
+      });
+    } catch (err) {
+      console.warn("[DOMParser] finder selector generation without id failed", err);
+    }
+
+    return {
+      playwrightSelector,
+      playwrightSelectors,
+      finderWithoutIdSelector
+    };
   }
 
   bestDomPath(paths) {
@@ -273,67 +243,6 @@ export class DOMParserService {
     return obj;
   }
 
-  getStructuralCssPath(el, root) {
-    if (el?.nodeType !== 1 || !root) return "";
-
-    const candidates = [];
-    const addCandidate = (selector) => {
-      if (!selector || typeof selector !== "string") return;
-
-      let isUniqueTarget = false;
-      try {
-        const matches = Array.from(root.querySelectorAll(selector));
-        isUniqueTarget = matches.length === 1 && matches[0] === el;
-      } catch (e) {
-        return;
-      }
-
-      candidates.push(this.analyzeCssPath(selector, isUniqueTarget ? 1 : 0));
-    };
-
-    try {
-      addCandidate(finder(el, {
-        root,
-        idName: () => false,
-        className: () => false,
-        attr: () => false,
-        tagName: () => true
-      }));
-    } catch (err) {
-      console.warn("[DOMParser] finder structural selector generation failed", err);
-    }
-
-    try {
-      addCandidate(select(el, {
-        root,
-        ignore: {
-          id: true,
-          class: true,
-          attribute: true
-        }
-      }));
-    } catch (err) {
-      console.warn("[DOMParser] optimal-select structural selector generation failed", err);
-    }
-
-    try {
-      addCandidate(getCssSelector(el, {
-        root,
-        selectors: ["tag", "nthoftype"]
-      }));
-    } catch (err) {
-      console.warn("[DOMParser] css-selector-generator structural selector generation failed", err);
-    }
-
-    const bestGeneratedPath = this.rankDomPaths(candidates)
-      .find(candidate => candidate.U === 1)?.path;
-    console.log("[structure path: ]", candidates);
-    console.log("[structure path, best: ]", bestGeneratedPath);
-    if (bestGeneratedPath) return bestGeneratedPath;
-
-    return this.getFallbackStructuralCssPath(el, root);
-  }
-
   getFallbackStructuralCssPath(el, root) {
     const parts = [];
     let current = el;
@@ -386,61 +295,18 @@ export class DOMParserService {
   getBestOpenSourceSelector(el, root) {
     if (!el || !root) return "";
 
-    const candidates = [];
-    const cssatt = ["id", "attribute", "class", "tag", "nthchild"];
-    const optPri = ['id', 'data-testid', 'data-thread-id', 'data-action', 'class', 'name', 'placeholder', 'href', 'src'];
-
-    try {
-      const selector = getCssSelector(el, {
-        selectors: cssatt,
-        root,
-        blacklist: [
-          (sel) => {
-            if (typeof sel !== 'string') return false;
-            if (sel.startsWith('#')) return this.isDynamicGeneratedId(sel.slice(1));
-            if (sel.startsWith('.')) return this.isDynamicOrUnstableClass(sel.slice(1));
-            return false;
-          }
-        ]
-      });
-      candidates.push(this.analyzeCssPath(selector, this.findUnique(selector, root) ? 1 : 0));
-    } catch (err) {
-      console.warn("[DOMParser] css-selector-generator shadow host 閫??憭望?", err);
-    }
-
-    try {
-      const selector = select(el, {
-        root,
-        priority: optPri,
-        ignore: {
-          class: (name, value) => String(value || '')
-            .split(/\s+/)
-            .filter(Boolean)
-            .some(className => this.isDynamicOrUnstableClass(className)),
-          attribute: (name, value, defaultPredicate) => {
-            if (name === 'id') return this.isDynamicGeneratedId(value);
-            return typeof defaultPredicate === 'function' ? defaultPredicate(name, value) : false;
-          }
-        }
-      });
-      candidates.push(this.analyzeCssPath(selector, this.findUnique(selector, root) ? 1 : 0));
-    } catch (err) {
-      console.warn("[DOMParser] optimal-select shadow host 閫??憭望?", err);
-    }
-
     try {
       const selector = finder(el, {
         root,
-        idName: (name) => !this.isDynamicGeneratedId(name),
-        className: (name) => !this.isDynamicOrUnstableClass(name),
+        idName: () => false,
+        className: name => !this.isDynamicOrUnstableClass(name)
       });
-      candidates.push(this.analyzeCssPath(selector, this.findUnique(selector, root) ? 1 : 0));
+      if (this.findUnique(selector, root)) return selector;
     } catch (err) {
-      console.warn("[DOMParser] finder shadow host 閫??憭望?", err);
+      console.warn("[DOMParser] finder shadow host selector generation without id failed", err);
     }
 
-    return this.rankDomPaths(candidates)
-      .filter(option => !this.hasUnstableAttributeSelector(option.path))[0]?.path || "";
+    return "";
   }
 
   getShadowChain(el) {
@@ -479,183 +345,107 @@ export class DOMParserService {
     return roots.flatMap(root => Array.from(root.querySelectorAll(targetSelector)));
   }
 
-  findUniqueWithShadowChain(path, shadowChain, targetEl) {
-    if (!path || !targetEl?.ownerDocument) return false;
+  getSelectorContextInfo(targetEl, sourceWin = null) {
+    const ownerWindow = targetEl?.ownerDocument?.defaultView || sourceWin;
+    let isIframe = false;
+    let frameUrl = "";
 
     try {
-      if (!shadowChain?.length) {
-        const root = targetEl.getRootNode();
-        const matches = Array.from(root.querySelectorAll(path));
-        return matches.length === 1 && matches[0] === targetEl;
-      }
-
-      const matches = this.resolveShadowMatches(targetEl.ownerDocument, shadowChain, path);
-      return matches.length === 1 && matches[0] === targetEl;
+      isIframe = !!ownerWindow?.frameElement;
+      frameUrl = ownerWindow?.location?.href || "";
     } catch (e) {
-      return false;
+      isIframe = !!sourceWin && sourceWin !== this.mainWindow;
     }
+
+    return {
+      context: isIframe ? "iframe" : "page",
+      url: frameUrl || targetEl?.ownerDocument?.URL || "",
+      scope: isIframe ? "目前 iframe document" : "目前 page document"
+    };
   }
 
-  getTestingLibraryRole(el) {
-    if (!el) return null;
+  inspectSelectorUniqueness(path, shadowChain, targetEl, sourceWin = null) {
+    const contextInfo = this.getSelectorContextInfo(targetEl, sourceWin);
+    const usesShadowRootTraversal = !!shadowChain?.length;
+    const baseResult = {
+      path: path || "",
+      context: contextInfo.context,
+      uniquenessScope: contextInfo.scope,
+      url: contextInfo.url,
+      usesShadowRootTraversal,
+      shadowRootDepth: shadowChain?.length || 0,
+      shadowHostPath: (shadowChain || []).map(step => step.hostSelector).join(" >>> "),
+      matchCount: 0,
+      targetMatched: false,
+      isUnique: false,
+      error: ""
+    };
 
-    if (el.hasAttribute('role')) {
-      return el.getAttribute('role');
-    }
+    if (!path || !targetEl?.ownerDocument) return baseResult;
 
     try {
-      const rolesMap = getRoles(el);
+      const matches = usesShadowRootTraversal
+        ? this.resolveShadowMatches(targetEl.ownerDocument, shadowChain, path)
+        : Array.from(targetEl.getRootNode().querySelectorAll(path));
 
-      for (const [roleName, elements] of Object.entries(rolesMap)) {
-        if (elements.includes(el)) {
-          return roleName;
-        }
-      }
+      return {
+        ...baseResult,
+        matchCount: matches.length,
+        targetMatched: matches.includes(targetEl),
+        isUnique: matches.length === 1 && matches[0] === targetEl
+      };
     } catch (e) {
-      console.warn("[DOMParser] Testing Library getRoles 閫??憭望?", e);
-    }
-
-    return null;
-  }
-
-  getPlaywrightRole(el, sourceWin) {
-    if (!(el instanceof Element)) return false;
-    const container = this.currentDoc.body || this.currentDoc;
-
-    if (el.tagName === "ION-BUTTON") {
-      const name = (el.textContent || el.innerText || "").trim().replace(/\s+/g, " ");
-      if (name && this.isUniqueIonButtonText(el, name, container)) {
-        this.playwrightObj.ByRole.index = null;
-        this.playwrightObj.ByRole.name = name;
-        this.playwrightObj.ByRole.role = "button";
-        this.playwrightObj.ByRole.exact = false;
-        this.playwrightObj.ByRole.index = this.getFuzzyRoleNameIndex(el, "button", name, container);
-        return true;
-      }
-    }
-
-    const role = this.getTestingLibraryRole(el);
-    
-    // ?? 靽格迤 1嚗?亙?ㄐ?瘝?隤???generic ??presentation
-    if (!role || role === 'generic' || role === 'presentation') {
-        return false; 
-    }
-
-    let name = "";
-    try {
-      name = computeAccessibleName(el);
-    } catch (e) {
-      console.warn("[DOMParser] computeAccessibleName ?潛??航炊", e);
-    }
-
-    try {
-      const options = name ? { name: name, exact: true } : {};
-      const matches = queryAllByRole(container, role, options);
-
-      const index = matches.indexOf(el);
-
-      // ?? 靽格迤 2嚗??文?潛? isUnique嚗閬?Ｖ????(index !== -1) 撠梯??箸???
-      if (index !== -1) {
-        const hasIconRisk = this.hasGeneratedIconNameRisk(el);
-        this.playwrightObj.ByRole.index = index;
-        this.playwrightObj.ByRole.name = name || null;
-        this.playwrightObj.ByRole.role = role;
-        this.playwrightObj.ByRole.exact = !hasIconRisk;
-        if (hasIconRisk) {
-          this.playwrightObj.ByRole.index = this.getFuzzyRoleNameIndex(el, role, name, container);
-        }
-        
-        return true; // ?迂? true嚗?敺??Ｙ??典隞亥?銝?.nth(index)
-      }
-      return false;
-      
-    } catch (error) {
-      console.warn("[DOMParser] Testing Library ByRole 閫??憭望?", error);
-      return false;
+      return {
+        ...baseResult,
+        error: e?.message || String(e)
+      };
     }
   }
 
-  checkUniqueByText(el) {
-    if (!this.currentDoc) return false;
-    const container = this.currentDoc.body || this.currentDoc;
-
-    const text = (el.innerText || el.textContent || "").trim().replace(/\s+/g, ' ');
-    if (!text) return false;
-
-    try {
-      const matches = queryAllByText(container, text, { exact: true });
-      if (matches.length === 1 && matches[0] === el) {
-        this.playwrightObj.ByText.text = text;
-        return true;
-      }
-    } catch (error) {
-      console.warn("[DOMParser] Testing Library ByText 閫??憭望?", error);
-    }
-    return false;
+  createFailedSelectorCheck(generator, path, shadowChain, targetEl, sourceWin, error) {
+    return {
+      generator,
+      ...this.inspectSelectorUniqueness(path, shadowChain, targetEl, sourceWin),
+      error: error?.message || String(error)
+    };
   }
 
-  hasGeneratedIconNameRisk(el) {
-    return !!el.querySelector?.(
-      'i[class*="fa"], span[class*="fa-"], [class*="glyphicon"], [class*="material-icons"], [class*="icon-"]'
+  logDomSelectorChecks(targetEl, checks, shadowChain, selectedPath) {
+    const contextInfo = this.getSelectorContextInfo(targetEl);
+    console.groupCollapsed(
+      `[RecorderDebug][DOM selectors] ${contextInfo.context} | ${checks.length} paths | shadow traversal: ${shadowChain?.length ? "YES" : "NO"}`
     );
-  }
-
-  getFuzzyRoleNameIndex(el, role, name, container) {
-    const targetName = String(name || "").trim().replace(/\s+/g, " ");
-    if (!targetName) return null;
-
-    try {
-      const lowerTargetName = targetName.toLocaleLowerCase();
-      const roleMatches = queryAllByRole(container, role);
-      const fuzzyMatches = roleMatches.filter((candidate) => {
-        let candidateName = "";
-        try {
-          candidateName = computeAccessibleName(candidate);
-        } catch (e) {
-          return false;
-        }
-
-        const normalizedCandidateName = String(candidateName || "").trim().replace(/\s+/g, " ");
-        return normalizedCandidateName.toLocaleLowerCase().includes(lowerTargetName);
-      });
-
-      const fuzzyIndex = fuzzyMatches.indexOf(el);
-      return fuzzyIndex === -1 ? null : fuzzyIndex;
-    } catch (e) {
-      console.warn("[DOMParser] Fuzzy role name index check failed", e);
-      return null;
-    }
-  }
-
-  isUniqueIonButtonText(el, text, container) {
-    if (el.tagName !== "ION-BUTTON") return false;
-
-    const matches = Array.from(container.querySelectorAll("ion-button")).filter((button) => {
-      const buttonText = (button.textContent || button.innerText || "").trim().replace(/\s+/g, " ");
-      return buttonText === text;
+    console.log("Target element:", targetEl);
+    console.log("Selector check context:", {
+      context: contextInfo.context,
+      url: contextInfo.url,
+      uniquenessScope: contextInfo.scope,
+      usedShadowRootTraversalFunction: !!shadowChain?.length,
+      shadowRootDepth: shadowChain?.length || 0,
+      shadowChain
     });
-
-    return matches.length === 1 && matches[0] === el;
+    console.table(checks.map(check => ({
+      generator: check.generator,
+      path: check.path || "(empty / generation failed)",
+      context: check.context,
+      uniquenessScope: check.uniquenessScope,
+      usedShadowTraversal: check.usesShadowRootTraversal ? "YES" : "NO",
+      shadowDepth: check.shadowRootDepth,
+      shadowHostPath: check.shadowHostPath || "(none)",
+      matchCount: check.matchCount,
+      targetMatched: check.targetMatched ? "YES" : "NO",
+      uniqueInContext: check.isUnique ? "YES" : "NO",
+      selected: check.path && check.path === selectedPath ? "YES" : "NO",
+      error: check.error || ""
+    })));
+    console.log("Selected DOM path:", selectedPath || "(none)");
+    console.groupEnd();
   }
 
-  checkUniqueByTitle(el) {
-    if (!this.currentDoc) return false;
-    const container = this.currentDoc.body || this.currentDoc;
-    const title = el.getAttribute('title');
-
-    if (!title) return false;
-
-    try {
-      const matches = queryAllByTitle(container, title, { exact: true });
-      if (matches.length === 1 && matches[0] === el) {
-        this.playwrightObj.ByTitle.title = title;
-        return true;
-      }
-    } catch (error) {
-      console.warn("[DOMParser] Testing Library ByTitle 閫??憭望?", error);
-    }
-    return false;
+  findUniqueWithShadowChain(path, shadowChain, targetEl) {
+    return this.inspectSelectorUniqueness(path, shadowChain, targetEl).isUnique;
   }
+
 // ?? ?啣?嚗?瞈曆?蝛拙??隤???蝝??? Class
   isDynamicOrUnstableClass(className) {
     if (typeof className !== 'string') return true;
@@ -709,12 +499,7 @@ export class DOMParserService {
 
   clearPlaywrightObj() {
     this.playwrightObj = {
-      ByRole: { name: null, role: null, index: null },
-      ByLabel: {},
-      ByPlaceholder: {},
-      ByText: { text: null },
-      ByTitle: { title: null },
-      ByAltText: {},
+      ByPlaywright: { selector: null, selectors: [] },
       ByDomPath: { csspath: null, shadowChain: [], options: [] }
     };
   }
@@ -727,34 +512,69 @@ export class DOMParserService {
     return this.priSize;
   }
 
-  isDynamicGeneratedId(id) {
-    if (typeof id !== 'string') return false;
+  analyzeDynamicId(id) {
+    if (typeof id !== 'string' || !id.trim()) {
+      return {
+        isDynamic: false,
+        reason: "Element has no ID"
+      };
+    }
 
     const value = id.trim();
-    if (!value) return false;
-
 
     for (const pattern of this.customDynamicIdPatterns) {
+      // Reset stateful regular expressions (for example, patterns using /g).
+      pattern.lastIndex = 0;
       if (pattern.test(value)) {
-        console.log(`[DOMParser] ??啁泵?摰儔(Excel)閬?????ID: ${value}`);
-        return true; 
+        return {
+          isDynamic: true,
+          reason: `Matches custom dynamic ID pattern: ${pattern}`
+        };
       }
     }
 
-    const grapesLikeId = /^i[a-z0-9]{3,5}$/i;
-    const ionicGeneratedId = /^ion-(input|textarea|select|checkbox|radio|toggle|range|datetime)-\d+(-lbl)?$/i;
-    const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    const hashLike = /^[a-z0-9_-]{10,}$/i;
-    const frameworkDynamic = /^(mui-|radix-|chakra-|el-|headlessui-|rc-tabs-).*\d+.*$/i;
-    const pureNumbers = /^\d+$/;
+    const rules = [
+      {
+        pattern: /^i[a-z0-9]{3,5}$/i,
+        reason: "Matches a GrapesJS-like generated ID"
+      },
+      {
+        pattern: /^ion-(input|textarea|select|checkbox|radio|toggle|range|datetime)-\d+(-lbl)?$/i,
+        reason: "Matches an Ionic-generated ID"
+      },
+      {
+        pattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+        reason: "Matches a UUID"
+      },
+      {
+        pattern: /^(mui-|radix-|chakra-|el-|headlessui-|rc-tabs-).*\d+.*$/i,
+        reason: "Matches a framework-generated ID"
+      },
+      {
+        pattern: /^\d+$/,
+        reason: "Contains only numbers"
+      },
+      {
+        pattern: /^[a-z0-9_-]{10,}$/i,
+        reason: "Looks like a long generated hash (10 or more characters)"
+      }
+    ];
 
-    return (
-      grapesLikeId.test(value) ||
-      ionicGeneratedId.test(value) ||
-      uuidLike.test(value) ||
-      hashLike.test(value) ||
-      frameworkDynamic.test(value) ||
-      pureNumbers.test(value)
-    );
+    const matchedRule = rules.find(rule => rule.pattern.test(value));
+    if (matchedRule) {
+      return {
+        isDynamic: true,
+        reason: matchedRule.reason
+      };
+    }
+
+    return {
+      isDynamic: false,
+      reason: "Does not match any known dynamic ID pattern"
+    };
+  }
+
+  isDynamicGeneratedId(id) {
+    return this.analyzeDynamicId(id).isDynamic;
   }
 }

@@ -7,6 +7,15 @@
   const originalPrompt = window.prompt;
   const boundGrapesEditors = new WeakSet();
 
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    const message = event.data;
+    if (message?.source !== "RECORDER_CONTENT_SCRIPT") return;
+    if (message.type !== "RECORDER_ELEMENT_ID_ANALYSIS") return;
+
+    console.log("[Recorder ID Analysis]", message.analysis);
+  });
+
   function notify(dialogType, message, extraData = {}) {
     const payload = {
       source: "RECORDER_PAGE_HOOK",

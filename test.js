@@ -14,6 +14,131 @@ document.addEventListener("DOMContentLoaded", async function () {
 
     let actions = []; // ?脣??刻??園?銝剔??????
     let hoverHighlightEnabled = true;
+    let pendingActionsRefresh = null;
+    let pendingCodeViewRefresh = null;
+    let locatorSelectInteractionActive = false;
+
+    function isLocatorSelectActive() {
+        const activeElement = document.activeElement;
+        const hasFocusedDropdown = !!activeElement
+            && !!activeElement.closest?.(".locator-dropdown")
+            && actionsDiv.contains(activeElement);
+        const hasOpenDropdown = !!actionsDiv.querySelector(".locator-dropdown[open]");
+        return locatorSelectInteractionActive || hasFocusedDropdown || hasOpenDropdown;
+    }
+
+    function applyGeneratedActions(nextActions, previousActions = actions) {
+        const normalizedActions = Array.isArray(nextActions) ? nextActions : [];
+        const previousLength = Array.isArray(previousActions) ? previousActions.length : 0;
+        actions = normalizedActions;
+        updateActionsList(actions, {
+            scrollToBottom: actions.length > previousLength
+        });
+    }
+
+    function haveSameActionRows(currentActions, nextActions) {
+        if (!Array.isArray(currentActions) || !Array.isArray(nextActions)) return false;
+        if (currentActions.length !== nextActions.length) return false;
+
+        return currentActions.every((currentAction, index) => {
+            const nextAction = nextActions[index];
+            if (!currentAction || !nextAction) return currentAction === nextAction;
+
+            if (currentAction.id != null || nextAction.id != null) {
+                return currentAction.id === nextAction.id;
+            }
+
+            return currentAction.index === nextAction.index
+                && currentAction.type === nextAction.type
+                && currentAction.timestamp === nextAction.timestamp;
+        });
+    }
+
+    function preserveLocalLocatorOverrides(nextActions, currentActions = actions) {
+        if (!Array.isArray(nextActions)) return [];
+        const existingActions = Array.isArray(currentActions) ? currentActions : [];
+
+        return nextActions.map((nextAction, index) => {
+            if (!nextAction) return nextAction;
+            const currentAction = nextAction.id != null
+                ? existingActions.find(action => action?.id === nextAction.id) || existingActions[index]
+                : existingActions[index];
+            if (!currentAction) return nextAction;
+
+            const mergedAction = { ...nextAction };
+            let hasOverride = false;
+
+            ["source", "target"].forEach(field => {
+                const locatorOverrideKey = `${field}LocatorSelectionOverridden`;
+                const domPathOverrideKey = `${field}DomPathSelectionOverridden`;
+                if (
+                    currentAction[locatorOverrideKey] !== true
+                    && currentAction[domPathOverrideKey] !== true
+                ) {
+                    return;
+                }
+
+                mergedAction[`${field}Method`] = currentAction[`${field}Method`];
+                mergedAction[`${field}Data`] = currentAction[`${field}Data`];
+                mergedAction[`${field}DomPathChain`] =
+                    currentAction[`${field}DomPathChain`] || [];
+                mergedAction[`${field}LocatorOptions`] =
+                    currentAction[`${field}LocatorOptions`] || [];
+                mergedAction[locatorOverrideKey] =
+                    currentAction[locatorOverrideKey] === true;
+                mergedAction[domPathOverrideKey] =
+                    currentAction[domPathOverrideKey] === true;
+                hasOverride = true;
+            });
+
+            if (hasOverride) {
+                mergedAction.generatedCodeLines = currentAction.generatedCodeLines || [];
+                mergedAction.generatedCodeLine = currentAction.generatedCodeLine || "";
+                mergedAction.generatedCodeReplacesPrevious =
+                    currentAction.generatedCodeReplacesPrevious === true;
+            }
+
+            return mergedAction;
+        });
+    }
+
+    function flushPendingActionsRefresh({ force = false } = {}) {
+        if (!pendingActionsRefresh || (!force && isLocatorSelectActive())) return;
+        const pending = pendingActionsRefresh;
+        pendingActionsRefresh = null;
+        applyGeneratedActions(pending.nextActions, pending.previousActions);
+    }
+
+    function flushPendingCodeViewRefresh({ force = false } = {}) {
+        if (pendingCodeViewRefresh === null || (!force && isLocatorSelectActive())) return;
+        const pendingCode = pendingCodeViewRefresh;
+        pendingCodeViewRefresh = null;
+        setCodeView(pendingCode);
+    }
+
+    function updateCodeViewWithoutInterruptingSelect(code) {
+        if (isLocatorSelectActive()) {
+            pendingCodeViewRefresh = code;
+            return;
+        }
+        setCodeView(code);
+    }
+
+    function endLocatorSelectInteraction() {
+        locatorSelectInteractionActive = false;
+        setTimeout(() => {
+            flushPendingActionsRefresh({ force: true });
+            flushPendingCodeViewRefresh({ force: true });
+        }, 0);
+    }
+
+    document.addEventListener("pointerdown", (event) => {
+        if (event.target?.closest?.(".locator-dropdown")) return;
+        actionsDiv.querySelectorAll(".locator-dropdown[open]").forEach(dropdown => {
+            dropdown.removeAttribute("open");
+        });
+        endLocatorSelectInteraction();
+    }, true);
 
     // 2. 頛?賢?嚗?銝??澆???撘Ⅳ鞈?甇????桐?摮葡
     function normalizeCode(value) { 
@@ -210,41 +335,189 @@ document.addEventListener("DOMContentLoaded", async function () {
         return leftSelectors.join("\n") === rightSelectors.join("\n");
     }
 
+    function getLocatorOptionValue(method, data = {}) {
+        if (method === "ByPlaywright") return data.locator || data.selector || data.value || "";
+        if (method === "ByRole") {
+            const parts = [`role: ${data.role || ""}`];
+            if (data.name !== null && data.name !== undefined && data.name !== "") {
+                parts.push(`name: "${data.name}"`);
+            }
+            if (data.index !== null && data.index !== undefined) {
+                parts.push(`index: ${data.index}`);
+            }
+            return parts.join(" ");
+        }
+        if (method === "ByTitle") return data.title || "";
+        if (method === "ByText") return data.text || "";
+        if (method === "ByDomPath") return data.csspath || data.path || "";
+        return data.value || "";
+    }
+
+    function getLocatorOptions(action, field, value, method, domOptions, chain) {
+        const optionsKey = field === "target" ? "targetLocatorOptions" : "sourceLocatorOptions";
+        const storedOptions = Array.isArray(action?.[optionsKey]) ? action[optionsKey] : [];
+        if (storedOptions.length) return storedOptions;
+
+        const fallback = [];
+        if (method) {
+            fallback.push({
+                id: `${method}-current`,
+                method,
+                data: method === "ByDomPath"
+                    ? { csspath: value, shadowChain: chain || [] }
+                    : method === "ByPlaywright"
+                        ? { locator: value }
+                    : { value },
+                currentValue: value,
+                recommended: true
+            });
+        }
+
+        if (Array.isArray(domOptions)) {
+            domOptions.forEach((option, index) => {
+                const path = typeof option === "string" ? option : option?.path;
+                if (!path || (method === "ByDomPath" && path === value)) return;
+                fallback.push({
+                    id: `ByDomPath-${index}`,
+                    method: "ByDomPath",
+                    data: {
+                        csspath: path,
+                        shadowChain: typeof option === "string" ? [] : option?.shadowChain || chain || []
+                    }
+                });
+            });
+        }
+        return fallback;
+    }
+
+    function formatLocatorOptionLabel(candidate, domIndex = 0) {
+        const data = candidate?.data || {};
+        const recommended = candidate?.recommended ? "（推薦）" : "";
+
+        if (candidate.method === "ByPlaywright") {
+            return `Playwright${recommended} — ${data.locator || data.selector || candidate.currentValue || ""}`;
+        }
+        if (candidate.method === "ByRole") {
+            const name = data.name ? ` "${data.name}"` : "";
+            const index = data.index !== null && data.index !== undefined ? ` [${data.index}]` : "";
+            return `ByRole${recommended} — ${data.role || "element"}${name}${index}`;
+        }
+        if (candidate.method === "ByText") {
+            return `ByText${recommended} — "${data.text || candidate.currentValue || ""}"`;
+        }
+        if (candidate.method === "ByTitle") {
+            return `ByTitle${recommended} — "${data.title || candidate.currentValue || ""}"`;
+        }
+
+        const path = data.csspath || data.path || "";
+        return `DOM Path ${domIndex}${recommended} — ${path}`;
+    }
+
+    function isSelectedLocatorOption(candidate, method, value, chain) {
+        if (candidate.method !== method) return false;
+        if (method !== "ByDomPath") {
+            return getLocatorOptionValue(method, candidate.data) === value
+                || candidate.currentValue === value;
+        }
+
+        const path = candidate.data?.csspath || candidate.data?.path || "";
+        return path === value && sameDomPathChain(candidate.data?.shadowChain || [], chain);
+    }
+
     function appendDomPathOrText(parent, value, method, options, chain, actionIndex, field) {
-        if (method === "ByDomPath" && Array.isArray(options) && options.length) {
-            const select = document.createElement("select");
-            select.className = "dompath-select";
-            options.forEach((option, optionIndex) => {
-                const path = typeof option === "string" ? option : option.path;
-                const optionChain = typeof option === "string" ? [] : option?.shadowChain || [];
-                if (!path) return;
+        const action = actions[actionIndex];
+        const locatorOptions = getLocatorOptions(action, field, value, method, options, chain);
 
-                const item = document.createElement("option");
-                item.value = String(optionIndex);
-                item.textContent = `${optionIndex + 1}. ${formatDomPathOption(option, chain)}`;
-                item.selected = path === value && sameDomPathChain(optionChain, chain);
-                select.appendChild(item);
+        if (locatorOptions.length > 1) {
+            const dropdown = document.createElement("details");
+            dropdown.className = "locator-dropdown";
+            const summary = document.createElement("summary");
+            summary.className = "locator-dropdown-summary";
+            const menu = document.createElement("div");
+            menu.className = "locator-dropdown-menu";
+            let domIndex = 0;
+            let selectedLabel = "";
+            let currentGroup = "";
+
+            locatorOptions.forEach((candidate, optionIndex) => {
+                if (candidate.method === "ByDomPath") domIndex++;
+                const group = candidate.method === "ByDomPath" ? "DOM Path" : "語意定位";
+                if (group !== currentGroup) {
+                    const groupLabel = document.createElement("div");
+                    groupLabel.className = "locator-dropdown-group";
+                    groupLabel.textContent = group;
+                    menu.appendChild(groupLabel);
+                    currentGroup = group;
+                }
+
+                const label = formatLocatorOptionLabel(candidate, domIndex);
+                const item = document.createElement("button");
+                item.type = "button";
+                item.className = "locator-dropdown-option";
+                item.dataset.optionIndex = String(optionIndex);
+                item.textContent = label;
+
+                if (isSelectedLocatorOption(candidate, method, value, chain)) {
+                    selectedLabel = label;
+                    item.classList.add("selected");
+                    item.setAttribute("aria-current", "true");
+                }
+
+                item.addEventListener("click", async () => {
+                    dropdown.removeAttribute("open");
+                    menu.querySelectorAll(".locator-dropdown-option").forEach(option => {
+                        option.classList.remove("selected");
+                        option.removeAttribute("aria-current");
+                    });
+                    item.classList.add("selected");
+                    item.setAttribute("aria-current", "true");
+                    summary.textContent = label;
+
+                    try {
+                        await updateLocatorSelection(actionIndex, field, candidate);
+                    } finally {
+                        endLocatorSelectInteraction();
+                    }
+                });
+                menu.appendChild(item);
             });
 
-            select.addEventListener("change", async () => {
-                const selectedOption = options[Number(select.value)];
-                const nextPath = typeof selectedOption === "string" ? selectedOption : selectedOption?.path;
-                const nextChain = typeof selectedOption === "string" ? [] : selectedOption?.shadowChain || [];
-                if (!nextPath) return;
+            summary.textContent = selectedLabel || formatLocatorOptionLabel(locatorOptions[0], 0);
 
-                const key = field === "target" ? "targetData" : "sourceData";
-                const chainKey = field === "target" ? "targetDomPathChain" : "sourceDomPathChain";
-                const overrideKey = field === "target"
-                    ? "targetDomPathSelectionOverridden"
-                    : "sourceDomPathSelectionOverridden";
-                const oldValue = actions[actionIndex][key];
-                actions[actionIndex][key] = nextPath;
-                actions[actionIndex][chainKey] = nextChain;
-                actions[actionIndex][overrideKey] = true;
-                await updateDomPathSelection(actionIndex, field, oldValue, nextPath, nextChain);
+            const beginDropdownInteraction = () => {
+                actionsDiv.querySelectorAll(".locator-dropdown[open]").forEach(otherDropdown => {
+                    if (otherDropdown !== dropdown) otherDropdown.removeAttribute("open");
+                });
+                locatorSelectInteractionActive = true;
+            };
+            summary.addEventListener("pointerdown", beginDropdownInteraction, true);
+            summary.addEventListener("click", () => {
+                if (dropdown.open) {
+                    setTimeout(endLocatorSelectInteraction, 0);
+                } else {
+                    beginDropdownInteraction();
+                }
+            });
+            dropdown.addEventListener("keydown", (event) => {
+                if (event.key === "Escape") {
+                    event.preventDefault();
+                    dropdown.removeAttribute("open");
+                    summary.focus();
+                    endLocatorSelectInteraction();
+                }
+            });
+            dropdown.addEventListener("focusout", () => {
+                setTimeout(() => {
+                    if (!dropdown.contains(document.activeElement)) {
+                        dropdown.removeAttribute("open");
+                        endLocatorSelectInteraction();
+                    }
+                }, 0);
             });
 
-            parent.appendChild(select);
+            dropdown.appendChild(summary);
+            dropdown.appendChild(menu);
+            parent.appendChild(dropdown);
             return;
         }
 
@@ -435,6 +708,13 @@ document.addEventListener("DOMContentLoaded", async function () {
         const text = String(line || "");
         const method = getActionMethod(action, field);
 
+        if (method === "ByPlaywright") {
+            const dataKey = field === "target" ? "targetData" : "sourceData";
+            const locator = action?.[dataKey];
+            return locator
+                ? text.includes(`.${locator}`)
+                : /\.(?:getBy[A-Z]\w*|locator)\(/.test(text);
+        }
         if (method === "ByRole") return text.includes(".getByRole(");
         if (method === "ByTitle") return text.includes(".getByTitle(");
         if (method === "ByText") return text.includes(".getByText(");
@@ -553,6 +833,246 @@ document.addEventListener("DOMContentLoaded", async function () {
             `.locator("${escapedNewPath}")`,
             line.slice(lastMatch.end)
         ].join("");
+    }
+
+    function buildLocatorSuffix(candidate) {
+        const data = candidate?.data || {};
+        if (candidate?.method === "ByPlaywright") {
+            const locator = data.locator || "";
+            return locator ? `.${locator.replace(/^\./, "")}` : "";
+        }
+        if (candidate?.method === "ByRole") {
+            const hasName = data.name !== null && data.name !== undefined && data.name !== "";
+            const exact = data.exact === false ? "" : ", exact: true";
+            const locator = hasName
+                ? `.getByRole(${JSON.stringify(String(data.role || ""))}, { name: ${JSON.stringify(String(data.name))}${exact} })`
+                : `.getByRole(${JSON.stringify(String(data.role || ""))})`;
+            return data.index !== null && data.index !== undefined
+                ? `${locator}.nth(${Number(data.index)})`
+                : locator;
+        }
+        if (candidate?.method === "ByTitle") {
+            return `.getByTitle(${JSON.stringify(String(data.title || ""))}, { exact: true })`;
+        }
+        if (candidate?.method === "ByText") {
+            return `.getByText(${JSON.stringify(String(data.text || ""))}, { exact: true })`;
+        }
+        if (candidate?.method === "ByDomPath") {
+            const selectors = [
+                ...(data.shadowChain || []).map(step => step?.hostSelector).filter(Boolean),
+                data.csspath || data.path
+            ].filter(Boolean);
+            return selectors.map(selector => `.locator(${JSON.stringify(String(selector))})`).join("");
+        }
+        return "";
+    }
+
+    function findLocatorStart(expression, method, chain = []) {
+        if (method === "ByPlaywright") {
+            const frameBoundary = expression.lastIndexOf(".contentFrame()");
+            const searchFrom = frameBoundary >= 0
+                ? frameBoundary + ".contentFrame()".length
+                : 0;
+            const match = /\.(?:getBy[A-Z]\w*|locator)\(/g;
+            match.lastIndex = searchFrom;
+            return match.exec(expression)?.index ?? -1;
+        }
+
+        const methodNames = {
+            ByRole: ".getByRole(",
+            ByTitle: ".getByTitle(",
+            ByText: ".getByText("
+        };
+        if (methodNames[method]) return expression.lastIndexOf(methodNames[method]);
+
+        if (method === "ByDomPath") {
+            const positions = [];
+            const pattern = /\.locator\(/g;
+            let match = null;
+            while ((match = pattern.exec(expression)) !== null) positions.push(match.index);
+            const locatorCount = Math.max(1, (Array.isArray(chain) ? chain.length : 0) + 1);
+            return positions[Math.max(0, positions.length - locatorCount)] ?? -1;
+        }
+        return -1;
+    }
+
+    function replaceLocatorExpression(expression, oldMethod, oldChain, candidate) {
+        const locatorStart = findLocatorStart(expression, oldMethod, oldChain);
+        const suffix = buildLocatorSuffix(candidate);
+        if (locatorStart < 0 || !suffix) return expression;
+        return expression.slice(0, locatorStart) + suffix;
+    }
+
+    function findTopLevelArgumentEnd(text, startIndex) {
+        let parenDepth = 0;
+        let braceDepth = 0;
+        let bracketDepth = 0;
+        let quote = null;
+        let escaped = false;
+
+        for (let index = startIndex; index < text.length; index++) {
+            const char = text[index];
+            if (quote) {
+                if (escaped) escaped = false;
+                else if (char === "\\") escaped = true;
+                else if (char === quote) quote = null;
+                continue;
+            }
+            if (char === '"' || char === "'" || char === "`") {
+                quote = char;
+                continue;
+            }
+            if (char === "(") parenDepth++;
+            else if (char === "{") braceDepth++;
+            else if (char === "[") bracketDepth++;
+            else if (char === ")") {
+                if (parenDepth === 0 && braceDepth === 0 && bracketDepth === 0) return index;
+                parenDepth--;
+            } else if (char === "}") braceDepth--;
+            else if (char === "]") bracketDepth--;
+            else if (char === "," && parenDepth === 0 && braceDepth === 0 && bracketDepth === 0) {
+                return index;
+            }
+        }
+        return text.length;
+    }
+
+    function getActionOperation(action) {
+        if (action?.type === "dragANDdrop") return ".dragTo(";
+        if (action?.type === "input") return ".fill(";
+        if (action?.type === "change") return ".selectOption(";
+        if (action?.type === "dbclick") return ".dblclick(";
+        return ".click(";
+    }
+
+    function replaceActionLocatorInCodeLine(action, line, field, candidate, oldMethod, oldChain) {
+        const text = String(line || "");
+        const operation = getActionOperation(action);
+        const operationIndex = text.indexOf(operation);
+        if (operationIndex < 0) return text;
+
+        if (action?.type === "dragANDdrop") {
+            if (field === "source") {
+                const expressionStart = text.indexOf("await ") + 6;
+                if (expressionStart < 6) return text;
+                const expression = text.slice(expressionStart, operationIndex);
+                const nextExpression = replaceLocatorExpression(expression, oldMethod, oldChain, candidate);
+                return text.slice(0, expressionStart) + nextExpression + text.slice(operationIndex);
+            }
+
+            const argumentStart = operationIndex + operation.length;
+            const argumentEnd = findTopLevelArgumentEnd(text, argumentStart);
+            const expression = text.slice(argumentStart, argumentEnd);
+            const nextExpression = replaceLocatorExpression(expression, oldMethod, oldChain, candidate);
+            return text.slice(0, argumentStart) + nextExpression + text.slice(argumentEnd);
+        }
+
+        const expressionStart = text.indexOf("await ") + 6;
+        if (expressionStart < 6) return text;
+        const expression = text.slice(expressionStart, operationIndex);
+        const nextExpression = replaceLocatorExpression(expression, oldMethod, oldChain, candidate);
+        return text.slice(0, expressionStart) + nextExpression + text.slice(operationIndex);
+    }
+
+    async function updateLocatorSelection(actionIndex, field, candidate) {
+        const action = actions[actionIndex];
+        if (!action || !candidate?.method) return;
+
+        const methodKey = field === "target" ? "targetMethod" : "sourceMethod";
+        const dataKey = field === "target" ? "targetData" : "sourceData";
+        const chainKey = field === "target" ? "targetDomPathChain" : "sourceDomPathChain";
+        const optionsKey = field === "target" ? "targetLocatorOptions" : "sourceLocatorOptions";
+        const overrideKey = field === "target"
+            ? "targetLocatorSelectionOverridden"
+            : "sourceLocatorSelectionOverridden";
+        const oldMethod = action[methodKey];
+        const oldValue = action[dataKey];
+        const oldChain = action[chainKey] || [];
+        const nextValue = candidate.currentValue || getLocatorOptionValue(candidate.method, candidate.data);
+        const nextChain = candidate.method === "ByDomPath" ? candidate.data?.shadowChain || [] : [];
+
+        const storage = await chrome.storage.local.get(["generatedCodeBody", "generatedAction"]);
+        const codeBody = Array.isArray(storage.generatedCodeBody) ? [...storage.generatedCodeBody] : [];
+        const latestStoredActions = Array.isArray(storage.generatedAction)
+            ? storage.generatedAction
+            : [];
+        const codeIndex = findCodeBodyIndexForAction(codeBody, actionIndex, oldValue, field);
+        const actionLines = getActionGeneratedLines(action);
+        const nextLines = actionLines.map(line => {
+            return matchesActionCodeLine(action, line)
+                ? replaceActionLocatorInCodeLine(action, line, field, candidate, oldMethod, oldChain)
+                : line;
+        });
+
+        action[methodKey] = candidate.method;
+        action[dataKey] = nextValue;
+        action[chainKey] = nextChain;
+        action[overrideKey] = true;
+        if (candidate.method === "ByDomPath") {
+            action[field === "target"
+                ? "targetDomPathSelectionOverridden"
+                : "sourceDomPathSelectionOverridden"] = true;
+        }
+        if (nextLines.length) setActionGeneratedLines(action, nextLines);
+
+        if (latestStoredActions.length) {
+            const matchingIndex = action.id != null
+                ? latestStoredActions.findIndex(item => item?.id === action.id)
+                : actionIndex;
+
+            if (matchingIndex >= 0 && matchingIndex < latestStoredActions.length) {
+                actions = latestStoredActions.map((storedAction, index) => {
+                    return index === matchingIndex
+                        ? { ...storedAction, ...action }
+                        : storedAction;
+                });
+            }
+        }
+
+        if (codeIndex >= 0) {
+            codeBody[codeIndex] = replaceActionLocatorInCodeLine(
+                action,
+                codeBody[codeIndex],
+                field,
+                candidate,
+                oldMethod,
+                oldChain
+            );
+        }
+
+        const nextCodeBody = buildCodeBodyFromActions(codeBody);
+        const generatedCode = wrapPlaywrightCode(nextCodeBody);
+        const recorderPatch = {
+            [methodKey]: candidate.method,
+            [dataKey]: nextValue,
+            [chainKey]: nextChain,
+            [optionsKey]: action[optionsKey] || [],
+            [overrideKey]: true,
+            generatedCodeLines: getActionGeneratedLines(action),
+            generatedCodeLine: action.generatedCodeLine || "",
+            generatedCodeReplacesPrevious: action.generatedCodeReplacesPrevious === true
+        };
+
+        await chrome.storage.local.set({
+            generatedAction: actions,
+            generatedCodeBody: nextCodeBody,
+            generatedCode
+        });
+        setCodeView(normalizeCode(generatedCode));
+
+        try {
+            const recorderResponse = await chrome.runtime.sendMessage({
+                type: "UPDATE_RECORDED_ACTION",
+                actionId: action.id,
+                actionIndex,
+                patch: recorderPatch
+            });
+            if (!recorderResponse?.ok) {
+                console.warn("[Recorded Actions] Failed to synchronize locator selection with the recorder.");
+            }
+        } catch (error) {
+            console.warn("[Recorded Actions] Unable to contact the recorder.", error);
+        }
     }
 
     async function updateDomPathSelection(actionIndex, field, oldPath, newPath, newChain = []) {
@@ -707,16 +1227,32 @@ document.addEventListener("DOMContentLoaded", async function () {
     // 8. ?單??踵?嚗??Storage ???????航?祆?撖怠?啗???隞????堆??停?舐隞暻潮?鋆賣??恍??甇亥歲????
     chrome.storage.onChanged.addListener((changes) => {
         if (changes.generatedCode) {
-            setCodeView(normalizeCode(changes.generatedCode.newValue));
+            updateCodeViewWithoutInterruptingSelect(
+                normalizeCode(changes.generatedCode.newValue)
+            );
         }
 
         if (changes.generatedAction) {
             const previousActions = changes.generatedAction.oldValue || [];
-            actions = changes.generatedAction.newValue || [];
-            updateActionsList(actions, {
-                scrollToBottom: actions.length > previousActions.length
-            });
-            syncGeneratedCodeWithActions();
+            const nextActions = preserveLocalLocatorOverrides(
+                changes.generatedAction.newValue || [],
+                actions
+            );
+
+            if (haveSameActionRows(actions, nextActions)) {
+                // The rows are unchanged. Keep the existing DOM (especially an
+                // open native select) and refresh only the backing action data.
+                actions = nextActions;
+            } else if (isLocatorSelectActive()) {
+                // Rebuilding the list here would destroy an open native select
+                // before the user has a chance to choose an option.
+                pendingActionsRefresh = {
+                    nextActions,
+                    previousActions
+                };
+            } else {
+                applyGeneratedActions(nextActions, previousActions);
+            }
         }
 
         if (changes.recorderStatus) {

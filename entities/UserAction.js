@@ -11,10 +11,12 @@ export class UserAction {
     this.sourceData = null;
     this.sourceDomPathChain = [];
     this.sourceDomPathOptions = [];
+    this.sourceLocatorOptions = [];
     this.targetMethod = null;
     this.targetData = null;
     this.targetDomPathChain = [];
     this.targetDomPathOptions = [];
+    this.targetLocatorOptions = [];
     this.keyboard = null; //only use for keyboard event - type: text
     this.selectedText = null;// only use for drop-down menu - type: text
     this.selectedValue = null;

@@ -57,6 +57,7 @@ export class IframeEventListener {
     this.iframeDocument.addEventListener("compositionend", this.compositionEndHandler.bind(this), true);
     this.iframeDocument.addEventListener("beforeinput", this.beforeInputHandler.bind(this), true);
     this.iframeDocument.addEventListener("input", this.inputHandler.bind(this), true);
+    this.iframeDocument.addEventListener("paste", this.pasteHandler.bind(this), true);
 
     this.iframeDocument.addEventListener("dragover", (e) => {
       if (this.isRecording) e.preventDefault();
@@ -167,6 +168,31 @@ export class IframeEventListener {
     if (sourcePath && Object.keys(sourcePath).length > 0) {
       this.preEditSourcePaths.set(element, sourcePath);
     }
+  }
+
+  pasteHandler(e) {
+    if (!this.isRecording || !e.isTrusted) return;
+    if (this.shouldSuppressSyntheticPageEvent()) return;
+
+    const target = this.getTextInputEventTarget(e) || e.target;
+    if (!this.isTextInputElement(target)) return;
+
+    if (!this.preEditSourcePaths.has(target)) {
+      const sourcePath = this.domParserService.getOpenSourcePath(target, this.iframeWindow);
+      if (sourcePath && Object.keys(sourcePath).length > 0) {
+        this.preEditSourcePaths.set(target, sourcePath);
+      }
+    }
+
+    this.markTextInputEdited(target);
+
+    // Read the resulting field value after the browser/framework applies the paste.
+    // The normal trusted input event may reschedule this timer; this is the fallback
+    // for components that stop or replace that event.
+    setTimeout(() => {
+      if (!this.isRecording) return;
+      this.scheduleTextInputRecord(target);
+    }, 0);
   }
 
   inputHandler(e) {
@@ -374,6 +400,7 @@ export class IframeEventListener {
 
   mousedownHandler(e) {
     if (!this.isRecording || !e.isTrusted) return;
+    //排除:　滑桿，例如音量條、進度條、range slider
     if (this.isRangeInput(e.target)) return;
     if (!this.isMouseDragCandidate(e.target)) return;
     this.dragStart = { x: e.clientX, y: e.clientY };
@@ -598,7 +625,18 @@ export class IframeEventListener {
   }
 
   getDragSourceElement(element) {
-    return element?.closest?.(".gjs-layer-move, [data-toggle-move]") || element;
+    return element?.closest?.(this.getMouseDragCandidateSelector()) || element;
+  }
+
+  getMouseDragCandidateSelector() {
+    return [
+      ".gjs-layer-move",
+      "[data-toggle-move]",
+      "[draggable='true']",
+      "[data-gjs-type]",
+      ".gjs-selected",
+      ".gjs-comp-selected"
+    ].join(", ");
   }
 
   getComposedEventTarget(e) {
@@ -624,7 +662,7 @@ export class IframeEventListener {
   }
 
   getIonicInteractiveSelector() {
-    return "ion-tab-button, ion-button, ion-segment-button, ion-menu-button, ion-back-button, ion-item[button], ion-item[routerlink], ion-item[href], ion-card[button], ion-card[routerlink], ion-card[href], ion-card-content[button], ion-card-content[routerlink], ion-card-content[href]";
+    return "ion-select, ion-tab-button, ion-button, ion-segment-button, ion-menu-button, ion-back-button, ion-item[button], ion-item[routerlink], ion-item[href], ion-card[button], ion-card[routerlink], ion-card[href], ion-card-content[button], ion-card-content[routerlink], ion-card-content[href]";
   }
 
   getClickableSelector() {
@@ -673,7 +711,7 @@ export class IframeEventListener {
   }
 
   isMouseDragCandidate(element) {
-    return !!element?.closest?.(".gjs-layer-move, [data-toggle-move]");
+    return !!element?.closest?.(this.getMouseDragCandidateSelector());
   }
 
   getDragTargetElement(element) {

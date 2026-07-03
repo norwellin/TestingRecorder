@@ -1,5 +1,6 @@
 import { PlaywrightCommand } from '../entities/PlaywrightCommand.js';
 import { DOMParserService } from './DOMParserService.js';
+import { asLocator } from 'playwright-injected';
 
 export class PlaywrightCodeGenerator {
   // 1. 移除 userActionDB 依賴，改為單純接收 DOM 服務與 Command 參照
@@ -238,6 +239,67 @@ export class PlaywrightCodeGenerator {
       if (paths[i]) return paths[i];
     }
     return null;
+  }
+
+  _buildLocatorOptions(paths) {
+    if (!paths) return [];
+
+    const options = [];
+    const best = this._getBestPath(paths);
+    for (let i = 0; i < this.domService.priSize; i++) {
+      const candidate = paths[i];
+      if (!candidate?.funName || !candidate?.obj) continue;
+
+      if (candidate.funName === "ByPlaywright") {
+        const selectors = Array.isArray(candidate.obj.selectors) && candidate.obj.selectors.length
+          ? candidate.obj.selectors
+          : [candidate.obj.selector];
+
+        selectors.forEach((selector, selectorIndex) => {
+          const locator = this._playwrightSelectorToLocator(selector);
+          if (!selector || !locator) return;
+          options.push({
+            id: `ByPlaywright-${selectorIndex}`,
+            method: "ByPlaywright",
+            data: { selector, locator },
+            recommended: selector === candidate.obj.selector
+          });
+        });
+        continue;
+      }
+
+      if (candidate.funName === "ByDomPath") {
+        const domOptions = Array.isArray(candidate.obj.options) && candidate.obj.options.length
+          ? candidate.obj.options
+          : [{
+              path: candidate.obj.csspath,
+              shadowChain: candidate.obj.shadowChain || []
+            }];
+
+        domOptions.forEach((option, domIndex) => {
+          if (!option?.path) return;
+          options.push({
+            id: `ByDomPath-${domIndex}`,
+            method: "ByDomPath",
+            data: {
+              csspath: option.path,
+              shadowChain: option.shadowChain || candidate.obj.shadowChain || []
+            },
+            recommended: best?.funName === "ByDomPath" && option.path === candidate.obj.csspath
+          });
+        });
+        continue;
+      }
+
+      options.push({
+        id: `${candidate.funName}-0`,
+        method: candidate.funName,
+        data: { ...candidate.obj },
+        recommended: best?.funName === candidate.funName
+      });
+    }
+
+    return options;
   }
 
   // 特殊字元跳脫，避免 Playwright 語法出錯
@@ -551,6 +613,10 @@ declareContexts(contexts, rootAlias) {
   _buildLocatorString(winPrefix, methodObj) {
     const { funName, obj } = methodObj;
     switch (funName) {
+      case "ByPlaywright": {
+        const locator = obj.locator || this._playwrightSelectorToLocator(obj.selector);
+        return locator ? `${winPrefix}.${locator}` : `${winPrefix}.locator("unknown")`;
+      }
       case "ByRole": {
         const hasName = obj.name !== null && obj.name !== undefined && obj.name !== "";
         const exactOption = obj.exact === false ? "" : ", exact: true";
@@ -568,6 +634,19 @@ declareContexts(contexts, rootAlias) {
         return this._buildDomPathLocator(winPrefix, obj);
       default:
         return `${winPrefix}.locator("unknown")`;
+    }
+  }
+
+  _playwrightSelectorToLocator(selector) {
+    if (!selector) return "";
+    try {
+      return asLocator("javascript", selector);
+    } catch (error) {
+      console.warn("[PlaywrightCodeGenerator] Could not convert injected selector to locator", {
+        selector,
+        error
+      });
+      return "";
     }
   }
 
@@ -589,7 +668,7 @@ declareContexts(contexts, rootAlias) {
     const winPrefix = this._getContextPrefix(sourceWindow);
     const code = `await ${this._buildLocatorString(winPrefix, best)}.selectOption({ value: ${JSON.stringify(selectedValue)} });`;
     
-    this.updateUserActionDB(action, best.funName, best.obj, "source");
+    this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
     return code;
   }
 
@@ -622,8 +701,8 @@ declareContexts(contexts, rootAlias) {
     const souLocator = this._buildLocatorString(souWinPrefix, bestSou);
     const tarLocator = this._buildLocatorString(tarWinPrefix, bestTar);
 
-    this.updateUserActionDB(action, bestSou.funName, bestSou.obj, "source");
-    this.updateUserActionDB(action, bestTar.funName, bestTar.obj, "target");
+    this.updateUserActionDB(action, bestSou.funName, bestSou.obj, "source", sourcepath);
+    this.updateUserActionDB(action, bestTar.funName, bestTar.obj, "target", targetpath);
 
     const dropX = Number(action?.dropPosition?.x);
     const dropY = Number(action?.dropPosition?.y);
@@ -647,7 +726,7 @@ declareContexts(contexts, rootAlias) {
     const winPrefix = this._getContextPrefix(sourceWindow);
     const locator = this._buildLocatorString(winPrefix, best);
     
-    this.updateUserActionDB(action, best.funName, best.obj, "source");
+    this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
     
     return `await ${locator}.click();`;
   }
@@ -659,7 +738,7 @@ declareContexts(contexts, rootAlias) {
     const winPrefix = this._getContextPrefix(sourceWindow);
     const locator = this._buildLocatorString(winPrefix, best);
     
-    this.updateUserActionDB(action, best.funName, best.obj, "source");
+    this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
     
     return `await ${locator}.dblclick();`;
   }
@@ -671,7 +750,7 @@ declareContexts(contexts, rootAlias) {
     const winPrefix = this._getContextPrefix(sourceWindow);
     const locator = this._buildLocatorString(winPrefix, best);
     
-    this.updateUserActionDB(action, best.funName, best.obj, "source");
+    this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
     
     return `await ${locator}.fill(${this.quoteForCode(inputText)});`;
   }
@@ -683,17 +762,20 @@ declareContexts(contexts, rootAlias) {
     const winPrefix = this._getContextPrefix(sourceWindow);
     const locator = this._buildLocatorString(winPrefix, best);
 
-    this.updateUserActionDB(action, best.funName, best.obj, "source");
+    this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
 
     return `await ${locator}.fill(${this.quoteForCode(value)});`;
   }
 
   // 5. 將原本對全域陣列 Index 的更新，改為直接對傳入的 Action 實體屬性做更新 (解耦)
-  updateUserActionDB(action, funName, obj, targetType = "source") {
+  updateUserActionDB(action, funName, obj, targetType = "source", locatorCandidates = null) {
     if (!action || typeof action.setSourceMethod !== 'function') return;
 
     let data = "";
-    if (funName === "ByTitle") data = obj.title;
+    if (funName === "ByPlaywright") {
+      data = obj.locator || this._playwrightSelectorToLocator(obj.selector);
+    }
+    else if (funName === "ByTitle") data = obj.title;
     else if (funName === "ByText") data = obj.text;
     else if (funName === "ByDomPath") data = obj.csspath;
     else if (funName === "ByRole") {
@@ -710,6 +792,7 @@ declareContexts(contexts, rootAlias) {
     if (targetType === "drop" || targetType === "target") {
       action.setTargetMethod(funName);
       action.setTargetData(data);
+      action.targetLocatorOptions = this._buildLocatorOptions(locatorCandidates);
       if (funName === "ByDomPath") {
         action.targetDomPathChain = obj.shadowChain || [];
         action.targetDomPathOptions = Array.isArray(obj.options) ? obj.options : [];
@@ -725,6 +808,7 @@ declareContexts(contexts, rootAlias) {
     } else {
       action.setSourceMethod(funName);
       action.setSourceData(data);
+      action.sourceLocatorOptions = this._buildLocatorOptions(locatorCandidates);
       if (funName === "ByDomPath") {
         action.sourceDomPathChain = obj.shadowChain || [];
         action.sourceDomPathOptions = Array.isArray(obj.options) ? obj.options : [];

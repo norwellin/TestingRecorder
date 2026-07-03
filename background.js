@@ -67,12 +67,16 @@ function preserveSelectorOverrides(nextAction, storedAction) {
   let hasOverride = false;
 
   ["source", "target"].forEach((field) => {
-    const overrideKey = `${field}DomPathSelectionOverridden`;
-    if (storedAction[overrideKey] !== true) return;
+    const locatorOverrideKey = `${field}LocatorSelectionOverridden`;
+    const domPathOverrideKey = `${field}DomPathSelectionOverridden`;
+    if (storedAction[locatorOverrideKey] !== true && storedAction[domPathOverrideKey] !== true) return;
 
+    mergedAction[`${field}Method`] = storedAction[`${field}Method`];
     mergedAction[`${field}Data`] = storedAction[`${field}Data`];
     mergedAction[`${field}DomPathChain`] = storedAction[`${field}DomPathChain`] || [];
-    mergedAction[overrideKey] = true;
+    mergedAction[`${field}LocatorOptions`] = storedAction[`${field}LocatorOptions`] || [];
+    mergedAction[locatorOverrideKey] = storedAction[locatorOverrideKey] === true;
+    mergedAction[domPathOverrideKey] = storedAction[domPathOverrideKey] === true;
     hasOverride = true;
   });
 

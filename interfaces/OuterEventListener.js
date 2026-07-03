@@ -62,6 +62,7 @@ export class OuterEventListener {
     this.mainDocument.addEventListener("compositionend", this.compositionEndHandler.bind(this), true);
     this.mainDocument.addEventListener("beforeinput", this.beforeInputHandler.bind(this), true);
     this.mainDocument.addEventListener("input", this.inputHandler.bind(this), true);
+    this.mainDocument.addEventListener("paste", this.pasteHandler.bind(this), true);
     
     // 必須 preventDefault 才能觸發 drop
     this.mainDocument.addEventListener("dragover", (e) => {
@@ -178,6 +179,31 @@ export class OuterEventListener {
     if (sourcePath && Object.keys(sourcePath).length > 0) {
       this.preEditSourcePaths.set(element, sourcePath);
     }
+  }
+
+  pasteHandler(e) {
+    if (!this.isRecording || !e.isTrusted) return;
+    if (this.shouldSuppressSyntheticPageEvent()) return;
+
+    const target = this.getTextInputEventTarget(e) || e.target;
+    if (!this.isTextInputElement(target)) return;
+
+    if (!this.preEditSourcePaths.has(target)) {
+      const sourcePath = this.domParserService.getOpenSourcePath(target, this.mainWindow);
+      if (sourcePath && Object.keys(sourcePath).length > 0) {
+        this.preEditSourcePaths.set(target, sourcePath);
+      }
+    }
+
+    this.markTextInputEdited(target);
+
+    // Read the resulting field value after the browser/framework applies the paste.
+    // The normal trusted input event may reschedule this timer; this is the fallback
+    // for components that stop or replace that event.
+    setTimeout(() => {
+      if (!this.isRecording) return;
+      this.scheduleTextInputRecord(target);
+    }, 0);
   }
 
   inputHandler(e) {
@@ -555,6 +581,12 @@ export class OuterEventListener {
     if (Date.now() < this.suppressClickUntil) return;
     if (this.shouldSuppressSyntheticPageEvent()) return;
     const target = this.getComposedEventTarget(e);
+    const toolbarItem = target?.closest?.(
+      ".gjs-toolbar-item, [data-command], [data-cmd]"
+    );
+    if (toolbarItem) {
+      console.log("GJS toolbar clicked:", toolbarItem);
+    }
     if (this.isFileInput(target)) return;
     if (this.isRangeInput(target)) return;
     if (this.isCheckboxOrCheckboxLabel(target)) return;
@@ -636,7 +668,7 @@ export class OuterEventListener {
   }
 
   getIonicInteractiveSelector() {
-    return "ion-tab-button, ion-button, ion-segment-button, ion-menu-button, ion-back-button, ion-item[button], ion-item[routerlink], ion-item[href], ion-card[button], ion-card[routerlink], ion-card[href], ion-card-content[button], ion-card-content[routerlink], ion-card-content[href]";
+    return "ion-select, ion-tab-button, ion-button, ion-segment-button, ion-menu-button, ion-back-button, ion-item[button], ion-item[routerlink], ion-item[href], ion-card[button], ion-card[routerlink], ion-card[href], ion-card-content[button], ion-card-content[routerlink], ion-card-content[href]";
   }
 
   getClickableSelector() {

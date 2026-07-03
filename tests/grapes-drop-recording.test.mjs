@@ -139,3 +139,74 @@ test("drag code remains backward compatible without a recorded position", () => 
 
   assert.equal(code, "await sourceLocator.dragTo(targetLocator);");
 });
+
+test("locator candidates keep semantic methods and multiple DOM paths", () => {
+  const generator = new PlaywrightCodeGenerator({ priSize: 4 }, {}, "page");
+  const candidates = {
+    0: {
+      funName: "ByRole",
+      obj: { role: "button", name: "Save", index: 0 }
+    },
+    1: {
+      funName: "ByTitle",
+      obj: { title: "Save changes" }
+    },
+    2: {
+      funName: "ByText",
+      obj: { text: "Save" }
+    },
+    3: {
+      funName: "ByDomPath",
+      obj: {
+        csspath: "[data-testid='save']",
+        shadowChain: [],
+        options: [
+          { path: "[data-testid='save']", shadowChain: [] },
+          { path: "form > button:nth-of-type(1)", shadowChain: [] }
+        ]
+      }
+    }
+  };
+
+  const options = generator._buildLocatorOptions(candidates);
+  assert.deepEqual(
+    options.map(option => option.method),
+    ["ByRole", "ByTitle", "ByText", "ByDomPath", "ByDomPath"]
+  );
+  assert.equal(options.filter(option => option.recommended).length, 1);
+  assert.equal(options[0].recommended, true);
+  assert.equal(options[4].data.csspath, "form > button:nth-of-type(1)");
+});
+
+test("playwright-injected selectors are converted to semantic locator code", () => {
+  const generator = new PlaywrightCodeGenerator({ priSize: 2 }, {}, "page");
+  const candidates = {
+    0: {
+      funName: "ByPlaywright",
+      obj: {
+        selector: 'internal:role=button[name="Save"i]',
+        selectors: [
+          'internal:role=button[name="Save"i]',
+          'internal:text="Save"i'
+        ]
+      }
+    },
+    1: {
+      funName: "ByDomPath",
+      obj: {
+        csspath: ".toolbar > button:first-child",
+        shadowChain: [],
+        options: [{ path: ".toolbar > button:first-child", shadowChain: [] }]
+      }
+    }
+  };
+
+  const options = generator._buildLocatorOptions(candidates);
+  assert.equal(options[0].data.locator, "getByRole('button', { name: 'Save' })");
+  assert.equal(options[1].data.locator, "getByText('Save')");
+  assert.equal(options[2].data.csspath, ".toolbar > button:first-child");
+  assert.equal(
+    generator._buildLocatorString("page", candidates[0]),
+    "page.getByRole('button', { name: 'Save' })"
+  );
+});
