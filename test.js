@@ -17,6 +17,7 @@ document.addEventListener("DOMContentLoaded", async function () {
     let pendingActionsRefresh = null;
     let pendingCodeViewRefresh = null;
     let locatorSelectInteractionActive = false;
+    const noteSaveTimers = new Map();
 
     function isLocatorSelectActive() {
         const activeElement = document.activeElement;
@@ -66,6 +67,9 @@ document.addEventListener("DOMContentLoaded", async function () {
             if (!currentAction) return nextAction;
 
             const mergedAction = { ...nextAction };
+            if (currentAction.codeNote !== undefined) {
+                mergedAction.codeNote = currentAction.codeNote;
+            }
             let hasOverride = false;
 
             ["source", "target"].forEach(field => {
@@ -200,6 +204,7 @@ document.addEventListener("DOMContentLoaded", async function () {
             actionElement.appendChild(createCell(getActionBehavior(action), "action-behavior"));
             actionElement.appendChild(createMethodCell(action));
             actionElement.appendChild(createElementCell(action, index));
+            actionElement.appendChild(createNoteCell(action, index));
 
             actionsDiv.appendChild(actionElement);
         });
@@ -215,6 +220,33 @@ document.addEventListener("DOMContentLoaded", async function () {
         div.className = `action-cell ${className}`;
         div.textContent = text ?? "";
         return div;
+    }
+
+    function createNoteCell(action, actionIndex) {
+        const cell = createCell("", "action-note");
+        const input = document.createElement("textarea");
+        input.className = "action-note-input";
+        input.rows = 2;
+        input.placeholder = "輸入這條程式碼的備註";
+        input.value = action?.codeNote || "";
+        input.setAttribute("aria-label", `Action ${actionIndex + 1} note`);
+
+        input.addEventListener("input", () => {
+            action.codeNote = input.value;
+            clearTimeout(noteSaveTimers.get(actionIndex));
+            noteSaveTimers.set(actionIndex, setTimeout(() => {
+                noteSaveTimers.delete(actionIndex);
+                saveActionNote(actionIndex, input.value);
+            }, 300));
+        });
+        input.addEventListener("blur", () => {
+            clearTimeout(noteSaveTimers.get(actionIndex));
+            noteSaveTimers.delete(actionIndex);
+            saveActionNote(actionIndex, input.value);
+        });
+
+        cell.appendChild(input);
+        return cell;
     }
 
     function getActionSource(action) {
@@ -528,11 +560,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 
     function wrapPlaywrightCode(codeBody) {
         const orderedBody = orderPlaywrightCodeBody(codeBody);
+        const annotatedBody = annotateCodeBodyWithNotes(orderedBody);
         return [
             "import { test, expect } from '@playwright/test';",
             "",
             "test('test', async ({ page }) => {",
-            ...orderedBody.map(line => "  " + line),
+            ...annotatedBody.map(line => "  " + line),
             "});"
         ];
     }
@@ -547,6 +580,120 @@ document.addEventListener("DOMContentLoaded", async function () {
         const normalizedLines = Array.isArray(lines) ? lines.filter(Boolean) : [];
         action.generatedCodeLines = normalizedLines;
         action.generatedCodeLine = normalizedLines[normalizedLines.length - 1] || "";
+    }
+
+    function noteToCommentLines(note) {
+        const normalized = String(note || "").replace(/\r\n?/g, "\n").trim();
+        if (!normalized) return [];
+        return normalized.split("\n").map(line => line ? `// ${line}` : "//");
+    }
+
+    function formatDomPathCandidate(path, chain = []) {
+        const hostSelectors = Array.isArray(chain)
+            ? chain.map(step => step?.hostSelector).filter(Boolean)
+            : [];
+        return [...hostSelectors, path].filter(Boolean).join(" >> ");
+    }
+
+    function formatLocatorOptionForComment(option) {
+        const method = option?.method;
+        const data = option?.data || {};
+
+        if (method === "ByPlaywright") return data.locator || data.selector || "";
+        if (method === "ByDomPath") {
+            return formatDomPathCandidate(data.csspath || data.path, data.shadowChain || []);
+        }
+        if (method === "ByRole") {
+            const name = data.name ? `, { name: ${JSON.stringify(String(data.name))} }` : "";
+            const index = data.index !== null && data.index !== undefined ? `.nth(${data.index})` : "";
+            return `getByRole(${JSON.stringify(String(data.role || ""))}${name})${index}`;
+        }
+        if (method === "ByTitle") return `getByTitle(${JSON.stringify(String(data.title || ""))})`;
+        if (method === "ByText") return `getByText(${JSON.stringify(String(data.text || ""))})`;
+        return data.locator || data.value || "";
+    }
+
+    function getAllSelectablePaths(action, field = "source") {
+        const values = [];
+        const add = value => {
+            if (value && !values.includes(value)) values.push(value);
+        };
+
+        const locatorOptions = action?.[`${field}LocatorOptions`];
+        if (Array.isArray(locatorOptions)) {
+            locatorOptions.forEach(option => add(formatLocatorOptionForComment(option)));
+        }
+
+        const domPathOptions = action?.[`${field}DomPathOptions`];
+        if (Array.isArray(domPathOptions)) {
+            domPathOptions.forEach(option => {
+                if (typeof option === "string") add(option);
+                else add(formatDomPathCandidate(option?.path, option?.shadowChain || []));
+            });
+        }
+
+        const selectedMethod = action?.[`${field}Method`];
+        const selectedData = action?.[`${field}Data`];
+        if (!values.length && selectedData) {
+            add(selectedMethod === "ByDomPath"
+                ? formatDomPathCandidate(selectedData, action?.[`${field}DomPathChain`] || [])
+                : selectedData);
+        }
+        return values;
+    }
+
+    function getAutomaticActionComment(action, actionIndex) {
+        const sourcePaths = getAllSelectablePaths(action, "source");
+        const targetPaths = getAllSelectablePaths(action, "target");
+        const pathParts = [];
+
+        if (action?.type === "dragANDdrop") {
+            if (sourcePaths.length) pathParts.push(`source: ${sourcePaths.join(" ; ")}`);
+            if (targetPaths.length) pathParts.push(`target: ${targetPaths.join(" ; ")}`);
+        } else if (sourcePaths.length) {
+            pathParts.push(...sourcePaths);
+        } else if (targetPaths.length) {
+            pathParts.push(...targetPaths);
+        }
+
+        return `// Recorded Action #${actionIndex + 1} [${pathParts.join(" | ")}]`;
+    }
+
+    function annotateCodeBodyWithNotes(codeBody) {
+        const lines = Array.isArray(codeBody) ? codeBody : [];
+        const notesByCodeIndex = new Map();
+        const claimedCodeIndexes = new Set();
+        let searchFrom = 0;
+
+        actions.forEach((action, actionIndex) => {
+            const actionLines = getActionGeneratedLines(action);
+            if (!actionLines.length) return;
+
+            const findMatch = (startIndex) => {
+                for (let index = startIndex; index < lines.length; index++) {
+                    if (!claimedCodeIndexes.has(index) && actionLines.includes(lines[index])) {
+                        return index;
+                    }
+                }
+                return -1;
+            };
+
+            let codeIndex = findMatch(searchFrom);
+            if (codeIndex < 0) codeIndex = findMatch(0);
+            if (codeIndex < 0) return;
+
+            claimedCodeIndexes.add(codeIndex);
+            searchFrom = codeIndex + 1;
+            notesByCodeIndex.set(codeIndex, [
+                getAutomaticActionComment(action, actionIndex),
+                ...noteToCommentLines(action.codeNote)
+            ]);
+        });
+
+        return lines.flatMap((line, index) => [
+            ...(notesByCodeIndex.get(index) || []),
+            line
+        ]);
     }
 
     function buildCodeBodyFromActions(fallbackCodeBody = []) {
@@ -695,6 +842,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         if (action.type === "input") return text.includes(".fill(");
         if (action.type === "change") return text.includes(".selectOption(");
         if (action.type === "dbclick") return text.includes(".dblclick(");
+        if (action.type === "keyboard") return text.includes(".press(") || text.includes(".keyboard.press(");
         if (action.type === "popup") return text.includes("waitForEvent('popup')");
         if (action.type === "click" || action.type === "checkBox") return text.includes(".click(");
         return text.trim().startsWith("await ");
@@ -942,6 +1090,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         if (action?.type === "input") return ".fill(";
         if (action?.type === "change") return ".selectOption(";
         if (action?.type === "dbclick") return ".dblclick(";
+        if (action?.type === "keyboard") return ".press(";
         return ".click(";
     }
 
@@ -1138,6 +1287,40 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
     }
 
+    async function saveActionNote(actionIndex, note) {
+        const action = actions[actionIndex];
+        if (!action) return;
+
+        action.codeNote = String(note || "");
+        const storage = await chrome.storage.local.get(["generatedCodeBody"]);
+        const storedCodeBody = Array.isArray(storage.generatedCodeBody)
+            ? storage.generatedCodeBody
+            : [];
+        const nextCodeBody = buildCodeBodyFromActions(storedCodeBody);
+        const generatedCode = wrapPlaywrightCode(nextCodeBody);
+
+        await chrome.storage.local.set({
+            generatedAction: actions,
+            generatedCodeBody: nextCodeBody,
+            generatedCode
+        });
+        setCodeView(normalizeCode(generatedCode));
+
+        try {
+            const recorderResponse = await chrome.runtime.sendMessage({
+                type: "UPDATE_RECORDED_ACTION",
+                actionId: action.id,
+                actionIndex,
+                patch: { codeNote: action.codeNote }
+            });
+            if (!recorderResponse?.ok) {
+                console.warn("[Recorded Actions] Failed to synchronize code note with the recorder.");
+            }
+        } catch (error) {
+            console.warn("[Recorded Actions] Unable to synchronize code note.", error);
+        }
+    }
+
     async function syncGeneratedCodeWithActions() {
         const storage = await chrome.storage.local.get(["generatedCodeBody"]);
         const codeBody = Array.isArray(storage.generatedCodeBody) ? [...storage.generatedCodeBody] : [];
@@ -1185,8 +1368,6 @@ document.addEventListener("DOMContentLoaded", async function () {
         });
 
         const nextCodeBody = buildCodeBodyFromActions(codeBody);
-        if (!changed && nextCodeBody.join("\n") === codeBody.filter(Boolean).join("\n")) return;
-
         const generatedCode = wrapPlaywrightCode(nextCodeBody);
         await chrome.storage.local.set({
             generatedAction: actions,

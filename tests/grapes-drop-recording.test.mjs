@@ -4,6 +4,9 @@ import vm from "node:vm";
 import { readFile } from "node:fs/promises";
 
 import { PlaywrightCodeGenerator } from "../usecases/PlaywrightCodeGenerator.js";
+import { DOMParserService } from "../usecases/DOMParserService.js";
+import { OuterEventListener } from "../interfaces/OuterEventListener.js";
+import { IframeEventListener } from "../interfaces/IframeEventListener.js";
 
 function createComponent({ id, cid, type = "default", tagName = "div", name = "", parent = null, index = 0 }) {
   const element = {
@@ -208,5 +211,87 @@ test("playwright-injected selectors are converted to semantic locator code", () 
   assert.equal(
     generator._buildLocatorString("page", candidates[0]),
     "page.getByRole('button', { name: 'Save' })"
+  );
+});
+
+test("playwright-injected selectors using dynamic IDs are moved to the end", () => {
+  const service = new DOMParserService({ mainWindow: {} });
+  const ownerDocument = {
+    defaultView: {
+      CSS: { escape: value => value }
+    }
+  };
+  const target = {
+    id: "i123",
+    ownerDocument,
+    parentElement: null
+  };
+
+  assert.deepEqual(
+    service.moveDynamicIdSelectorsToEnd(
+      ["#i123", 'internal:role=button[name="Save"i]', ".primary-action"],
+      target
+    ),
+    ['internal:role=button[name="Save"i]', ".primary-action", "#i123"]
+  );
+
+  target.id = "save";
+  assert.deepEqual(
+    service.moveDynamicIdSelectorsToEnd(["#save", ".primary-action"], target),
+    ["#save", ".primary-action"]
+  );
+});
+
+test("outer and iframe listeners record Enter against the event target", () => {
+  for (const Listener of [OuterEventListener, IframeEventListener]) {
+    const target = { nodeType: 1 };
+    const dispatched = [];
+    let flushedTarget = null;
+    const listener = Object.create(Listener.prototype);
+    Object.assign(listener, {
+      isRecording: true,
+      mainDocument: { activeElement: target },
+      iframeDocument: { activeElement: target },
+      getTextInputEventTarget: () => target,
+      flushPendingTextInputRecord: element => { flushedTarget = element; },
+      dispatchAction: (...args) => dispatched.push(args)
+    });
+
+    listener.keydownHandler({
+      key: "Enter",
+      keyCode: 13,
+      isTrusted: true,
+      isComposing: false,
+      repeat: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      shiftKey: false,
+      target
+    });
+
+    assert.equal(flushedTarget, target);
+    assert.equal(dispatched.length, 1);
+    assert.equal(dispatched[0][0], "keyboard");
+    assert.equal(dispatched[0][1], target);
+    assert.equal(dispatched[0][3].keyboard, "Enter");
+  }
+});
+
+test("keyboard actions use locator.press when a source locator is available", () => {
+  const generator = new PlaywrightCodeGenerator({ priSize: 2 }, {}, "page");
+  const paths = {
+    0: {
+      funName: "ByPlaywright",
+      obj: {
+        selector: 'internal:role=textbox[name="Search"i]',
+        selectors: ['internal:role=textbox[name="Search"i]']
+      }
+    }
+  };
+
+  assert.equal(
+    generator.keyboardSetter({}, paths, "Enter", "page"),
+    "await page.getByRole('textbox', { name: 'Search' }).press(\"Enter\");"
   );
 });

@@ -6849,6 +6849,35 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.playwrightInjectedScripts.set(targetDocument, injected);
       return injected;
     }
+    selectorReferencesElementId(selector2, id, targetDocument) {
+      if (!selector2 || !id) return false;
+      const css = targetDocument?.defaultView?.CSS;
+      const escapedId = css?.escape ? css.escape(id) : String(id).replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`);
+      const doubleQuotedId = JSON.stringify(String(id));
+      const singleQuotedId = `'${String(id).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+      return selector2.includes(`#${escapedId}`) || selector2.includes(`id=${doubleQuotedId}`) || selector2.includes(`id=${singleQuotedId}`) || selector2.includes(`[id=${doubleQuotedId}]`) || selector2.includes(`[id=${singleQuotedId}]`);
+    }
+    selectorUsesDynamicId(selector2, targetElement) {
+      if (!selector2 || !targetElement) return false;
+      for (let element = targetElement; element; element = element.parentElement) {
+        if (element.id && this.isDynamicGeneratedId(element.id) && this.selectorReferencesElementId(selector2, element.id, targetElement.ownerDocument)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    moveDynamicIdSelectorsToEnd(selectors, targetElement) {
+      const stableSelectors = [];
+      const dynamicIdSelectors = [];
+      for (const selector2 of selectors || []) {
+        if (this.selectorUsesDynamicId(selector2, targetElement)) {
+          dynamicIdSelectors.push(selector2);
+        } else {
+          stableSelectors.push(selector2);
+        }
+      }
+      return [...stableSelectors, ...dynamicIdSelectors];
+    }
     generateLocatorCandidatesWithPlaywrightInjected(el, root = el?.getRootNode?.()) {
       if (el?.nodeType !== 1 || !root) {
         return {
@@ -6866,10 +6895,11 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           multiple: true,
           root
         });
-        playwrightSelector = generated.selector || "";
-        playwrightSelectors = [...new Set(
+        const generatedSelectors = [...new Set(
           [generated.selector, ...generated.selectors || []].filter(Boolean)
         )];
+        playwrightSelectors = this.moveDynamicIdSelectorsToEnd(generatedSelectors, el);
+        playwrightSelector = playwrightSelectors[0] || "";
       } catch (err) {
         console.warn("[DOMParser] playwright-injected selector generation failed", err);
       }
@@ -7397,7 +7427,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       } else if (action.type === "range") {
         generatedCode = this.rangeSetter(action, sourcepath, sourceWindow, inputText);
       } else if (action.type === "keyboard") {
-        generatedCode = this.keyboardSetter(inputKey, sourceWindow);
+        generatedCode = this.keyboardSetter(action, sourcepath, inputKey, sourceWindow);
       } else if (action.type === "change") {
         generatedCode = this.changeSetter(action, sourcepath, selectValue, sourceWindow);
       }
@@ -7810,7 +7840,14 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       return context ? this._getBaseContextAlias(context) : this._getContextPrefix(sourceWindow);
     }
-    keyboardSetter(inputKey, sourceWindow) {
+    keyboardSetter(action, sourcepath, inputKey, sourceWindow) {
+      const best = this._getBestPath(sourcepath);
+      if (best) {
+        const winPrefix = this._getContextPrefix(sourceWindow);
+        const locator = this._buildLocatorString(winPrefix, best);
+        this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
+        return `await ${locator}.press(${this.quoteForCode(inputKey)});`;
+      }
       const pagePrefix = this._getKeyboardPagePrefix(sourceWindow);
       return `await ${pagePrefix}.keyboard.press(${this.quoteForCode(inputKey)});`;
     }
@@ -7995,6 +8032,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.selectedValue = null;
       this.path = null;
       this.inputText = "";
+      this.codeNote = "";
     }
     setKeyboard(key) {
       this.keyboard = key;
@@ -8181,6 +8219,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.currentHoveredElement = null;
       this.typedText = "";
       this.timer = null;
+      this.pendingTextInputElement = null;
       this.initialInputValues = /* @__PURE__ */ new WeakMap();
       this.preEditSourcePaths = /* @__PURE__ */ new WeakMap();
       this.lastUserTypedAt = /* @__PURE__ */ new WeakMap();
@@ -8238,6 +8277,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         case "STOP_RECORDING":
           this.setRecordingState(false, { allowHoverPreview: false });
           clearTimeout(this.timer);
+          this.timer = null;
+          this.pendingTextInputElement = null;
           break;
       }
     }
@@ -8482,6 +8523,15 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     keydownHandler(e) {
       if (!this.isRecording || !e.isTrusted || e.repeat) return;
       const target = this.getTextInputEventTarget(e);
+      if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
+        if (target) this.flushPendingTextInputRecord(target);
+        this.currentHoveredElement = target || e.target || this.mainDocument.activeElement;
+        if (!this.currentHoveredElement) return;
+        this.dispatchAction("keyboard", this.currentHoveredElement, null, {
+          keyboard: this.getEnterShortcut(e)
+        });
+        return;
+      }
       if (target && this.isTextEditingKey(e) && this.isTextInputElement(target)) {
         this.markTextInputEdited(target);
         return;
@@ -8812,11 +8862,16 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     scheduleTextInputRecord(element, delay = 500) {
       clearTimeout(this.timer);
+      this.pendingTextInputElement = element;
       this.debugInputTarget("scheduleTextInputRecord:set-timer", element, {
         delay,
         value: this.getInputValue(element)
       });
       this.timer = setTimeout(() => {
+        this.timer = null;
+        if (this.pendingTextInputElement === element) {
+          this.pendingTextInputElement = null;
+        }
         if (!this.isRecording || this.composingInputs.has(element) || !this.shouldRecordTextInputEvent(element)) {
           this.debugInputTarget("scheduleTextInputRecord:timer-ignored", element, {
             isRecording: this.isRecording,
@@ -8839,6 +8894,28 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         });
         this.preEditSourcePaths.delete(element);
       }, delay);
+    }
+    flushPendingTextInputRecord(element) {
+      if (!element || this.pendingTextInputElement !== element) return;
+      clearTimeout(this.timer);
+      this.timer = null;
+      this.pendingTextInputElement = null;
+      if (!this.isRecording || this.composingInputs.has(element) || !this.shouldRecordTextInputEvent(element)) return;
+      this.currentHoveredElement = element;
+      const preParsedSourcePath = this.preEditSourcePaths.get(element) || null;
+      this.dispatchAction("input", element, null, {
+        inputText: this.getInputValue(element),
+        preParsedSourcePath
+      });
+      this.preEditSourcePaths.delete(element);
+    }
+    getEnterShortcut(e) {
+      const modifiers = [];
+      if (e.ctrlKey) modifiers.push("Control");
+      if (e.altKey) modifiers.push("Alt");
+      if (e.metaKey) modifiers.push("Meta");
+      if (e.shiftKey) modifiers.push("Shift");
+      return [...modifiers, "Enter"].join("+");
     }
     isTextEditingKey(e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return false;
@@ -8947,6 +9024,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.currentHoveredElement = null;
       this.typedText = "";
       this.timer = null;
+      this.pendingTextInputElement = null;
       this.initialInputValues = /* @__PURE__ */ new WeakMap();
       this.preEditSourcePaths = /* @__PURE__ */ new WeakMap();
       this.lastUserTypedAt = /* @__PURE__ */ new WeakMap();
@@ -9005,6 +9083,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         case "STOP_RECORDING":
           this.setRecordingState(false, { allowHoverPreview: false });
           clearTimeout(this.timer);
+          this.timer = null;
+          this.pendingTextInputElement = null;
           break;
       }
     }
@@ -9249,6 +9329,15 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     keydownHandler(e) {
       if (!this.isRecording || !e.isTrusted || e.repeat) return;
       const target = this.getTextInputEventTarget(e);
+      if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
+        if (target) this.flushPendingTextInputRecord(target);
+        this.currentHoveredElement = target || e.target || this.iframeDocument.activeElement;
+        if (!this.currentHoveredElement) return;
+        this.dispatchAction("keyboard", this.currentHoveredElement, null, {
+          keyboard: this.getEnterShortcut(e)
+        });
+        return;
+      }
       if (target && this.isTextEditingKey(e) && this.isTextInputElement(target)) {
         this.markTextInputEdited(target);
         return;
@@ -9582,11 +9671,16 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     scheduleTextInputRecord(element, delay = 500) {
       clearTimeout(this.timer);
+      this.pendingTextInputElement = element;
       this.debugInputTarget("scheduleTextInputRecord:set-timer", element, {
         delay,
         value: this.getInputValue(element)
       });
       this.timer = setTimeout(() => {
+        this.timer = null;
+        if (this.pendingTextInputElement === element) {
+          this.pendingTextInputElement = null;
+        }
         if (!this.isRecording || this.composingInputs.has(element) || !this.shouldRecordTextInputEvent(element)) {
           this.debugInputTarget("scheduleTextInputRecord:timer-ignored", element, {
             isRecording: this.isRecording,
@@ -9609,6 +9703,28 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         });
         this.preEditSourcePaths.delete(element);
       }, delay);
+    }
+    flushPendingTextInputRecord(element) {
+      if (!element || this.pendingTextInputElement !== element) return;
+      clearTimeout(this.timer);
+      this.timer = null;
+      this.pendingTextInputElement = null;
+      if (!this.isRecording || this.composingInputs.has(element) || !this.shouldRecordTextInputEvent(element)) return;
+      this.currentHoveredElement = element;
+      const preParsedSourcePath = this.preEditSourcePaths.get(element) || null;
+      this.dispatchAction("input", element, null, {
+        inputText: this.getInputValue(element),
+        preParsedSourcePath
+      });
+      this.preEditSourcePaths.delete(element);
+    }
+    getEnterShortcut(e) {
+      const modifiers = [];
+      if (e.ctrlKey) modifiers.push("Control");
+      if (e.altKey) modifiers.push("Alt");
+      if (e.metaKey) modifiers.push("Meta");
+      if (e.shiftKey) modifiers.push("Shift");
+      return [...modifiers, "Enter"].join("+");
     }
     isTextEditingKey(e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return false;

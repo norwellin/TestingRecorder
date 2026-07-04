@@ -203,7 +203,7 @@
       minmax(220px, 1fr) 隞?”?敺?甈隡貊葬嚗?
       霈?domPath?elector??摮摰寞?頛末憿舐內??
     */
-    grid-template-columns: 45px 110px 110px 110px 130px minmax(220px, 1fr);
+    grid-template-columns: 45px 110px 110px 110px 130px minmax(220px, 1fr) minmax(180px, 0.8fr);
 
     gap: 8px;
     padding: 8px 10px;
@@ -233,7 +233,7 @@
 /* 瘥?蝑?action */
 .action-item {
     display: grid;
-    grid-template-columns: 45px 110px 110px 110px 130px minmax(220px, 1fr);
+    grid-template-columns: 45px 110px 110px 110px 130px minmax(220px, 1fr) minmax(180px, 0.8fr);
     gap: 8px;
 
     padding: 8px 10px;
@@ -248,7 +248,24 @@
       憒? popup 撖砍漲銝?嚗??游?蝬剜?銵冽撖砍漲嚗?
       ?剝? #recorded-actions ??overflow-x: auto ?Ｙ?璈怠??脣???
     */
-    min-width: 760px;
+    min-width: 980px;
+}
+
+.action-note-input {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 44px;
+    padding: 6px 8px;
+    resize: vertical;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font: inherit;
+    line-height: 1.35;
+}
+
+.action-note-input:focus {
+    border-color: #2684ff;
+    outline: 2px solid rgba(38, 132, 255, 0.18);
 }
 
 .action-item:nth-child(odd) {
@@ -574,6 +591,7 @@
         <div>使用者行為</div>
         <div>定位方法</div>
         <div>物件元素</div>
+        <div>備註</div>
     </div>
 
     <div id="recorded-actions"></div>

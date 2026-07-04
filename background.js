@@ -66,6 +66,10 @@ function preserveSelectorOverrides(nextAction, storedAction) {
   const mergedAction = { ...nextAction };
   let hasOverride = false;
 
+  if (storedAction.codeNote !== undefined) {
+    mergedAction.codeNote = storedAction.codeNote;
+  }
+
   ["source", "target"].forEach((field) => {
     const locatorOverrideKey = `${field}LocatorSelectionOverridden`;
     const domPathOverrideKey = `${field}DomPathSelectionOverridden`;
@@ -87,6 +91,120 @@ function preserveSelectorOverrides(nextAction, storedAction) {
   }
 
   return mergedAction;
+}
+
+function noteToCommentLines(note) {
+  const normalized = String(note || "").replace(/\r\n?/g, "\n").trim();
+  if (!normalized) return [];
+  return normalized.split("\n").map(line => line ? `// ${line}` : "//");
+}
+
+function formatDomPathCandidate(path, chain = []) {
+  const hostSelectors = Array.isArray(chain)
+    ? chain.map(step => step?.hostSelector).filter(Boolean)
+    : [];
+  return [...hostSelectors, path].filter(Boolean).join(" >> ");
+}
+
+function formatLocatorOptionForComment(option) {
+  const method = option?.method;
+  const data = option?.data || {};
+
+  if (method === "ByPlaywright") return data.locator || data.selector || "";
+  if (method === "ByDomPath") {
+    return formatDomPathCandidate(data.csspath || data.path, data.shadowChain || []);
+  }
+  if (method === "ByRole") {
+    const name = data.name ? `, { name: ${JSON.stringify(String(data.name))} }` : "";
+    const index = data.index !== null && data.index !== undefined ? `.nth(${data.index})` : "";
+    return `getByRole(${JSON.stringify(String(data.role || ""))}${name})${index}`;
+  }
+  if (method === "ByTitle") return `getByTitle(${JSON.stringify(String(data.title || ""))})`;
+  if (method === "ByText") return `getByText(${JSON.stringify(String(data.text || ""))})`;
+  return data.locator || data.value || "";
+}
+
+function getAllSelectablePaths(action, field = "source") {
+  const values = [];
+  const add = value => {
+    if (value && !values.includes(value)) values.push(value);
+  };
+
+  const locatorOptions = action?.[`${field}LocatorOptions`];
+  if (Array.isArray(locatorOptions)) {
+    locatorOptions.forEach(option => add(formatLocatorOptionForComment(option)));
+  }
+
+  const domPathOptions = action?.[`${field}DomPathOptions`];
+  if (Array.isArray(domPathOptions)) {
+    domPathOptions.forEach(option => {
+      if (typeof option === "string") add(option);
+      else add(formatDomPathCandidate(option?.path, option?.shadowChain || []));
+    });
+  }
+
+  const selectedMethod = action?.[`${field}Method`];
+  const selectedData = action?.[`${field}Data`];
+  if (!values.length && selectedData) {
+    add(selectedMethod === "ByDomPath"
+      ? formatDomPathCandidate(selectedData, action?.[`${field}DomPathChain`] || [])
+      : selectedData);
+  }
+  return values;
+}
+
+function getAutomaticActionComment(action, actionIndex) {
+  const sourcePaths = getAllSelectablePaths(action, "source");
+  const targetPaths = getAllSelectablePaths(action, "target");
+  const pathParts = [];
+
+  if (action?.type === "dragANDdrop") {
+    if (sourcePaths.length) pathParts.push(`source: ${sourcePaths.join(" ; ")}`);
+    if (targetPaths.length) pathParts.push(`target: ${targetPaths.join(" ; ")}`);
+  } else if (sourcePaths.length) {
+    pathParts.push(...sourcePaths);
+  } else if (targetPaths.length) {
+    pathParts.push(...targetPaths);
+  }
+
+  return `// Recorded Action #${actionIndex + 1} [${pathParts.join(" | ")}]`;
+}
+
+function annotateCodeBodyWithNotes(codeBody, actions) {
+  const lines = Array.isArray(codeBody) ? codeBody : [];
+  const notesByCodeIndex = new Map();
+  const claimedCodeIndexes = new Set();
+  let searchFrom = 0;
+
+  for (const [actionIndex, action] of (actions || []).entries()) {
+    const actionLines = Array.isArray(action?.generatedCodeLines) && action.generatedCodeLines.length
+      ? action.generatedCodeLines.filter(Boolean)
+      : (action?.generatedCodeLine ? [action.generatedCodeLine] : []);
+    if (!actionLines.length) continue;
+
+    const findMatch = (startIndex) => {
+      for (let index = startIndex; index < lines.length; index++) {
+        if (!claimedCodeIndexes.has(index) && actionLines.includes(lines[index])) return index;
+      }
+      return -1;
+    };
+
+    let codeIndex = findMatch(searchFrom);
+    if (codeIndex < 0) codeIndex = findMatch(0);
+    if (codeIndex < 0) continue;
+
+    claimedCodeIndexes.add(codeIndex);
+    searchFrom = codeIndex + 1;
+    notesByCodeIndex.set(codeIndex, [
+      getAutomaticActionComment(action, actionIndex),
+      ...noteToCommentLines(action.codeNote)
+    ]);
+  }
+
+  return lines.flatMap((line, index) => [
+    ...(notesByCodeIndex.get(index) || []),
+    line
+  ]);
 }
 
 function mergeSelectorOverrides(nextActions, storedActions) {
@@ -169,11 +287,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       
       // 🌟 在這裡單純地套上靜態外框
+      const annotatedCodeBody = annotateCodeBodyWithNotes(codeBody, currentAction);
       const fullCode = [
           "import { test, expect } from '@playwright/test';",
           "",
           "test('test', async ({ page }) => {",
-          ...codeBody.map(line => "  " + line),
+          ...annotatedCodeBody.map(line => "  " + line),
           "});"
       ];
       

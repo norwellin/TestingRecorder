@@ -17,6 +17,7 @@ export class IframeEventListener {
     this.currentHoveredElement = null;
     this.typedText = "";
     this.timer = null;
+    this.pendingTextInputElement = null;
     this.initialInputValues = new WeakMap();
     this.preEditSourcePaths = new WeakMap();
     this.lastUserTypedAt = new WeakMap();
@@ -79,6 +80,8 @@ export class IframeEventListener {
       case "STOP_RECORDING":
         this.setRecordingState(false, { allowHoverPreview: false });
         clearTimeout(this.timer);
+        this.timer = null;
+        this.pendingTextInputElement = null;
         break;
     }
   }
@@ -365,6 +368,17 @@ export class IframeEventListener {
   keydownHandler(e) {
     if (!this.isRecording || !e.isTrusted || e.repeat) return;
     const target = this.getTextInputEventTarget(e);
+
+    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
+      if (target) this.flushPendingTextInputRecord(target);
+      this.currentHoveredElement = target || e.target || this.iframeDocument.activeElement;
+      if (!this.currentHoveredElement) return;
+      this.dispatchAction("keyboard", this.currentHoveredElement, null, {
+        keyboard: this.getEnterShortcut(e)
+      });
+      return;
+    }
+
     if (target && this.isTextEditingKey(e) && this.isTextInputElement(target)) {
       this.markTextInputEdited(target);
       return;
@@ -761,11 +775,16 @@ export class IframeEventListener {
 
   scheduleTextInputRecord(element, delay = 500) {
     clearTimeout(this.timer);
+    this.pendingTextInputElement = element;
     this.debugInputTarget("scheduleTextInputRecord:set-timer", element, {
       delay,
       value: this.getInputValue(element)
     });
     this.timer = setTimeout(() => {
+      this.timer = null;
+      if (this.pendingTextInputElement === element) {
+        this.pendingTextInputElement = null;
+      }
       if (!this.isRecording || this.composingInputs.has(element) || !this.shouldRecordTextInputEvent(element)) {
         this.debugInputTarget("scheduleTextInputRecord:timer-ignored", element, {
           isRecording: this.isRecording,
@@ -788,6 +807,32 @@ export class IframeEventListener {
       });
       this.preEditSourcePaths.delete(element);
     }, delay);
+  }
+
+  flushPendingTextInputRecord(element) {
+    if (!element || this.pendingTextInputElement !== element) return;
+
+    clearTimeout(this.timer);
+    this.timer = null;
+    this.pendingTextInputElement = null;
+    if (!this.isRecording || this.composingInputs.has(element) || !this.shouldRecordTextInputEvent(element)) return;
+
+    this.currentHoveredElement = element;
+    const preParsedSourcePath = this.preEditSourcePaths.get(element) || null;
+    this.dispatchAction("input", element, null, {
+      inputText: this.getInputValue(element),
+      preParsedSourcePath
+    });
+    this.preEditSourcePaths.delete(element);
+  }
+
+  getEnterShortcut(e) {
+    const modifiers = [];
+    if (e.ctrlKey) modifiers.push("Control");
+    if (e.altKey) modifiers.push("Alt");
+    if (e.metaKey) modifiers.push("Meta");
+    if (e.shiftKey) modifiers.push("Shift");
+    return [...modifiers, "Enter"].join("+");
   }
 
   isTextEditingKey(e) {

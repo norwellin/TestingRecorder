@@ -121,6 +121,52 @@ export class DOMParserService {
     return injected;
   }
 
+  selectorReferencesElementId(selector, id, targetDocument) {
+    if (!selector || !id) return false;
+
+    const css = targetDocument?.defaultView?.CSS;
+    const escapedId = css?.escape
+      ? css.escape(id)
+      : String(id).replace(/[^a-zA-Z0-9_-]/g, character => `\\${character}`);
+    const doubleQuotedId = JSON.stringify(String(id));
+    const singleQuotedId = `'${String(id).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+
+    return selector.includes(`#${escapedId}`)
+      || selector.includes(`id=${doubleQuotedId}`)
+      || selector.includes(`id=${singleQuotedId}`)
+      || selector.includes(`[id=${doubleQuotedId}]`)
+      || selector.includes(`[id=${singleQuotedId}]`);
+  }
+
+  selectorUsesDynamicId(selector, targetElement) {
+    if (!selector || !targetElement) return false;
+
+    for (let element = targetElement; element; element = element.parentElement) {
+      if (
+        element.id
+        && this.isDynamicGeneratedId(element.id)
+        && this.selectorReferencesElementId(selector, element.id, targetElement.ownerDocument)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  moveDynamicIdSelectorsToEnd(selectors, targetElement) {
+    const stableSelectors = [];
+    const dynamicIdSelectors = [];
+
+    for (const selector of selectors || []) {
+      if (this.selectorUsesDynamicId(selector, targetElement)) {
+        dynamicIdSelectors.push(selector);
+      } else {
+        stableSelectors.push(selector);
+      }
+    }
+    return [...stableSelectors, ...dynamicIdSelectors];
+  }
+
   generateLocatorCandidatesWithPlaywrightInjected(el, root = el?.getRootNode?.()) {
     if (el?.nodeType !== 1 || !root) {
       return {
@@ -139,10 +185,11 @@ export class DOMParserService {
         multiple: true,
         root
       });
-      playwrightSelector = generated.selector || "";
-      playwrightSelectors = [...new Set(
+      const generatedSelectors = [...new Set(
         [generated.selector, ...(generated.selectors || [])].filter(Boolean)
       )];
+      playwrightSelectors = this.moveDynamicIdSelectorsToEnd(generatedSelectors, el);
+      playwrightSelector = playwrightSelectors[0] || "";
     } catch (err) {
       console.warn("[DOMParser] playwright-injected selector generation failed", err);
     }

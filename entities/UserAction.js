@@ -22,6 +22,7 @@ export class UserAction {
     this.selectedValue = null;
     this.path = null; //csspath
     this.inputText = ""; //only use for input event - type: text 
+    this.codeNote = "";
 
   }
   setKeyboard(key){

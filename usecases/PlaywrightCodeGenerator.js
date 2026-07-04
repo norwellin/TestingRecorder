@@ -167,7 +167,7 @@ export class PlaywrightCodeGenerator {
     } else if (action.type === 'range') {
       generatedCode = this.rangeSetter(action, sourcepath, sourceWindow, inputText);
     } else if (action.type === 'keyboard') {
-      generatedCode = this.keyboardSetter(inputKey, sourceWindow);
+      generatedCode = this.keyboardSetter(action, sourcepath, inputKey, sourceWindow);
     } else if (action.type === 'change') {
       generatedCode = this.changeSetter(action, sourcepath, selectValue, sourceWindow);
     }
@@ -684,7 +684,15 @@ declareContexts(contexts, rootAlias) {
       : this._getContextPrefix(sourceWindow);
   }
 
-  keyboardSetter(inputKey, sourceWindow) {
+  keyboardSetter(action, sourcepath, inputKey, sourceWindow) {
+    const best = this._getBestPath(sourcepath);
+    if (best) {
+      const winPrefix = this._getContextPrefix(sourceWindow);
+      const locator = this._buildLocatorString(winPrefix, best);
+      this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
+      return `await ${locator}.press(${this.quoteForCode(inputKey)});`;
+    }
+
     const pagePrefix = this._getKeyboardPagePrefix(sourceWindow);
     return `await ${pagePrefix}.keyboard.press(${this.quoteForCode(inputKey)});`;
   }
