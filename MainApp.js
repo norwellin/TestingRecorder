@@ -29,6 +29,7 @@ export class MainApp {
     this.dynamicFrameObserver = null;
     this.dynamicFrameScanTimer = null;
     this.pendingGrapesDrops = [];
+    this.hasInitializedRecordingSession = false;
 
     this.setupBackgroundMessageListener();
     this.setupNativeDialogListener();
@@ -66,6 +67,7 @@ export class MainApp {
           type: "navigate",
           ...navInfo,
           url: navInfo.currentUrl || navInfo.url || window.location.href,
+          viewport: this.getRecordingViewport(),
           ts: Date.now()
         };
         const newLine = this.appendGeneratedCode(action);
@@ -401,6 +403,7 @@ export class MainApp {
 
   start() {
     if (this.isStarted) return this.getState();
+    if (this.hasInitializedRecordingSession) return this.resumeRecording();
     this.hoverPreviewSessionEnabled = true;
 
     // 1. 掃描環境並註冊
@@ -416,6 +419,7 @@ export class MainApp {
     const gotoAction = {
       type: "navigate",
       url: window.location.href,
+      viewport: this.getRecordingViewport(),
       ts: Date.now()
     };
 
@@ -425,10 +429,11 @@ export class MainApp {
     // 加入 goto (透過 generator 確保格式正確)
     const gotoResult = this.codeGenerator.generate(gotoAction);
     if (gotoResult) {
-      initialBatchCode.push(gotoResult);
-      this.command.appendCode(gotoResult);
+      const gotoLines = Array.isArray(gotoResult) ? gotoResult : [gotoResult];
+      initialBatchCode.push(...gotoLines);
+      gotoLines.forEach(line => this.command.appendCode(line));
       this.attachGeneratedCodeToAction(gotoAction, {
-        code: [gotoResult],
+        code: gotoLines,
         isReplace: false
       });
       this.store.addAction(gotoAction);
@@ -444,13 +449,36 @@ export class MainApp {
         });
     }
 
+    this.hasInitializedRecordingSession = true;
     this.isStarted = true;
     this.store.setRecording(true);
     this.bindListenersToContexts(allContexts);
+    this.navigationTracker.start();
     this.startDynamicFrameWatcher();
 
     return this.getState();
   }
+
+  resumeRecording() {
+    if (this.isStarted) return this.getState();
+
+    this.isStarted = true;
+    this.hoverPreviewSessionEnabled = true;
+    this.store.setRecording(true);
+
+    this.activeListeners.forEach(listener => {
+      if (typeof listener.setRecordingState === "function") {
+        listener.setRecordingState(true, { allowHoverPreview: true });
+      } else {
+        listener.isRecording = true;
+      }
+    });
+
+    this.navigationTracker.start();
+    this.startDynamicFrameWatcher();
+    return this.getState();
+  }
+
   // 🌟 關鍵新增：專門給新分頁(Popup)或重新整理後的頁面「自動接續錄製」使用
   autoStart() {
     if (this.isStarted) return;
@@ -468,9 +496,11 @@ export class MainApp {
     this.codeGenerator.setContexts(allContexts, this.pageAlias);
 
     // 2. 正式啟動監聽器與狀態
+    this.hasInitializedRecordingSession = true;
     this.isStarted = true;
     this.store.setRecording(true);
     this.bindListenersToContexts(allContexts);
+    this.navigationTracker.start();
     this.startDynamicFrameWatcher();
   }
 
@@ -591,6 +621,7 @@ export class MainApp {
     this.scanResult = null;
     this.activeListeners = [];
     this.pendingGrapesDrops = [];
+    this.hasInitializedRecordingSession = false;
     this.isStarted = false;
     return this.getState();
   }
@@ -648,6 +679,15 @@ export class MainApp {
     safeAct.displayTargetWindow = this.getDisplayContextName(safeAct.targetWindow);
 
     return safeAct;
+  }
+
+  getRecordingViewport() {
+    const width = Math.floor(Number(this.rootWin?.innerWidth));
+    const height = Math.floor(Number(this.rootWin?.innerHeight));
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      return null;
+    }
+    return { width, height };
   }
 
   getDisplayContextName(contextId) {
@@ -834,9 +874,17 @@ export class MainApp {
       }
     } else {
       if (typeof this.command.codeSetter === 'function') {
-        this.command.codeSetter(codeToReturn);
+        if (Array.isArray(codeToReturn)) {
+          codeToReturn.forEach(line => this.command.codeSetter(line));
+        } else {
+          this.command.codeSetter(codeToReturn);
+        }
       } else {
-        this.command.appendCode(codeToReturn);
+        if (Array.isArray(codeToReturn)) {
+          codeToReturn.forEach(line => this.command.appendCode(line));
+        } else {
+          this.command.appendCode(codeToReturn);
+        }
       }
     }
     console.log("[Debug MainApp] appendGeneratedCode stored", {

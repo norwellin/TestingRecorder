@@ -669,22 +669,32 @@ document.addEventListener("DOMContentLoaded", async function () {
             const actionLines = getActionGeneratedLines(action);
             if (!actionLines.length) return;
 
-            const findMatch = (startIndex) => {
-                for (let index = startIndex; index < lines.length; index++) {
-                    if (!claimedCodeIndexes.has(index) && actionLines.includes(lines[index])) {
-                        return index;
+            const findBlock = (startIndex) => {
+                const lastStartIndex = lines.length - actionLines.length;
+                for (let index = startIndex; index <= lastStartIndex; index++) {
+                    const isExactUnclaimedBlock = actionLines.every((actionLine, offset) => {
+                        const codeIndex = index + offset;
+                        return !claimedCodeIndexes.has(codeIndex) && lines[codeIndex] === actionLine;
+                    });
+                    if (isExactUnclaimedBlock) {
+                        return {
+                            start: index,
+                            end: index + actionLines.length - 1
+                        };
                     }
                 }
-                return -1;
+                return null;
             };
 
-            let codeIndex = findMatch(searchFrom);
-            if (codeIndex < 0) codeIndex = findMatch(0);
-            if (codeIndex < 0) return;
+            let block = findBlock(searchFrom);
+            if (!block) block = findBlock(0);
+            if (!block) return;
 
-            claimedCodeIndexes.add(codeIndex);
-            searchFrom = codeIndex + 1;
-            notesByCodeIndex.set(codeIndex, [
+            for (let codeIndex = block.start; codeIndex <= block.end; codeIndex++) {
+                claimedCodeIndexes.add(codeIndex);
+            }
+            searchFrom = block.end + 1;
+            notesByCodeIndex.set(block.start, [
                 getAutomaticActionComment(action, actionIndex),
                 ...noteToCommentLines(action.codeNote)
             ]);
@@ -782,14 +792,21 @@ document.addEventListener("DOMContentLoaded", async function () {
         const output = [];
         const insertedParents = new Set();
         const firstGotoIndex = executableLines.findIndex(line => /\.goto\(/.test(String(line)));
+        const preGotoSetupIndexes = new Set();
 
         if (firstGotoIndex >= 0) {
+            executableLines.forEach((line, index) => {
+                if (index < firstGotoIndex && /\.setViewportSize\(/.test(String(line))) {
+                    output.push(line);
+                    preGotoSetupIndexes.add(index);
+                }
+            });
             output.push(executableLines[firstGotoIndex]);
             appendDeclarationsForParent("page", declarationsByParent, insertedParents, output);
         }
 
         executableLines.forEach((line, index) => {
-            if (index === firstGotoIndex) return;
+            if (index === firstGotoIndex || preGotoSetupIndexes.has(index)) return;
             output.push(line);
 
             const popupMatch = String(line).match(/const\s+\[([A-Za-z_$][\w$]*)\]\s*=\s*await\s+Promise\.all/);
@@ -1096,6 +1113,20 @@ document.addEventListener("DOMContentLoaded", async function () {
 
     function replaceActionLocatorInCodeLine(action, line, field, candidate, oldMethod, oldChain) {
         const text = String(line || "");
+
+        if (action?.type === "dragANDdrop" && field === "target") {
+            const declaration = text.match(/^(\s*const\s+dropTarget\s*=\s*)(.*?)(;\s*)$/);
+            if (declaration) {
+                const nextExpression = replaceLocatorExpression(
+                    declaration[2],
+                    oldMethod,
+                    oldChain,
+                    candidate
+                );
+                return declaration[1] + nextExpression + declaration[3];
+            }
+        }
+
         const operation = getActionOperation(action);
         const operationIndex = text.indexOf(operation);
         if (operationIndex < 0) return text;
@@ -1148,7 +1179,11 @@ document.addEventListener("DOMContentLoaded", async function () {
         const codeIndex = findCodeBodyIndexForAction(codeBody, actionIndex, oldValue, field);
         const actionLines = getActionGeneratedLines(action);
         const nextLines = actionLines.map(line => {
-            return matchesActionCodeLine(action, line)
+            const isDropTargetDeclaration =
+                action.type === "dragANDdrop" &&
+                field === "target" &&
+                /^\s*const\s+dropTarget\s*=/.test(String(line || ""));
+            return matchesActionCodeLine(action, line) || isDropTargetDeclaration
                 ? replaceActionLocatorInCodeLine(action, line, field, candidate, oldMethod, oldChain)
                 : line;
         });

@@ -34,5 +34,8 @@
   ],
   "action": {
     "default_title": "Iframe Drag Detector"
+  },
+  "icons":{
+    "128": "icons/img1.png"
   }
 }

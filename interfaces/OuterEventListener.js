@@ -142,18 +142,19 @@ export class OuterEventListener {
     }
   }
 
-  dropHandler(e) {
+  async dropHandler(e) {
     if (!this.isRecording) return;
     e.preventDefault();
-    this.currentHoveredElement = e.target;
+    this.currentHoveredElement = this.getDropTargetElement(e);
+    const dropPosition = await this.getDropPosition(e, this.currentHoveredElement);
     
     this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, {
       isDrop: true,
-      dropPosition: this.getDropPosition(e, this.currentHoveredElement)
+      dropPosition
     });
   }
 
-  getDropPosition(event, targetElement) {
+  async getDropPosition(event, targetElement) {
     if (!event || !targetElement?.getBoundingClientRect) return null;
     const rect = targetElement.getBoundingClientRect();
     if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
@@ -168,8 +169,104 @@ export class OuterEventListener {
       xRatio: Math.round((x / rect.width) * 10000) / 10000,
       yRatio: Math.round((y / rect.height) * 10000) / 10000,
       targetWidth: Math.round(rect.width * 100) / 100,
-      targetHeight: Math.round(rect.height * 100) / 100
+      targetHeight: Math.round(rect.height * 100) / 100,
+      scrollState: await this.getDropScrollState(targetElement)
     };
+  }
+
+  async getDropScrollState(targetElement) {
+    const doc = targetElement?.ownerDocument;
+    if (!doc) return null;
+
+    const ionContent = this.getClosestIonContent(targetElement);
+    if (ionContent) {
+      try {
+        const scrollingElement = typeof ionContent.getScrollElement === "function"
+          ? await ionContent.getScrollElement()
+          : ionContent.shadowRoot?.querySelector?.("[part='scroll'], .inner-scroll");
+        if (scrollingElement) {
+          return {
+            scope: "ion-content",
+            scrollLeftRatio: this.getScrollRatio(
+              scrollingElement.scrollLeft,
+              scrollingElement.scrollWidth - scrollingElement.clientWidth
+            ),
+            scrollTopRatio: this.getScrollRatio(
+              scrollingElement.scrollTop,
+              scrollingElement.scrollHeight - scrollingElement.clientHeight
+            )
+          };
+        }
+      } catch (error) {
+        console.warn("[Recorder] Unable to inspect ion-content scroll position", error);
+      }
+    }
+
+    const view = doc.defaultView;
+    let element = targetElement;
+    let ancestorDepth = 0;
+
+    while (element && element !== doc.documentElement) {
+      const style = view?.getComputedStyle?.(element);
+      const overflowX = style?.overflowX || style?.overflow || "";
+      const overflowY = style?.overflowY || style?.overflow || "";
+      const canScrollX =
+        /(auto|scroll|overlay)/.test(overflowX) &&
+        element.scrollWidth > element.clientWidth;
+      const canScrollY =
+        /(auto|scroll|overlay)/.test(overflowY) &&
+        element.scrollHeight > element.clientHeight;
+
+      if (canScrollX || canScrollY) {
+        return {
+          scope: "element",
+          ancestorDepth,
+          scrollLeftRatio: this.getScrollRatio(
+            element.scrollLeft,
+            element.scrollWidth - element.clientWidth
+          ),
+          scrollTopRatio: this.getScrollRatio(
+            element.scrollTop,
+            element.scrollHeight - element.clientHeight
+          )
+        };
+      }
+
+      element = element.parentElement;
+      ancestorDepth += 1;
+    }
+
+    const scrollingElement = this.getDocumentScrollingElement(doc);
+    if (!scrollingElement) return null;
+
+    return {
+      scope: "document",
+      rootTag: String(scrollingElement.tagName || "").toLowerCase(),
+      scrollLeftRatio: this.getScrollRatio(
+        scrollingElement.scrollLeft,
+        scrollingElement.scrollWidth - scrollingElement.clientWidth
+      ),
+      scrollTopRatio: this.getScrollRatio(
+        scrollingElement.scrollTop,
+        scrollingElement.scrollHeight - scrollingElement.clientHeight
+      )
+    };
+  }
+
+  getDocumentScrollingElement(doc) {
+    const candidates = [doc?.scrollingElement, doc?.documentElement, doc?.body]
+      .filter((element, index, list) => element && list.indexOf(element) === index);
+    return candidates.find(element =>
+      Math.abs(Number(element.scrollTop) || 0) > 0 ||
+      Math.abs(Number(element.scrollLeft) || 0) > 0
+    ) || candidates[0] || null;
+  }
+
+  getScrollRatio(position, maximum) {
+    const max = Number(maximum);
+    if (!Number.isFinite(max) || max <= 0) return 0;
+    const ratio = Number(position) / max;
+    return Math.round(Math.max(0, Math.min(1, ratio)) * 10000) / 10000;
   }
 
   beforeInputHandler(e) {
@@ -568,7 +665,7 @@ export class OuterEventListener {
     return null;
   }
 
-  mouseupHandler(e) {
+  async mouseupHandler(e) {
     if (!this.isRecording || !e.isTrusted) return;
     if (this.shouldSuppressSyntheticPageEvent()) return;
     if (this.isFileInput(e.target)) return;
@@ -576,13 +673,14 @@ export class OuterEventListener {
     if (this.isDragging) {
       this.isDragging = false;
       this.dragStart = { x: 0, y: 0 };
-      this.currentHoveredElement = this.getDragTargetElement(e.target);
+      this.currentHoveredElement = this.getDropTargetElement(e);
       this.mouseDownFlag = false;
       this.dragStepFlag = 0;
       this.suppressClickUntil = Date.now() + 300;
+      const dropPosition = await this.getDropPosition(e, this.currentHoveredElement);
       this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, {
         isDrop: true,
-        dropPosition: this.getDropPosition(e, this.currentHoveredElement)
+        dropPosition
       });
       return;
     }
@@ -736,6 +834,21 @@ export class OuterEventListener {
 
   getDragTargetElement(element) {
     return element?.closest?.(".gjs-layer, .gjs-layer-item, [data-layer-id], [data-gjs-type]") || element;
+  }
+
+  getDropTargetElement(event) {
+    return this.getDragTargetElement(event?.target);
+  }
+
+  getClosestIonContent(element) {
+    let current = element;
+    while (current) {
+      const ionContent = current.closest?.("ion-content");
+      if (ionContent) return ionContent;
+      const root = current.getRootNode?.();
+      current = root?.host || null;
+    }
+    return null;
   }
 
   resetMouseDragState() {

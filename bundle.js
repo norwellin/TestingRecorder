@@ -7319,7 +7319,16 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       console.log("Generating code for action: ", action);
       this.mergeActionContextSnapshots(action);
       if (action.type === "navigate") {
-        return `await page.goto('${action.url}');`;
+        const width = Math.floor(Number(action.viewport?.width));
+        const height = Math.floor(Number(action.viewport?.height));
+        const gotoLine = `await page.goto('${action.url}');`;
+        if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+          return [
+            `await page.setViewportSize({ width: ${width}, height: ${height} });`,
+            gotoLine
+          ];
+        }
+        return gotoLine;
       }
       if (action.type === "dialog") {
         const winPrefix = this._getContextPrefix(action.sourceWindow);
@@ -7488,6 +7497,14 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         if (paths[i]) return paths[i];
       }
       return null;
+    }
+    _getBestDragTargetPath(paths) {
+      const best = this._getBestPath(paths);
+      if (best?.funName !== "ByText" || String(best.obj?.text || "").length <= 80) return best;
+      const candidates = Array.isArray(paths) ? paths : Object.values(paths || {});
+      return candidates.find(
+        (candidate) => candidate?.funName === "ByDomPath" && candidate?.obj?.csspath
+      ) || best;
     }
     _buildLocatorOptions(paths) {
       if (!paths) return [];
@@ -7853,7 +7870,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     dragAndDropCodeSetter(action, targetpath, sourcepath, sourceWindow, targetWindow) {
       const bestSou = this._getBestPath(sourcepath);
-      const bestTar = this._getBestPath(targetpath);
+      const bestTar = this._getBestDragTargetPath(targetpath);
       if (!bestSou || !bestTar) return null;
       this.mergeActionContextSnapshots(action);
       const souWinPrefix = this._getActionContextPrefix(action, "source", sourceWindow);
@@ -7862,9 +7879,82 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const tarLocator = this._buildLocatorString(tarWinPrefix, bestTar);
       this.updateUserActionDB(action, bestSou.funName, bestSou.obj, "source", sourcepath);
       this.updateUserActionDB(action, bestTar.funName, bestTar.obj, "target", targetpath);
-      const dropX = Number(action?.dropPosition?.x);
-      const dropY = Number(action?.dropPosition?.y);
-      const targetPosition = Number.isFinite(dropX) && Number.isFinite(dropY) ? `, { targetPosition: { x: ${dropX}, y: ${dropY} } }` : "";
+      const dropXRatio = Number(action?.dropPosition?.xRatio);
+      const dropYRatio = Number(action?.dropPosition?.yRatio);
+      const hasDropRatio = Number.isFinite(dropXRatio) && Number.isFinite(dropYRatio);
+      let targetPosition = "";
+      if (hasDropRatio) {
+        const xRatio = Math.max(0, Math.min(1, dropXRatio));
+        const yRatio = Math.max(0, Math.min(1, dropYRatio));
+        const recordedScrollState = action?.dropPosition?.scrollState;
+        const scrollState = recordedScrollState?.scope === "element" ? {
+          scope: "element",
+          ancestorDepth: Math.max(0, Math.floor(Number(recordedScrollState.ancestorDepth) || 0)),
+          scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
+          scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
+        } : recordedScrollState?.scope === "document" ? {
+          scope: "document",
+          rootTag: ["html", "body"].includes(String(recordedScrollState.rootTag || "").toLowerCase()) ? String(recordedScrollState.rootTag).toLowerCase() : "",
+          scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
+          scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
+        } : recordedScrollState?.scope === "ion-content" ? {
+          scope: "ion-content",
+          scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
+          scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
+        } : null;
+        const lines = [
+          "{",
+          `  const dropTarget = ${tarLocator};`
+        ];
+        if (scrollState) {
+          if (scrollState.scope === "ion-content") {
+            lines.push(
+              "  await dropTarget.evaluate(async (element, state) => {",
+              "    const ionContent = element.matches('ion-content') ? element : element.closest('ion-content');",
+              "    if (!ionContent) return;",
+              "    const scroller = await ionContent.getScrollElement();",
+              "    const x = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
+              "    const y = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
+              "    await ionContent.scrollToPoint(x, y, 0);",
+              `  }, ${JSON.stringify(scrollState)});`
+            );
+          } else if (scrollState.scope === "element") {
+            lines.push(
+              "  await dropTarget.evaluate((element, state) => {",
+              "    let scroller = element;",
+              "    for (let depth = 0; depth < state.ancestorDepth && scroller; depth += 1) scroller = scroller.parentElement;",
+              "    if (!scroller) return;",
+              "    scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
+              "    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
+              `  }, ${JSON.stringify(scrollState)});`
+            );
+          } else {
+            lines.push(
+              "  await dropTarget.evaluate((element, state) => {",
+              "    const doc = element.ownerDocument;",
+              "    const scroller = (state.rootTag && doc.querySelector(state.rootTag)) || doc.scrollingElement || doc.documentElement;",
+              "    scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
+              "    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
+              `  }, ${JSON.stringify(scrollState)});`
+            );
+          }
+        }
+        lines.push(
+          `  await ${souLocator}.scrollIntoViewIfNeeded();`,
+          "  await dropTarget.scrollIntoViewIfNeeded();",
+          "  await dropTarget.waitFor({ state: 'visible' });",
+          "  const dropSize = await dropTarget.evaluate(element => { const rect = element.getBoundingClientRect(); return { width: rect.width, height: rect.height }; });",
+          `  await ${souLocator}.dragTo(dropTarget, { targetPosition: { x: dropSize.width * ${xRatio}, y: dropSize.height * ${yRatio} } });`,
+          "}"
+        );
+        return lines;
+      } else {
+        const dropX = Number(action?.dropPosition?.x);
+        const dropY = Number(action?.dropPosition?.y);
+        if (Number.isFinite(dropX) && Number.isFinite(dropY)) {
+          targetPosition = `, { targetPosition: { x: ${dropX}, y: ${dropY} } }`;
+        }
+      }
       return `await ${souLocator}.dragTo(${tarLocator}${targetPosition});`;
     }
     _getActionContextPrefix(action, field, fallbackContextId) {
@@ -8323,16 +8413,17 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         console.warn("OuterEventListener: onActionRecorded callback \u5C1A\u672A\u7D81\u5B9A", action);
       }
     }
-    dropHandler(e) {
+    async dropHandler(e) {
       if (!this.isRecording) return;
       e.preventDefault();
-      this.currentHoveredElement = e.target;
+      this.currentHoveredElement = this.getDropTargetElement(e);
+      const dropPosition = await this.getDropPosition(e, this.currentHoveredElement);
       this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, {
         isDrop: true,
-        dropPosition: this.getDropPosition(e, this.currentHoveredElement)
+        dropPosition
       });
     }
-    getDropPosition(event, targetElement) {
+    async getDropPosition(event, targetElement) {
       if (!event || !targetElement?.getBoundingClientRect) return null;
       const rect = targetElement.getBoundingClientRect();
       if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
@@ -8346,8 +8437,86 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         xRatio: Math.round(x / rect.width * 1e4) / 1e4,
         yRatio: Math.round(y / rect.height * 1e4) / 1e4,
         targetWidth: Math.round(rect.width * 100) / 100,
-        targetHeight: Math.round(rect.height * 100) / 100
+        targetHeight: Math.round(rect.height * 100) / 100,
+        scrollState: await this.getDropScrollState(targetElement)
       };
+    }
+    async getDropScrollState(targetElement) {
+      const doc = targetElement?.ownerDocument;
+      if (!doc) return null;
+      const ionContent = this.getClosestIonContent(targetElement);
+      if (ionContent) {
+        try {
+          const scrollingElement2 = typeof ionContent.getScrollElement === "function" ? await ionContent.getScrollElement() : ionContent.shadowRoot?.querySelector?.("[part='scroll'], .inner-scroll");
+          if (scrollingElement2) {
+            return {
+              scope: "ion-content",
+              scrollLeftRatio: this.getScrollRatio(
+                scrollingElement2.scrollLeft,
+                scrollingElement2.scrollWidth - scrollingElement2.clientWidth
+              ),
+              scrollTopRatio: this.getScrollRatio(
+                scrollingElement2.scrollTop,
+                scrollingElement2.scrollHeight - scrollingElement2.clientHeight
+              )
+            };
+          }
+        } catch (error) {
+          console.warn("[Recorder] Unable to inspect ion-content scroll position", error);
+        }
+      }
+      const view = doc.defaultView;
+      let element = targetElement;
+      let ancestorDepth = 0;
+      while (element && element !== doc.documentElement) {
+        const style = view?.getComputedStyle?.(element);
+        const overflowX = style?.overflowX || style?.overflow || "";
+        const overflowY = style?.overflowY || style?.overflow || "";
+        const canScrollX = /(auto|scroll|overlay)/.test(overflowX) && element.scrollWidth > element.clientWidth;
+        const canScrollY = /(auto|scroll|overlay)/.test(overflowY) && element.scrollHeight > element.clientHeight;
+        if (canScrollX || canScrollY) {
+          return {
+            scope: "element",
+            ancestorDepth,
+            scrollLeftRatio: this.getScrollRatio(
+              element.scrollLeft,
+              element.scrollWidth - element.clientWidth
+            ),
+            scrollTopRatio: this.getScrollRatio(
+              element.scrollTop,
+              element.scrollHeight - element.clientHeight
+            )
+          };
+        }
+        element = element.parentElement;
+        ancestorDepth += 1;
+      }
+      const scrollingElement = this.getDocumentScrollingElement(doc);
+      if (!scrollingElement) return null;
+      return {
+        scope: "document",
+        rootTag: String(scrollingElement.tagName || "").toLowerCase(),
+        scrollLeftRatio: this.getScrollRatio(
+          scrollingElement.scrollLeft,
+          scrollingElement.scrollWidth - scrollingElement.clientWidth
+        ),
+        scrollTopRatio: this.getScrollRatio(
+          scrollingElement.scrollTop,
+          scrollingElement.scrollHeight - scrollingElement.clientHeight
+        )
+      };
+    }
+    getDocumentScrollingElement(doc) {
+      const candidates = [doc?.scrollingElement, doc?.documentElement, doc?.body].filter((element, index, list) => element && list.indexOf(element) === index);
+      return candidates.find(
+        (element) => Math.abs(Number(element.scrollTop) || 0) > 0 || Math.abs(Number(element.scrollLeft) || 0) > 0
+      ) || candidates[0] || null;
+    }
+    getScrollRatio(position, maximum) {
+      const max = Number(maximum);
+      if (!Number.isFinite(max) || max <= 0) return 0;
+      const ratio = Number(position) / max;
+      return Math.round(Math.max(0, Math.min(1, ratio)) * 1e4) / 1e4;
     }
     beforeInputHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
@@ -8683,20 +8852,21 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       return null;
     }
-    mouseupHandler(e) {
+    async mouseupHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
       if (this.shouldSuppressSyntheticPageEvent()) return;
       if (this.isFileInput(e.target)) return;
       if (this.isDragging) {
         this.isDragging = false;
         this.dragStart = { x: 0, y: 0 };
-        this.currentHoveredElement = this.getDragTargetElement(e.target);
+        this.currentHoveredElement = this.getDropTargetElement(e);
         this.mouseDownFlag = false;
         this.dragStepFlag = 0;
         this.suppressClickUntil = Date.now() + 300;
+        const dropPosition = await this.getDropPosition(e, this.currentHoveredElement);
         this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, {
           isDrop: true,
-          dropPosition: this.getDropPosition(e, this.currentHoveredElement)
+          dropPosition
         });
         return;
       }
@@ -8825,6 +8995,19 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     getDragTargetElement(element) {
       return element?.closest?.(".gjs-layer, .gjs-layer-item, [data-layer-id], [data-gjs-type]") || element;
+    }
+    getDropTargetElement(event) {
+      return this.getDragTargetElement(event?.target);
+    }
+    getClosestIonContent(element) {
+      let current = element;
+      while (current) {
+        const ionContent = current.closest?.("ion-content");
+        if (ionContent) return ionContent;
+        const root = current.getRootNode?.();
+        current = root?.host || null;
+      }
+      return null;
     }
     resetMouseDragState() {
       this.isDragging = false;
@@ -9129,16 +9312,17 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       console.log("[dispatch action: ]", action);
     }
-    dropHandler(e) {
+    async dropHandler(e) {
       if (!this.isRecording) return;
       e.preventDefault();
-      this.currentHoveredElement = this.getDragTargetElement(e.target);
+      this.currentHoveredElement = this.getDropTargetElement(e);
+      const dropPosition = await this.getDropPosition(e, this.currentHoveredElement);
       this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, {
         isDrop: true,
-        dropPosition: this.getDropPosition(e, this.currentHoveredElement)
+        dropPosition
       });
     }
-    getDropPosition(event, targetElement) {
+    async getDropPosition(event, targetElement) {
       if (!event || !targetElement?.getBoundingClientRect) return null;
       const rect = targetElement.getBoundingClientRect();
       if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
@@ -9152,8 +9336,86 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         xRatio: Math.round(x / rect.width * 1e4) / 1e4,
         yRatio: Math.round(y / rect.height * 1e4) / 1e4,
         targetWidth: Math.round(rect.width * 100) / 100,
-        targetHeight: Math.round(rect.height * 100) / 100
+        targetHeight: Math.round(rect.height * 100) / 100,
+        scrollState: await this.getDropScrollState(targetElement)
       };
+    }
+    async getDropScrollState(targetElement) {
+      const doc = targetElement?.ownerDocument;
+      if (!doc) return null;
+      const ionContent = this.getClosestIonContent(targetElement);
+      if (ionContent) {
+        try {
+          const scrollingElement2 = typeof ionContent.getScrollElement === "function" ? await ionContent.getScrollElement() : ionContent.shadowRoot?.querySelector?.("[part='scroll'], .inner-scroll");
+          if (scrollingElement2) {
+            return {
+              scope: "ion-content",
+              scrollLeftRatio: this.getScrollRatio(
+                scrollingElement2.scrollLeft,
+                scrollingElement2.scrollWidth - scrollingElement2.clientWidth
+              ),
+              scrollTopRatio: this.getScrollRatio(
+                scrollingElement2.scrollTop,
+                scrollingElement2.scrollHeight - scrollingElement2.clientHeight
+              )
+            };
+          }
+        } catch (error) {
+          console.warn("[Recorder] Unable to inspect ion-content scroll position", error);
+        }
+      }
+      const view = doc.defaultView;
+      let element = targetElement;
+      let ancestorDepth = 0;
+      while (element && element !== doc.documentElement) {
+        const style = view?.getComputedStyle?.(element);
+        const overflowX = style?.overflowX || style?.overflow || "";
+        const overflowY = style?.overflowY || style?.overflow || "";
+        const canScrollX = /(auto|scroll|overlay)/.test(overflowX) && element.scrollWidth > element.clientWidth;
+        const canScrollY = /(auto|scroll|overlay)/.test(overflowY) && element.scrollHeight > element.clientHeight;
+        if (canScrollX || canScrollY) {
+          return {
+            scope: "element",
+            ancestorDepth,
+            scrollLeftRatio: this.getScrollRatio(
+              element.scrollLeft,
+              element.scrollWidth - element.clientWidth
+            ),
+            scrollTopRatio: this.getScrollRatio(
+              element.scrollTop,
+              element.scrollHeight - element.clientHeight
+            )
+          };
+        }
+        element = element.parentElement;
+        ancestorDepth += 1;
+      }
+      const scrollingElement = this.getDocumentScrollingElement(doc);
+      if (!scrollingElement) return null;
+      return {
+        scope: "document",
+        rootTag: String(scrollingElement.tagName || "").toLowerCase(),
+        scrollLeftRatio: this.getScrollRatio(
+          scrollingElement.scrollLeft,
+          scrollingElement.scrollWidth - scrollingElement.clientWidth
+        ),
+        scrollTopRatio: this.getScrollRatio(
+          scrollingElement.scrollTop,
+          scrollingElement.scrollHeight - scrollingElement.clientHeight
+        )
+      };
+    }
+    getDocumentScrollingElement(doc) {
+      const candidates = [doc?.scrollingElement, doc?.documentElement, doc?.body].filter((element, index, list) => element && list.indexOf(element) === index);
+      return candidates.find(
+        (element) => Math.abs(Number(element.scrollTop) || 0) > 0 || Math.abs(Number(element.scrollLeft) || 0) > 0
+      ) || candidates[0] || null;
+    }
+    getScrollRatio(position, maximum) {
+      const max = Number(maximum);
+      if (!Number.isFinite(max) || max <= 0) return 0;
+      const ratio = Number(position) / max;
+      return Math.round(Math.max(0, Math.min(1, ratio)) * 1e4) / 1e4;
     }
     beforeInputHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
@@ -9485,20 +9747,21 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       return null;
     }
-    mouseupHandler(e) {
+    async mouseupHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
       if (this.shouldSuppressSyntheticPageEvent()) return;
       if (this.isFileInput(e.target)) return;
       if (this.isDragging) {
         this.isDragging = false;
         this.dragStart = { x: 0, y: 0 };
-        this.currentHoveredElement = this.getDragTargetElement(e.target);
+        this.currentHoveredElement = this.getDropTargetElement(e);
         this.mouseDownFlag = false;
         this.dragStepFlag = 0;
         this.suppressClickUntil = Date.now() + 300;
+        const dropPosition = await this.getDropPosition(e, this.currentHoveredElement);
         this.dispatchAction("dragANDdrop", null, this.currentHoveredElement, {
           isDrop: true,
-          dropPosition: this.getDropPosition(e, this.currentHoveredElement)
+          dropPosition
         });
         return;
       }
@@ -9634,6 +9897,19 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     getDragTargetElement(element) {
       return element?.closest?.(".gjs-layer, .gjs-layer-item, [data-layer-id], [data-gjs-type]") || element;
+    }
+    getDropTargetElement(event) {
+      return this.getDragTargetElement(event?.target);
+    }
+    getClosestIonContent(element) {
+      let current = element;
+      while (current) {
+        const ionContent = current.closest?.("ion-content");
+        if (ionContent) return ionContent;
+        const root = current.getRootNode?.();
+        current = root?.host || null;
+      }
+      return null;
     }
     resetMouseDragState() {
       this.isDragging = false;
@@ -9870,6 +10146,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.dynamicFrameObserver = null;
       this.dynamicFrameScanTimer = null;
       this.pendingGrapesDrops = [];
+      this.hasInitializedRecordingSession = false;
       this.setupBackgroundMessageListener();
       this.setupNativeDialogListener();
       this.setupGrapesDropListener();
@@ -9893,6 +10170,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
             type: "navigate",
             ...navInfo,
             url: navInfo.currentUrl || navInfo.url || window.location.href,
+            viewport: this.getRecordingViewport(),
             ts: Date.now()
           };
           const newLine = this.appendGeneratedCode(action);
@@ -10172,6 +10450,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     // 檔案：myrecorderRestructure/MainApp.js
     start() {
       if (this.isStarted) return this.getState();
+      if (this.hasInitializedRecordingSession) return this.resumeRecording();
       this.hoverPreviewSessionEnabled = true;
       const scanner = new ContextScanner(this.rootDoc, this.rootWin);
       this.scanResult = scanner.scanAllContexts();
@@ -10182,15 +10461,17 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const gotoAction = {
         type: "navigate",
         url: window.location.href,
+        viewport: this.getRecordingViewport(),
         ts: Date.now()
       };
       const initialBatchCode = [];
       const gotoResult = this.codeGenerator.generate(gotoAction);
       if (gotoResult) {
-        initialBatchCode.push(gotoResult);
-        this.command.appendCode(gotoResult);
+        const gotoLines = Array.isArray(gotoResult) ? gotoResult : [gotoResult];
+        initialBatchCode.push(...gotoLines);
+        gotoLines.forEach((line) => this.command.appendCode(line));
         this.attachGeneratedCodeToAction(gotoAction, {
-          code: [gotoResult],
+          code: gotoLines,
           isReplace: false
         });
         this.store.addAction(gotoAction);
@@ -10205,9 +10486,27 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           // 關聯最後一個動作
         });
       }
+      this.hasInitializedRecordingSession = true;
       this.isStarted = true;
       this.store.setRecording(true);
       this.bindListenersToContexts(allContexts);
+      this.navigationTracker.start();
+      this.startDynamicFrameWatcher();
+      return this.getState();
+    }
+    resumeRecording() {
+      if (this.isStarted) return this.getState();
+      this.isStarted = true;
+      this.hoverPreviewSessionEnabled = true;
+      this.store.setRecording(true);
+      this.activeListeners.forEach((listener) => {
+        if (typeof listener.setRecordingState === "function") {
+          listener.setRecordingState(true, { allowHoverPreview: true });
+        } else {
+          listener.isRecording = true;
+        }
+      });
+      this.navigationTracker.start();
       this.startDynamicFrameWatcher();
       return this.getState();
     }
@@ -10222,9 +10521,11 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.syncRegistryToStore();
       const allContexts = this.registry.getAllContexts();
       this.codeGenerator.setContexts(allContexts, this.pageAlias);
+      this.hasInitializedRecordingSession = true;
       this.isStarted = true;
       this.store.setRecording(true);
       this.bindListenersToContexts(allContexts);
+      this.navigationTracker.start();
       this.startDynamicFrameWatcher();
     }
     // 停止錄製器
@@ -10318,6 +10619,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.scanResult = null;
       this.activeListeners = [];
       this.pendingGrapesDrops = [];
+      this.hasInitializedRecordingSession = false;
       this.isStarted = false;
       return this.getState();
     }
@@ -10358,6 +10660,14 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       safeAct.displaySourceWindow = this.getDisplayContextName(safeAct.sourceWindow);
       safeAct.displayTargetWindow = this.getDisplayContextName(safeAct.targetWindow);
       return safeAct;
+    }
+    getRecordingViewport() {
+      const width = Math.floor(Number(this.rootWin?.innerWidth));
+      const height = Math.floor(Number(this.rootWin?.innerHeight));
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        return null;
+      }
+      return { width, height };
     }
     getDisplayContextName(contextId) {
       if (!contextId) return "";
@@ -10511,9 +10821,17 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         }
       } else {
         if (typeof this.command.codeSetter === "function") {
-          this.command.codeSetter(codeToReturn);
+          if (Array.isArray(codeToReturn)) {
+            codeToReturn.forEach((line) => this.command.codeSetter(line));
+          } else {
+            this.command.codeSetter(codeToReturn);
+          }
         } else {
-          this.command.appendCode(codeToReturn);
+          if (Array.isArray(codeToReturn)) {
+            codeToReturn.forEach((line) => this.command.appendCode(line));
+          } else {
+            this.command.appendCode(codeToReturn);
+          }
         }
       }
       console.log("[Debug MainApp] appendGeneratedCode stored", {

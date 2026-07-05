@@ -182,20 +182,32 @@ function annotateCodeBodyWithNotes(codeBody, actions) {
       : (action?.generatedCodeLine ? [action.generatedCodeLine] : []);
     if (!actionLines.length) continue;
 
-    const findMatch = (startIndex) => {
-      for (let index = startIndex; index < lines.length; index++) {
-        if (!claimedCodeIndexes.has(index) && actionLines.includes(lines[index])) return index;
+    const findBlock = (startIndex) => {
+      const lastStartIndex = lines.length - actionLines.length;
+      for (let index = startIndex; index <= lastStartIndex; index++) {
+        const isExactUnclaimedBlock = actionLines.every((actionLine, offset) => {
+          const codeIndex = index + offset;
+          return !claimedCodeIndexes.has(codeIndex) && lines[codeIndex] === actionLine;
+        });
+        if (isExactUnclaimedBlock) {
+          return {
+            start: index,
+            end: index + actionLines.length - 1
+          };
+        }
       }
-      return -1;
+      return null;
     };
 
-    let codeIndex = findMatch(searchFrom);
-    if (codeIndex < 0) codeIndex = findMatch(0);
-    if (codeIndex < 0) continue;
+    let block = findBlock(searchFrom);
+    if (!block) block = findBlock(0);
+    if (!block) continue;
 
-    claimedCodeIndexes.add(codeIndex);
-    searchFrom = codeIndex + 1;
-    notesByCodeIndex.set(codeIndex, [
+    for (let codeIndex = block.start; codeIndex <= block.end; codeIndex++) {
+      claimedCodeIndexes.add(codeIndex);
+    }
+    searchFrom = block.end + 1;
+    notesByCodeIndex.set(block.start, [
       getAutomaticActionComment(action, actionIndex),
       ...noteToCommentLines(action.codeNote)
     ]);
