@@ -479,6 +479,7 @@
   // RecorderStore.js
   var RecorderStore = class {
     constructor() {
+      this.actionIdPrefix = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
       this.state = {
         isRecording: true,
         // 錄製結果
@@ -552,10 +553,10 @@
     addAction(action) {
       if (!action || typeof action !== "object") return null;
       const normalizedAction = {
-        id: `action_${this.state.currentActionIndex}`,
+        ...action,
+        id: action.id || `action_${this.actionIdPrefix}_${this.state.currentActionIndex}`,
         index: this.state.currentActionIndex,
-        timestamp: Date.now(),
-        ...action
+        timestamp: action.timestamp || Date.now()
       };
       this.state.actions.push(normalizedAction);
       this.state.lastAction = normalizedAction;
@@ -583,7 +584,7 @@
       if (actionId != null) {
         action = this.state.actions.find((item) => item?.id === actionId) || null;
       }
-      if (!action && Number.isInteger(actionIndex)) {
+      if (!action && actionId == null && Number.isInteger(actionIndex)) {
         action = this.state.actions[actionIndex] || null;
       }
       if (!action) return null;
@@ -7361,6 +7362,9 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       if (action.type === "popup") {
         const popupName = action.popupId || "newPopup";
+        const popupWidth = Math.floor(Number(action.viewport?.width));
+        const popupHeight = Math.floor(Number(action.viewport?.height));
+        const popupViewportLine = Number.isFinite(popupWidth) && Number.isFinite(popupHeight) && popupWidth > 0 && popupHeight > 0 ? `await ${popupName}.setViewportSize({ width: ${popupWidth}, height: ${popupHeight} });` : "";
         const codeArr = this.command.code;
         const lastLine = codeArr.length > 0 ? codeArr[codeArr.length - 1] : null;
         if (lastLine && lastLine.includes("await")) {
@@ -7373,11 +7377,16 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
               `const [${popupName}] = await Promise.all([`,
               `  ${contextPrefix}.waitForEvent('popup'),`,
               `  ${cleanAction}`,
-              `]);`
+              `]);`,
+              ...popupViewportLine ? [popupViewportLine] : []
             ]
           };
         }
-        return `const ${popupName} = await ${this.pageAlias}.waitForEvent('popup');`;
+        const popupLines = [
+          `const ${popupName} = await ${this.pageAlias}.waitForEvent('popup');`,
+          ...popupViewportLine ? [popupViewportLine] : []
+        ];
+        return popupLines.length === 1 ? popupLines[0] : popupLines;
       }
       let sourcepath = action.preParsedSourcePath || null;
       console.log("[RecorderDebug][CodeGenerator generate] initial source path", {
@@ -7439,6 +7448,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         generatedCode = this.keyboardSetter(action, sourcepath, inputKey, sourceWindow);
       } else if (action.type === "change") {
         generatedCode = this.changeSetter(action, sourcepath, selectValue, sourceWindow);
+      } else if (action.type === "ionSelect") {
+        generatedCode = this.ionSelectSetter(action, sourcepath, sourceWindow);
       }
       console.log("[Debug PlaywrightCodeGenerator] generatedCode", {
         actionType: action.type,
@@ -7850,6 +7861,39 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
       return code;
     }
+    ionSelectSetter(action, sourcepath, sourceWindow) {
+      const best = this._getBestPath(sourcepath);
+      if (!best) return null;
+      const winPrefix = this._getContextPrefix(sourceWindow);
+      const selectLocator = this._buildLocatorString(winPrefix, best);
+      const selectInterface = ["popover", "alert", "action-sheet", "modal"].includes(action.selectInterface) ? action.selectInterface : "alert";
+      const overlayTag = {
+        popover: "ion-popover",
+        alert: "ion-alert",
+        "action-sheet": "ion-action-sheet",
+        modal: "ion-modal"
+      }[selectInterface];
+      const selectedTexts = Array.isArray(action.selectedTexts) && action.selectedTexts.length ? action.selectedTexts : [action.selectedText || String(action.selectedValue ?? "")].filter(Boolean);
+      const optionRole = selectInterface === "action-sheet" ? "button" : action.isMultiple === true ? "checkbox" : "radio";
+      this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
+      const optionClickLines = selectedTexts.map((text) => {
+        if (selectInterface === "popover") {
+          const optionTag = action.isMultiple === true ? "ion-checkbox" : "ion-radio";
+          return `await ${winPrefix}.locator("ion-popover").locator(${this.quoteForCode(optionTag)}).filter({ hasText: ${this.quoteForCode(text)} }).click();`;
+        }
+        return `await ${winPrefix}.locator(${this.quoteForCode(overlayTag)}).getByRole(${this.quoteForCode(optionRole)}, { name: ${this.quoteForCode(text)}, exact: true }).click();`;
+      });
+      const lines = [
+        `await ${selectLocator}.click();`,
+        ...optionClickLines
+      ];
+      if (selectInterface === "alert") {
+        lines.push(
+          `await ${winPrefix}.locator("ion-alert").getByRole("button", { name: "OK", exact: true }).click();`
+        );
+      }
+      return lines;
+    }
     _getKeyboardPagePrefix(sourceWindow) {
       let context = this.contextMap.get(sourceWindow);
       while (context?.type === "iframe") {
@@ -7882,26 +7926,31 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const dropXRatio = Number(action?.dropPosition?.xRatio);
       const dropYRatio = Number(action?.dropPosition?.yRatio);
       const hasDropRatio = Number.isFinite(dropXRatio) && Number.isFinite(dropYRatio);
-      let targetPosition = "";
-      if (hasDropRatio) {
-        const xRatio = Math.max(0, Math.min(1, dropXRatio));
-        const yRatio = Math.max(0, Math.min(1, dropYRatio));
-        const recordedScrollState = action?.dropPosition?.scrollState;
-        const scrollState = recordedScrollState?.scope === "element" ? {
-          scope: "element",
-          ancestorDepth: Math.max(0, Math.floor(Number(recordedScrollState.ancestorDepth) || 0)),
-          scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
-          scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
-        } : recordedScrollState?.scope === "document" ? {
-          scope: "document",
-          rootTag: ["html", "body"].includes(String(recordedScrollState.rootTag || "").toLowerCase()) ? String(recordedScrollState.rootTag).toLowerCase() : "",
-          scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
-          scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
-        } : recordedScrollState?.scope === "ion-content" ? {
-          scope: "ion-content",
-          scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
-          scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
-        } : null;
+      const dropX = Number(action?.dropPosition?.x);
+      const dropY = Number(action?.dropPosition?.y);
+      const hasAbsolutePosition = Number.isFinite(dropX) && Number.isFinite(dropY);
+      const positionMode = ["ratio", "absolute", "center"].includes(action?.dropPositionMode) ? action.dropPositionMode : "ratio";
+      const useRatio = positionMode === "ratio" ? hasDropRatio : positionMode === "absolute" && !hasAbsolutePosition && hasDropRatio;
+      const useAbsolute = positionMode === "absolute" ? hasAbsolutePosition : positionMode === "ratio" && !hasDropRatio && hasAbsolutePosition;
+      const xRatio = Math.max(0, Math.min(1, dropXRatio));
+      const yRatio = Math.max(0, Math.min(1, dropYRatio));
+      const recordedScrollState = action?.dropPosition?.scrollState;
+      const scrollState = recordedScrollState?.scope === "element" ? {
+        scope: "element",
+        ancestorDepth: Math.max(0, Math.floor(Number(recordedScrollState.ancestorDepth) || 0)),
+        scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
+        scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
+      } : recordedScrollState?.scope === "document" ? {
+        scope: "document",
+        rootTag: ["html", "body"].includes(String(recordedScrollState.rootTag || "").toLowerCase()) ? String(recordedScrollState.rootTag).toLowerCase() : "",
+        scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
+        scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
+      } : recordedScrollState?.scope === "ion-content" ? {
+        scope: "ion-content",
+        scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
+        scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
+      } : null;
+      if (useRatio || scrollState) {
         const lines = [
           "{",
           `  const dropTarget = ${tarLocator};`
@@ -7942,20 +7991,27 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         lines.push(
           `  await ${souLocator}.scrollIntoViewIfNeeded();`,
           "  await dropTarget.scrollIntoViewIfNeeded();",
-          "  await dropTarget.waitFor({ state: 'visible' });",
-          "  const dropSize = await dropTarget.evaluate(element => { const rect = element.getBoundingClientRect(); return { width: rect.width, height: rect.height }; });",
-          `  await ${souLocator}.dragTo(dropTarget, { targetPosition: { x: dropSize.width * ${xRatio}, y: dropSize.height * ${yRatio} } });`,
-          "}"
+          "  await dropTarget.waitFor({ state: 'visible' });"
         );
-        return lines;
-      } else {
-        const dropX = Number(action?.dropPosition?.x);
-        const dropY = Number(action?.dropPosition?.y);
-        if (Number.isFinite(dropX) && Number.isFinite(dropY)) {
-          targetPosition = `, { targetPosition: { x: ${dropX}, y: ${dropY} } }`;
+        if (useRatio) {
+          lines.push(
+            "  const dropSize = await dropTarget.evaluate(element => { const rect = element.getBoundingClientRect(); return { width: rect.width, height: rect.height }; });",
+            `  await ${souLocator}.dragTo(dropTarget, { targetPosition: { x: dropSize.width * ${xRatio}, y: dropSize.height * ${yRatio} } });`
+          );
+        } else if (useAbsolute) {
+          lines.push(
+            `  await ${souLocator}.dragTo(dropTarget, { targetPosition: { x: ${dropX}, y: ${dropY} } });`
+          );
+        } else {
+          lines.push(`  await ${souLocator}.dragTo(dropTarget);`);
         }
+        lines.push("}");
+        return lines;
       }
-      return `await ${souLocator}.dragTo(${tarLocator}${targetPosition});`;
+      if (useAbsolute) {
+        return `await ${souLocator}.dragTo(${tarLocator}, { targetPosition: { x: ${dropX}, y: ${dropY} } });`;
+      }
+      return `await ${souLocator}.dragTo(${tarLocator});`;
     }
     _getActionContextPrefix(action, field, fallbackContextId) {
       const context = field === "target" ? action?.targetContext : action?.sourceContext;
@@ -7968,6 +8024,11 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const winPrefix = this._getContextPrefix(sourceWindow);
       const locator = this._buildLocatorString(winPrefix, best);
       this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
+      const clickX = Number(action?.clickPosition?.x);
+      const clickY = Number(action?.clickPosition?.y);
+      if (action?.type === "click" && Number.isFinite(clickX) && Number.isFinite(clickY)) {
+        return `await ${locator}.click({ position: { x: ${clickX}, y: ${clickY} } });`;
+      }
       return `await ${locator}.click();`;
     }
     doubleClickSetter(action, sourcepath, sourceWindow) {
@@ -8120,6 +8181,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.keyboard = null;
       this.selectedText = null;
       this.selectedValue = null;
+      this.selectedTexts = [];
+      this.selectInterface = null;
+      this.isMultiple = false;
+      this.clickPosition = null;
       this.path = null;
       this.inputText = "";
       this.codeNote = "";
@@ -8316,6 +8381,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.userEditedInputs = /* @__PURE__ */ new WeakSet();
       this.composingInputs = /* @__PURE__ */ new WeakSet();
       this.lastColorInput = /* @__PURE__ */ new WeakMap();
+      this.pendingIonSelectInteractions = /* @__PURE__ */ new WeakMap();
+      this.activeIonSelect = null;
       this.dragStart = { x: 0, y: 0 };
       this.isDragging = false;
       this.DRAG_THRESHOLD = 5;
@@ -8344,6 +8411,9 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.mainDocument.addEventListener("dblclick", this.dblClickHandler.bind(this), true);
       this.mainDocument.addEventListener("keydown", this.keydownHandler.bind(this));
       this.mainDocument.addEventListener("change", this.changeHandler.bind(this), true);
+      this.mainDocument.addEventListener("ionChange", this.ionSelectChangeHandler.bind(this), true);
+      this.mainDocument.addEventListener("ionCancel", this.ionSelectDismissHandler.bind(this), true);
+      this.mainDocument.addEventListener("ionDismiss", this.ionSelectDismissHandler.bind(this), true);
       this.mainDocument.addEventListener("compositionstart", this.compositionStartHandler.bind(this), true);
       this.mainDocument.addEventListener("compositionend", this.compositionEndHandler.bind(this), true);
       this.mainDocument.addEventListener("beforeinput", this.beforeInputHandler.bind(this), true);
@@ -8402,6 +8472,9 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (extraData.inputText !== void 0) action.setInputText(extraData.inputText);
       if (extraData.selectedValue !== void 0) action.setSelectedValue(extraData.selectedValue);
       if (extraData.selectedText !== void 0) action.setSelectedText(extraData.selectedText);
+      if (extraData.selectInterface) action.selectInterface = extraData.selectInterface;
+      if (extraData.selectedTexts) action.selectedTexts = extraData.selectedTexts;
+      if (extraData.isMultiple !== void 0) action.isMultiple = extraData.isMultiple === true;
       if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
       if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
       if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
@@ -8521,7 +8594,11 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     beforeInputHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
       const element = this.getTextInputEventTarget(e) || e.target;
-      if (!this.isTextInputElement(element) || this.preEditSourcePaths.has(element)) return;
+      if (!this.isTextInputElement(element)) return;
+      if (this.isDirectUserInputType(e.inputType)) {
+        this.markTextInputEdited(element);
+      }
+      if (this.preEditSourcePaths.has(element)) return;
       const sourcePath = this.domParserService.getOpenSourcePath(element, this.mainWindow);
       if (sourcePath && Object.keys(sourcePath).length > 0) {
         this.preEditSourcePaths.set(element, sourcePath);
@@ -8592,7 +8669,6 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         });
         return;
       }
-      this.markTextInputEdited(target);
       if (e.isComposing || this.composingInputs.has(target)) {
         this.debugInputEvent("input:ignored-composing", e, {
           isComposing: e.isComposing,
@@ -8711,6 +8787,43 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           keyboard: e.key
         });
       }
+    }
+    ionSelectChangeHandler(e) {
+      if (!this.isRecording) return;
+      const target = e.target;
+      if (target?.tagName !== "ION-SELECT") return;
+      const interactionAt = Number(this.pendingIonSelectInteractions.get(target));
+      if (!Number.isFinite(interactionAt) || Date.now() - interactionAt > 3e4) return;
+      const selectedValue = e.detail?.value ?? target.value;
+      const selectedTexts = this.getIonSelectSelectedTexts(target, selectedValue);
+      const selectedText = selectedTexts.join(", ") || String(selectedValue ?? "");
+      this.pendingIonSelectInteractions.delete(target);
+      this.activeIonSelect = null;
+      this.dispatchAction("ionSelect", target, null, {
+        selectedValue,
+        selectedText,
+        selectedTexts,
+        selectInterface: target.getAttribute?.("interface") || "alert",
+        isMultiple: target.multiple === true || target.hasAttribute?.("multiple") === true
+      });
+    }
+    ionSelectDismissHandler(e) {
+      const target = e.target;
+      if (target?.tagName === "ION-SELECT") {
+        this.pendingIonSelectInteractions.delete(target);
+        if (this.activeIonSelect === target) this.activeIonSelect = null;
+      }
+    }
+    getIonSelectSelectedTexts(target, selectedValue) {
+      const selectedValues = Array.isArray(selectedValue) ? selectedValue : [selectedValue];
+      const options = [...target?.querySelectorAll?.("ion-select-option") || []];
+      return selectedValues.map((value) => {
+        const option = options.find((item) => {
+          const optionValue = item.value ?? item.getAttribute?.("value");
+          return optionValue === value || String(optionValue) === String(value);
+        });
+        return (option?.textContent || "").trim() || String(value ?? "");
+      }).filter(Boolean);
     }
     dblClickHandler(e) {
       if (!this.isRecording) return;
@@ -8877,6 +8990,12 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (Date.now() < this.suppressClickUntil) return;
       if (this.shouldSuppressSyntheticPageEvent()) return;
       const target = this.getComposedEventTarget(e);
+      if (target?.tagName === "ION-SELECT") {
+        this.pendingIonSelectInteractions.set(target, Date.now());
+        this.activeIonSelect = target;
+        return;
+      }
+      if (this.isActiveIonSelectOverlayInteraction(e)) return;
       const toolbarItem = target?.closest?.(
         ".gjs-toolbar-item, [data-command], [data-cmd]"
       );
@@ -8904,6 +9023,20 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         clickableRoot: this.describeDebugRoot(clickable?.getRootNode?.())
       });
       this.dispatchAction("click", this.currentHoveredElement);
+    }
+    isActiveIonSelectOverlayInteraction(e) {
+      if (!this.activeIonSelect) return false;
+      const interactionAt = Number(this.pendingIonSelectInteractions.get(this.activeIonSelect));
+      if (!Number.isFinite(interactionAt) || Date.now() - interactionAt > 3e4) {
+        this.pendingIonSelectInteractions.delete(this.activeIonSelect);
+        this.activeIonSelect = null;
+        return false;
+      }
+      return (typeof e.composedPath === "function" ? e.composedPath() : []).some(
+        (item) => item?.matches?.(
+          "ion-popover, ion-alert, ion-action-sheet, ion-modal, ion-select-option, ion-radio, ion-checkbox"
+        )
+      );
     }
     isRangeInput(element) {
       return element?.tagName === "INPUT" && element.getAttribute("type") === "range";
@@ -9020,6 +9153,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       try {
         this.initialInputValues = /* @__PURE__ */ new WeakMap();
         this.preEditSourcePaths = /* @__PURE__ */ new WeakMap();
+        this.lastUserTypedAt = /* @__PURE__ */ new WeakMap();
         this.userEditedInputs = /* @__PURE__ */ new WeakSet();
         this.composingInputs = /* @__PURE__ */ new WeakSet();
         this.mainDocument?.querySelectorAll?.("input, textarea, [contenteditable='true']").forEach((element) => {
@@ -9034,6 +9168,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     shouldRecordTextInputEvent(element) {
       if (!this.userEditedInputs.has(element)) return false;
+      const lastUserEditAt = Number(this.lastUserTypedAt.get(element));
+      if (!Number.isFinite(lastUserEditAt) || Date.now() - lastUserEditAt > 2e3) return false;
       const value = this.getInputValue(element);
       if (this.initialInputValues.get(element) === value) return false;
       return true;
@@ -9075,6 +9211,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           inputText: this.getInputValue(element),
           preParsedSourcePath
         });
+        this.userEditedInputs.delete(element);
+        this.lastUserTypedAt.delete(element);
         this.preEditSourcePaths.delete(element);
       }, delay);
     }
@@ -9090,6 +9228,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         inputText: this.getInputValue(element),
         preParsedSourcePath
       });
+      this.userEditedInputs.delete(element);
+      this.lastUserTypedAt.delete(element);
       this.preEditSourcePaths.delete(element);
     }
     getEnterShortcut(e) {
@@ -9103,6 +9243,24 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     isTextEditingKey(e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return false;
       return e.key?.length === 1 || ["Backspace", "Delete"].includes(e.key);
+    }
+    isDirectUserInputType(inputType) {
+      return [
+        "insertText",
+        "insertLineBreak",
+        "insertParagraph",
+        "insertCompositionText",
+        "insertFromComposition",
+        "insertFromPaste",
+        "insertFromPasteAsQuotation",
+        "insertFromDrop",
+        "insertFromYank",
+        "deleteContentBackward",
+        "deleteContentForward",
+        "deleteByCut",
+        "historyUndo",
+        "historyRedo"
+      ].includes(String(inputType || ""));
     }
     isTextInputElement(element) {
       const tag = element?.tagName?.toLowerCase();
@@ -9214,6 +9372,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.userEditedInputs = /* @__PURE__ */ new WeakSet();
       this.composingInputs = /* @__PURE__ */ new WeakSet();
       this.lastColorInput = /* @__PURE__ */ new WeakMap();
+      this.pendingIonSelectInteractions = /* @__PURE__ */ new WeakMap();
+      this.activeIonSelect = null;
       this.dragStart = { x: 0, y: 0 };
       this.isDragging = false;
       this.DRAG_THRESHOLD = 5;
@@ -9242,6 +9402,9 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.iframeDocument.addEventListener("dblclick", this.dblClickHandler.bind(this), true);
       this.iframeDocument.addEventListener("keydown", this.keydownHandler.bind(this));
       this.iframeDocument.addEventListener("change", this.changeHandler.bind(this), true);
+      this.iframeDocument.addEventListener("ionChange", this.ionSelectChangeHandler.bind(this), true);
+      this.iframeDocument.addEventListener("ionCancel", this.ionSelectDismissHandler.bind(this), true);
+      this.iframeDocument.addEventListener("ionDismiss", this.ionSelectDismissHandler.bind(this), true);
       this.iframeDocument.addEventListener("compositionstart", this.compositionStartHandler.bind(this), true);
       this.iframeDocument.addEventListener("compositionend", this.compositionEndHandler.bind(this), true);
       this.iframeDocument.addEventListener("beforeinput", this.beforeInputHandler.bind(this), true);
@@ -9300,9 +9463,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (extraData.inputText !== void 0) action.setInputText(extraData.inputText);
       if (extraData.selectedValue !== void 0) action.setSelectedValue(extraData.selectedValue);
       if (extraData.selectedText !== void 0) action.setSelectedText(extraData.selectedText);
+      if (extraData.selectInterface) action.selectInterface = extraData.selectInterface;
+      if (extraData.selectedTexts) action.selectedTexts = extraData.selectedTexts;
+      if (extraData.isMultiple !== void 0) action.isMultiple = extraData.isMultiple === true;
       if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
       if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
       if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
+      if (extraData.clickPosition) action.clickPosition = extraData.clickPosition;
       if (extraData.isDragStart) action.isDragStart = true;
       if (extraData.isDrop) action.isDrop = true;
       if (typeof this.onActionRecorded === "function") {
@@ -9420,7 +9587,11 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     beforeInputHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
       const element = this.getTextInputEventTarget(e) || e.target;
-      if (!this.isTextInputElement(element) || this.preEditSourcePaths.has(element)) return;
+      if (!this.isTextInputElement(element)) return;
+      if (this.isDirectUserInputType(e.inputType)) {
+        this.markTextInputEdited(element);
+      }
+      if (this.preEditSourcePaths.has(element)) return;
       const sourcePath = this.domParserService.getOpenSourcePath(element, this.iframeWindow);
       if (sourcePath && Object.keys(sourcePath).length > 0) {
         this.preEditSourcePaths.set(element, sourcePath);
@@ -9491,7 +9662,6 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         });
         return;
       }
-      this.markTextInputEdited(target);
       if (e.isComposing || this.composingInputs.has(target)) {
         this.debugInputEvent("input:ignored-composing", e, {
           isComposing: e.isComposing,
@@ -9610,6 +9780,43 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           keyboard: e.key
         });
       }
+    }
+    ionSelectChangeHandler(e) {
+      if (!this.isRecording) return;
+      const target = e.target;
+      if (target?.tagName !== "ION-SELECT") return;
+      const interactionAt = Number(this.pendingIonSelectInteractions.get(target));
+      if (!Number.isFinite(interactionAt) || Date.now() - interactionAt > 3e4) return;
+      const selectedValue = e.detail?.value ?? target.value;
+      const selectedTexts = this.getIonSelectSelectedTexts(target, selectedValue);
+      const selectedText = selectedTexts.join(", ") || String(selectedValue ?? "");
+      this.pendingIonSelectInteractions.delete(target);
+      this.activeIonSelect = null;
+      this.dispatchAction("ionSelect", target, null, {
+        selectedValue,
+        selectedText,
+        selectedTexts,
+        selectInterface: target.getAttribute?.("interface") || "alert",
+        isMultiple: target.multiple === true || target.hasAttribute?.("multiple") === true
+      });
+    }
+    ionSelectDismissHandler(e) {
+      const target = e.target;
+      if (target?.tagName === "ION-SELECT") {
+        this.pendingIonSelectInteractions.delete(target);
+        if (this.activeIonSelect === target) this.activeIonSelect = null;
+      }
+    }
+    getIonSelectSelectedTexts(target, selectedValue) {
+      const selectedValues = Array.isArray(selectedValue) ? selectedValue : [selectedValue];
+      const options = [...target?.querySelectorAll?.("ion-select-option") || []];
+      return selectedValues.map((value) => {
+        const option = options.find((item) => {
+          const optionValue = item.value ?? item.getAttribute?.("value");
+          return optionValue === value || String(optionValue) === String(value);
+        });
+        return (option?.textContent || "").trim() || String(value ?? "");
+      }).filter(Boolean);
     }
     dblClickHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
@@ -9773,6 +9980,12 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (this.shouldSuppressSyntheticPageEvent()) return;
       const target = this.getClickTarget(e);
       if (!target) return;
+      if (target.tagName === "ION-SELECT") {
+        this.pendingIonSelectInteractions.set(target, Date.now());
+        this.activeIonSelect = target;
+        return;
+      }
+      if (this.isActiveIonSelectOverlayInteraction(e)) return;
       this.currentHoveredElement = target;
       console.log("[RecorderDebug][Iframe2 clickHandler] dispatch click target", {
         rawTarget: this.describeDebugElement(e.target),
@@ -9780,7 +9993,23 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         clickable: this.describeDebugElement(target),
         clickableRoot: this.describeDebugRoot(target?.getRootNode?.())
       });
-      this.dispatchAction("click", this.currentHoveredElement);
+      this.dispatchAction("click", this.currentHoveredElement, null, {
+        clickPosition: this.getClickPosition(e, this.currentHoveredElement)
+      });
+    }
+    isActiveIonSelectOverlayInteraction(e) {
+      if (!this.activeIonSelect) return false;
+      const interactionAt = Number(this.pendingIonSelectInteractions.get(this.activeIonSelect));
+      if (!Number.isFinite(interactionAt) || Date.now() - interactionAt > 3e4) {
+        this.pendingIonSelectInteractions.delete(this.activeIonSelect);
+        this.activeIonSelect = null;
+        return false;
+      }
+      return (typeof e.composedPath === "function" ? e.composedPath() : []).some(
+        (item) => item?.matches?.(
+          "ion-popover, ion-alert, ion-action-sheet, ion-modal, ion-select-option, ion-radio, ion-checkbox"
+        )
+      );
     }
     getClickTarget(e) {
       const target = this.getComposedEventTarget(e);
@@ -9796,6 +10025,27 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         return label || target.closest(clickableSelector) || target;
       }
       return target.closest(clickableSelector) || target;
+    }
+    getClickPosition(e, element) {
+      if (!element || typeof element.getBoundingClientRect !== "function" || !Number.isFinite(Number(e?.clientX)) || !Number.isFinite(Number(e?.clientY))) {
+        return null;
+      }
+      const rect = element.getBoundingClientRect();
+      const layoutWidth = Number(element.offsetWidth) || Number(rect.width);
+      const layoutHeight = Number(element.offsetHeight) || Number(rect.height);
+      const scaleX = layoutWidth > 0 && Number(rect.width) > 0 ? Number(rect.width) / layoutWidth : 1;
+      const scaleY = layoutHeight > 0 && Number(rect.height) > 0 ? Number(rect.height) / layoutHeight : 1;
+      const paddingWidth = Number(element.clientWidth) || Math.max(0, layoutWidth);
+      const paddingHeight = Number(element.clientHeight) || Math.max(0, layoutHeight);
+      const borderLeft = Number(element.clientLeft) || 0;
+      const borderTop = Number(element.clientTop) || 0;
+      const rawX = (Number(e.clientX) - Number(rect.left)) / scaleX - borderLeft;
+      const rawY = (Number(e.clientY) - Number(rect.top)) / scaleY - borderTop;
+      const round = (value) => Math.round(value * 100) / 100;
+      return {
+        x: round(Math.max(0, Math.min(paddingWidth, rawX))),
+        y: round(Math.max(0, Math.min(paddingHeight, rawY)))
+      };
     }
     isRangeInput(element) {
       return element?.tagName === "INPUT" && element.getAttribute("type") === "range";
@@ -9922,6 +10172,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       try {
         this.initialInputValues = /* @__PURE__ */ new WeakMap();
         this.preEditSourcePaths = /* @__PURE__ */ new WeakMap();
+        this.lastUserTypedAt = /* @__PURE__ */ new WeakMap();
         this.userEditedInputs = /* @__PURE__ */ new WeakSet();
         this.composingInputs = /* @__PURE__ */ new WeakSet();
         this.iframeDocument?.querySelectorAll?.("input, textarea, [contenteditable='true']").forEach((element) => {
@@ -9936,6 +10187,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     shouldRecordTextInputEvent(element) {
       if (!this.userEditedInputs.has(element)) return false;
+      const lastUserEditAt = Number(this.lastUserTypedAt.get(element));
+      if (!Number.isFinite(lastUserEditAt) || Date.now() - lastUserEditAt > 2e3) return false;
       const value = this.getInputValue(element);
       if (this.initialInputValues.get(element) === value) return false;
       return true;
@@ -9977,6 +10230,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           inputText: this.getInputValue(element),
           preParsedSourcePath
         });
+        this.userEditedInputs.delete(element);
+        this.lastUserTypedAt.delete(element);
         this.preEditSourcePaths.delete(element);
       }, delay);
     }
@@ -9992,6 +10247,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         inputText: this.getInputValue(element),
         preParsedSourcePath
       });
+      this.userEditedInputs.delete(element);
+      this.lastUserTypedAt.delete(element);
       this.preEditSourcePaths.delete(element);
     }
     getEnterShortcut(e) {
@@ -10005,6 +10262,24 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     isTextEditingKey(e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return false;
       return e.key?.length === 1 || ["Backspace", "Delete"].includes(e.key);
+    }
+    isDirectUserInputType(inputType) {
+      return [
+        "insertText",
+        "insertLineBreak",
+        "insertParagraph",
+        "insertCompositionText",
+        "insertFromComposition",
+        "insertFromPaste",
+        "insertFromPasteAsQuotation",
+        "insertFromDrop",
+        "insertFromYank",
+        "deleteContentBackward",
+        "deleteContentForward",
+        "deleteByCut",
+        "historyUndo",
+        "historyRedo"
+      ].includes(String(inputType || ""));
     }
     isTextInputElement(element) {
       const tag = element?.tagName?.toLowerCase();
@@ -10147,6 +10422,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.dynamicFrameScanTimer = null;
       this.pendingGrapesDrops = [];
       this.hasInitializedRecordingSession = false;
+      this.dropPositionMode = "ratio";
       this.setupBackgroundMessageListener();
       this.setupNativeDialogListener();
       this.setupGrapesDropListener();
@@ -10179,11 +10455,17 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           this.syncToGlobalStorage(newLine, savedAction);
         }
       });
-      this.safeChromeStorageGet(["latestPopupAlias", "recorderStatus"], (result) => {
+      this.safeChromeStorageGet(["latestPopupAlias", "recorderStatus", "dropPositionMode"], (result) => {
+        this.setDropPositionMode(result.dropPositionMode);
         if (window.opener && result.latestPopupAlias) {
           this.pageAlias = result.latestPopupAlias;
           this.codeGenerator.pageAlias = this.pageAlias;
           console.log(`\u{1F194} [MainApp] \u8A8D\u9818\u8EAB\u5206\u6210\u529F\uFF01\u6211\u7684 Playwright \u8B8A\u6578\u540D\u7A31\u662F: ${this.pageAlias}`);
+          this.safeChromeSendMessage({
+            type: "POPUP_VIEWPORT_DETECTED",
+            popupId: this.pageAlias,
+            viewport: this.getRecordingViewport()
+          });
           this.safeChromeStorageRemove("latestPopupAlias");
         }
         if (result.recorderStatus === "recording") {
@@ -10432,6 +10714,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           this.attachPendingGrapesDrop(action);
           this.store.endDragSession();
         }
+        action.dropPositionMode = this.dropPositionMode;
       }
       const newLine = this.appendGeneratedCode(action);
       this.attachGeneratedCodeToAction(action, newLine);
@@ -10668,6 +10951,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         return null;
       }
       return { width, height };
+    }
+    setDropPositionMode(mode) {
+      this.dropPositionMode = ["ratio", "absolute", "center"].includes(mode) ? mode : "ratio";
+      return this.dropPositionMode;
     }
     getDisplayContextName(contextId) {
       if (!contextId) return "";
@@ -11006,9 +11293,12 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         });
       }
     }
-    function startRecording() {
+    function startRecording(dropPositionMode = "ratio") {
       const instance = ensureApp();
       if (!instance) return;
+      if (typeof instance.setDropPositionMode === "function") {
+        instance.setDropPositionMode(dropPositionMode);
+      }
       if (typeof instance.setHoverPreviewSessionEnabled === "function") {
         instance.setHoverPreviewSessionEnabled(true);
       }
@@ -11058,7 +11348,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           if (!message?.type) return;
           if (window !== window.top) return;
           if (message.type === "START_RECORDING") {
-            startRecording();
+            startRecording(message.dropPositionMode);
+            sendResponse({ ok: true });
+            return;
+          }
+          if (message.type === "SET_DROP_POSITION_MODE") {
+            const instance = ensureApp();
+            instance?.setDropPositionMode?.(message.dropPositionMode);
             sendResponse({ ok: true });
             return;
           }
@@ -11084,7 +11380,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     window.addEventListener("message", (event) => {
       if (event.source !== window || !event.data || event.data.source !== "RECORDER_EXTENSION") return;
       if (window !== window.top) return;
-      if (event.data.type === "START_RECORDING") startRecording();
+      if (event.data.type === "START_RECORDING") startRecording(event.data.dropPositionMode);
+      if (event.data.type === "SET_DROP_POSITION_MODE") {
+        ensureApp()?.setDropPositionMode?.(event.data.dropPositionMode);
+      }
       if (event.data.type === "STOP_RECORDING") stopRecording();
       if (event.data.type === "CLEAR_RECORDING") clearRecording();
       if (event.data.type === "UPDATE_RECORDED_ACTION") updateRecordedAction(event.data);

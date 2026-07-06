@@ -30,6 +30,7 @@ export class MainApp {
     this.dynamicFrameScanTimer = null;
     this.pendingGrapesDrops = [];
     this.hasInitializedRecordingSession = false;
+    this.dropPositionMode = "ratio";
 
     this.setupBackgroundMessageListener();
     this.setupNativeDialogListener();
@@ -78,13 +79,21 @@ export class MainApp {
     });
 
     // 🌟 關鍵修復：統一處理身分認領與自動喚醒機制
-    this.safeChromeStorageGet(['latestPopupAlias', 'recorderStatus'], (result) => {
+    this.safeChromeStorageGet(['latestPopupAlias', 'recorderStatus', 'dropPositionMode'], (result) => {
+
+        this.setDropPositionMode(result.dropPositionMode);
 
         // 1. 如果是新視窗，認領自己的專屬變數名稱 (例如 popup_123456)
         if (window.opener && result.latestPopupAlias) {
           this.pageAlias = result.latestPopupAlias;
           this.codeGenerator.pageAlias = this.pageAlias;
           console.log(`🆔 [MainApp] 認領身分成功！我的 Playwright 變數名稱是: ${this.pageAlias}`);
+
+          this.safeChromeSendMessage({
+            type: "POPUP_VIEWPORT_DETECTED",
+            popupId: this.pageAlias,
+            viewport: this.getRecordingViewport()
+          });
 
           // 認領完畢後，把小本本擦掉，以免其他新視窗誤認
           this.safeChromeStorageRemove('latestPopupAlias');
@@ -380,6 +389,7 @@ export class MainApp {
 
         this.store.endDragSession();
       }
+      action.dropPositionMode = this.dropPositionMode;
     }
     // ==========================================
 
@@ -688,6 +698,13 @@ export class MainApp {
       return null;
     }
     return { width, height };
+  }
+
+  setDropPositionMode(mode) {
+    this.dropPositionMode = ["ratio", "absolute", "center"].includes(mode)
+      ? mode
+      : "ratio";
+    return this.dropPositionMode;
   }
 
   getDisplayContextName(contextId) {

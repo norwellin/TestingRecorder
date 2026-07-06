@@ -1,5 +1,6 @@
 export class RecorderStore {
   constructor() {
+    this.actionIdPrefix = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     this.state = {
       isRecording: true,
 
@@ -91,10 +92,10 @@ export class RecorderStore {
     if (!action || typeof action !== 'object') return null;
 
     const normalizedAction = {
-      id: `action_${this.state.currentActionIndex}`,
+      ...action,
+      id: action.id || `action_${this.actionIdPrefix}_${this.state.currentActionIndex}`,
       index: this.state.currentActionIndex,
-      timestamp: Date.now(),
-      ...action
+      timestamp: action.timestamp || Date.now()
     };
 
     this.state.actions.push(normalizedAction);
@@ -131,7 +132,7 @@ export class RecorderStore {
       action = this.state.actions.find(item => item?.id === actionId) || null;
     }
 
-    if (!action && Number.isInteger(actionIndex)) {
+    if (!action && actionId == null && Number.isInteger(actionIndex)) {
       action = this.state.actions[actionIndex] || null;
     }
 

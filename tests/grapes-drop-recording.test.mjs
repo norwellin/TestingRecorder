@@ -7,6 +7,7 @@ import { PlaywrightCodeGenerator } from "../usecases/PlaywrightCodeGenerator.js"
 import { DOMParserService } from "../usecases/DOMParserService.js";
 import { OuterEventListener } from "../interfaces/OuterEventListener.js";
 import { IframeEventListener } from "../interfaces/IframeEventListener.js";
+import { RecorderStore } from "../RecorderStore.js";
 
 function createComponent({ id, cid, type = "default", tagName = "div", name = "", parent = null, index = 0 }) {
   const element = {
@@ -119,6 +120,96 @@ test("recording lifecycle resumes without creating another navigation action", a
   assert.match(resumeMethod, /this\.startDynamicFrameWatcher\(\)/);
 });
 
+test("actions created in separate page stores receive globally distinct ids", () => {
+  const pageStore = new RecorderStore();
+  const popupStore = new RecorderStore();
+  const pageAction = pageStore.addAction({ type: "click" });
+  const popupAction = popupStore.addAction({ type: "ionSelect" });
+
+  assert.notEqual(pageAction.id, popupAction.id);
+  assert.match(pageAction.id, /^action_[a-z0-9]+_[a-z0-9]+_0$/);
+  assert.match(popupAction.id, /^action_[a-z0-9]+_[a-z0-9]+_0$/);
+});
+
+test("an unknown action id cannot update an unrelated local action by global index", () => {
+  const store = new RecorderStore();
+  const original = store.addAction({ type: "click", sourceData: "original" });
+
+  const updated = store.updateAction("popup_action_missing", 0, {
+    sourceData: "wrongly-overwritten"
+  });
+
+  assert.equal(updated, null);
+  assert.equal(store.getActions()[0].id, original.id);
+  assert.equal(store.getActions()[0].sourceData, "original");
+});
+
+test("locator updates prefer the selected row when legacy action ids collide", async () => {
+  const source = await readFile(new URL("../test.js", import.meta.url), "utf8");
+  const start = source.indexOf("    function findMatchingActionIndex");
+  const end = source.indexOf("    function isLocatorSelectActive", start);
+  const helper = source.slice(start, end);
+  const context = {};
+
+  vm.runInNewContext(
+    `${helper}
+     globalThis.matched = findMatchingActionIndex(
+       [
+         { id: "action_0", type: "click" },
+         { id: "action_1", type: "popup" },
+         { id: "action_0", type: "ionSelect" }
+       ],
+       { id: "action_0", type: "ionSelect" },
+       2
+     );`,
+    context
+  );
+
+  assert.equal(context.matched, 2);
+});
+
+test("ion-select selected option is rendered as read-only text", async () => {
+  const source = await readFile(new URL("../test.js", import.meta.url), "utf8");
+  const start = source.indexOf("    function appendReadOnlyLabeledValue");
+  const end = source.indexOf("    function formatDomPathParts", start);
+  const helper = source.slice(start, end);
+  const createdTags = [];
+  const document = {
+    createElement(tagName) {
+      createdTags.push(tagName);
+      return {
+        className: "",
+        textContent: "",
+        children: [],
+        appendChild(child) {
+          this.children.push(child);
+        }
+      };
+    }
+  };
+  const parent = {
+    children: [],
+    appendChild(child) {
+      this.children.push(child);
+    }
+  };
+  const context = { document, parent };
+
+  vm.runInNewContext(
+    `${helper}
+     appendReadOnlyLabeledValue(parent, "選項", "HiveMQ Public (WSS) (hivemq)");`,
+    context
+  );
+
+  assert.deepEqual(createdTags, ["div", "span", "span"]);
+  assert.equal(parent.children.length, 1);
+  assert.equal(parent.children[0].children[0].textContent, "選項: ");
+  assert.equal(parent.children[0].children[1].textContent, "HiveMQ Public (WSS) (hivemq)");
+  assert.equal(parent.children[0].children[1].className, "action-readonly-value");
+  assert.equal(createdTags.includes("select"), false);
+  assert.equal(createdTags.includes("details"), false);
+});
+
 test("target locator selection updates a multi-line drag dropTarget declaration", async () => {
   const source = await readFile(new URL("../test.js", import.meta.url), "utf8");
   const start = source.indexOf("    function buildLocatorSuffix");
@@ -177,6 +268,27 @@ test("navigation without viewport metadata remains backward compatible", () => {
   );
 });
 
+test("popup code applies its recorded viewport after the popup is acquired", () => {
+  const generator = createGenerator();
+  generator.command = {
+    code: ["await page.getByRole('button', { name: 'Open' }).click();"]
+  };
+  const result = generator.generate({
+    type: "popup",
+    popupId: "popup_123",
+    viewport: { width: 900, height: 640 }
+  });
+
+  assert.equal(result.isReplace, true);
+  assert.deepEqual(result.code, [
+    "const [popup_123] = await Promise.all([",
+    "  page.waitForEvent('popup'),",
+    "  page.getByRole('button', { name: 'Open' }).click()",
+    "]);",
+    "await popup_123.setViewportSize({ width: 900, height: 640 });"
+  ]);
+});
+
 test("code view keeps viewport setup before goto", async () => {
   const source = await readFile(new URL("../test.js", import.meta.url), "utf8");
   const start = source.indexOf("    function parseFrameDeclaration");
@@ -229,6 +341,85 @@ test("drag code converts the recorded target ratios using the current target siz
     lines.findIndex(line => line.includes("dropTarget.scrollIntoViewIfNeeded")) <
     lines.findIndex(line => line.includes("const dropSize"))
   );
+});
+
+test("absolute drop mode emits recorded coordinates without measuring target size", () => {
+  const generator = createGenerator();
+  const lines = generator.dragAndDropCodeSetter(
+    {
+      dropPositionMode: "absolute",
+      dropPosition: {
+        x: 24.5,
+        y: 39,
+        xRatio: 0.25,
+        yRatio: 0.6,
+        scrollState: {
+          scope: "document",
+          rootTag: "html",
+          scrollLeftRatio: 0,
+          scrollTopRatio: 0.4
+        }
+      }
+    },
+    { funName: "ByDomPath", obj: {} },
+    { funName: "ByDomPath", obj: {} },
+    "source-context",
+    "target-context"
+  );
+  const code = lines.join("\n");
+
+  assert.match(code, /targetPosition: \{ x: 24\.5, y: 39 \}/);
+  assert.doesNotMatch(code, /const dropSize/);
+  assert.doesNotMatch(code, /dropSize\./);
+  assert.match(code, /scrollTopRatio":0\.4/);
+});
+
+test("center drop mode omits targetPosition", () => {
+  const generator = createGenerator();
+  const code = generator.dragAndDropCodeSetter(
+    {
+      dropPositionMode: "center",
+      dropPosition: { x: 24.5, y: 39, xRatio: 0.25, yRatio: 0.6 }
+    },
+    { funName: "ByDomPath", obj: {} },
+    { funName: "ByDomPath", obj: {} },
+    "source-context",
+    "target-context"
+  );
+
+  assert.equal(code, "await sourceLocator.dragTo(targetLocator);");
+  assert.doesNotMatch(code, /targetPosition/);
+});
+
+test("center drop mode keeps non-empty recorded scroll restoration", () => {
+  const generator = createGenerator();
+  const lines = generator.dragAndDropCodeSetter(
+    {
+      dropPositionMode: "center",
+      dropPosition: {
+        x: 24.5,
+        y: 39,
+        xRatio: 0.25,
+        yRatio: 0.6,
+        scrollState: {
+          scope: "element",
+          ancestorDepth: 1,
+          scrollLeftRatio: 0,
+          scrollTopRatio: 0.5
+        }
+      }
+    },
+    { funName: "ByDomPath", obj: {} },
+    { funName: "ByDomPath", obj: {} },
+    "source-context",
+    "target-context"
+  );
+  const code = lines.join("\n");
+
+  assert.match(code, /scrollTopRatio":0\.5/);
+  assert.match(code, /await sourceLocator\.dragTo\(dropTarget\);/);
+  assert.doesNotMatch(code, /targetPosition/);
+  assert.doesNotMatch(code, /const dropSize/);
 });
 
 test("drag code restores the recorded scroll-container ratio before calculating the position", () => {
@@ -630,6 +821,324 @@ test("outer and iframe listeners record Enter against the event target", () => {
     assert.equal(dispatched[0][1], target);
     assert.equal(dispatched[0][3].keyboard, "Enter");
   }
+});
+
+test("trusted autofill is ignored while user paste remains recordable", async () => {
+  for (const Listener of [OuterEventListener, IframeEventListener]) {
+    const target = {
+      nodeType: 1,
+      tagName: "INPUT",
+      value: "autofilled@example.test",
+      getAttribute: name => name === "type" ? "text" : null
+    };
+    let scheduled = 0;
+    const listener = Object.create(Listener.prototype);
+    Object.assign(listener, {
+      isRecording: true,
+      mainWindow: {},
+      iframeWindow: {},
+      domParserService: { getOpenSourcePath: () => ({}) },
+      initialInputValues: new WeakMap([[target, ""]]),
+      preEditSourcePaths: new WeakMap(),
+      lastUserTypedAt: new WeakMap(),
+      userEditedInputs: new WeakSet(),
+      composingInputs: new WeakSet(),
+      getTextInputEventTarget: () => target,
+      shouldSuppressSyntheticPageEvent: () => false,
+      isRangeInput: () => false,
+      isColorInput: () => false,
+      debugInputEvent: () => {},
+      debugInputTarget: () => {},
+      scheduleTextInputRecord: () => { scheduled += 1; }
+    });
+
+    listener.beforeInputHandler({
+      isTrusted: true,
+      inputType: "insertReplacementText",
+      target
+    });
+    listener.inputHandler({
+      isTrusted: true,
+      inputType: "insertReplacementText",
+      isComposing: false,
+      target
+    });
+
+    assert.equal(listener.userEditedInputs.has(target), false);
+    assert.equal(scheduled, 0, "browser autofill must not schedule an input action");
+
+    listener.userEditedInputs.add(target);
+    listener.lastUserTypedAt.set(target, Date.now() - 5000);
+    listener.inputHandler({
+      isTrusted: true,
+      inputType: "insertReplacementText",
+      isComposing: false,
+      target
+    });
+    assert.equal(scheduled, 0, "expired user intent must not authorize a later autofill event");
+    listener.userEditedInputs.delete(target);
+    listener.lastUserTypedAt.delete(target);
+
+    listener.keydownHandler({
+      key: "v",
+      keyCode: 86,
+      isTrusted: true,
+      isComposing: false,
+      repeat: false,
+      ctrlKey: true,
+      altKey: false,
+      metaKey: false,
+      shiftKey: false,
+      target
+    });
+    assert.equal(listener.userEditedInputs.has(target), false, "Ctrl+V keydown waits for a paste event");
+
+    listener.pasteHandler({
+      isTrusted: true,
+      target
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    assert.equal(listener.userEditedInputs.has(target), true);
+    assert.equal(scheduled, 1, "trusted paste must schedule an input action");
+  }
+});
+
+test("trusted typing beforeinput remains recordable", () => {
+  for (const Listener of [OuterEventListener, IframeEventListener]) {
+    const target = {
+      nodeType: 1,
+      tagName: "INPUT",
+      value: "hello",
+      getAttribute: name => name === "type" ? "text" : null
+    };
+    let scheduled = 0;
+    const listener = Object.create(Listener.prototype);
+    Object.assign(listener, {
+      isRecording: true,
+      mainWindow: {},
+      iframeWindow: {},
+      domParserService: { getOpenSourcePath: () => ({}) },
+      initialInputValues: new WeakMap([[target, ""]]),
+      preEditSourcePaths: new WeakMap(),
+      lastUserTypedAt: new WeakMap(),
+      userEditedInputs: new WeakSet(),
+      composingInputs: new WeakSet(),
+      getTextInputEventTarget: () => target,
+      shouldSuppressSyntheticPageEvent: () => false,
+      isRangeInput: () => false,
+      isColorInput: () => false,
+      debugInputEvent: () => {},
+      debugInputTarget: () => {},
+      scheduleTextInputRecord: () => { scheduled += 1; }
+    });
+
+    listener.beforeInputHandler({
+      isTrusted: true,
+      inputType: "insertText",
+      target
+    });
+    listener.inputHandler({
+      isTrusted: true,
+      inputType: "insertText",
+      isComposing: false,
+      target
+    });
+
+    assert.equal(listener.userEditedInputs.has(target), true);
+    assert.equal(scheduled, 1);
+  }
+});
+
+test("ion-select records a user selection without recording programmatic changes", () => {
+  for (const Listener of [OuterEventListener, IframeEventListener]) {
+    const options = [
+      { value: "default", textContent: "Default (AIoT)", getAttribute: () => "default" },
+      { value: "custom", textContent: "Custom ...", getAttribute: () => "custom" }
+    ];
+    const target = {
+      nodeType: 1,
+      tagName: "ION-SELECT",
+      value: "custom",
+      getAttribute: name => name === "interface" ? "popover" : null,
+      hasAttribute: () => false,
+      querySelectorAll: selector => selector === "ion-select-option" ? options : []
+    };
+    const dispatched = [];
+    const listener = Object.create(Listener.prototype);
+    Object.assign(listener, {
+      isRecording: true,
+      pendingIonSelectInteractions: new WeakMap(),
+      activeIonSelect: null,
+      dispatchAction: (...args) => dispatched.push(args)
+    });
+
+    listener.ionSelectChangeHandler({
+      target,
+      detail: { value: "custom" },
+      isTrusted: false
+    });
+    assert.equal(dispatched.length, 0, "programmatic ionChange must be ignored");
+
+    listener.pendingIonSelectInteractions.set(target, Date.now());
+    listener.activeIonSelect = target;
+    listener.ionSelectChangeHandler({
+      target,
+      detail: { value: "custom" },
+      isTrusted: false
+    });
+
+    assert.equal(dispatched.length, 1);
+    assert.equal(dispatched[0][0], "ionSelect");
+    assert.equal(dispatched[0][1], target);
+    assert.deepEqual(dispatched[0][3], {
+      selectedValue: "custom",
+      selectedText: "Custom ...",
+      selectedTexts: ["Custom ..."],
+      selectInterface: "popover",
+      isMultiple: false
+    });
+    assert.equal(listener.activeIonSelect, null);
+  }
+});
+
+test("ion-select popover generates open and option click code", () => {
+  const generator = createGenerator();
+  generator._getContextPrefix = () => "frame";
+  const code = generator.ionSelectSetter(
+    {
+      selectedValue: "custom",
+      selectedText: "Custom ...",
+      selectedTexts: ["Custom ..."],
+      selectInterface: "popover"
+    },
+    { funName: "ByDomPath", obj: {} },
+    "iframe-context"
+  );
+
+  assert.deepEqual(code, [
+    "await frameLocator.click();",
+    'await frame.locator("ion-popover").locator("ion-radio").filter({ hasText: "Custom ..." }).click();'
+  ]);
+  assert.doesNotMatch(code.join("\n"), /selectOption/);
+  assert.doesNotMatch(code.join("\n"), /getByText/);
+  assert.doesNotMatch(code.join("\n"), /getByRole/);
+});
+
+test("multi-value ion-select popover targets checkboxes by accessible name", () => {
+  const generator = createGenerator();
+  generator._getContextPrefix = () => "page";
+  const code = generator.ionSelectSetter(
+    {
+      selectedValue: ["hivemq", "emqx"],
+      selectedTexts: ["HiveMQ Public (WSS)", "EMQX Public (WSS)"],
+      selectInterface: "popover",
+      isMultiple: true
+    },
+    { funName: "ByDomPath", obj: {} },
+    "page"
+  );
+
+  assert.deepEqual(code, [
+    "await pageLocator.click();",
+    'await page.locator("ion-popover").locator("ion-checkbox").filter({ hasText: "HiveMQ Public (WSS)" }).click();',
+    'await page.locator("ion-popover").locator("ion-checkbox").filter({ hasText: "EMQX Public (WSS)" }).click();'
+  ]);
+});
+
+test("ion-select click is reserved for the semantic select action", () => {
+  for (const Listener of [OuterEventListener, IframeEventListener]) {
+    const target = { nodeType: 1, tagName: "ION-SELECT" };
+    const listener = Object.create(Listener.prototype);
+    const dispatched = [];
+    Object.assign(listener, {
+      isRecording: true,
+      suppressClickUntil: 0,
+      pendingIonSelectInteractions: new WeakMap(),
+      activeIonSelect: null,
+      shouldSuppressSyntheticPageEvent: () => false,
+      getComposedEventTarget: () => target,
+      getClickTarget: () => target,
+      dispatchAction: (...args) => dispatched.push(args)
+    });
+
+    listener.clickHandler({
+      isTrusted: true,
+      target,
+      composedPath: () => [target]
+    });
+
+    assert.equal(dispatched.length, 0);
+    assert.equal(listener.activeIonSelect, target);
+    assert.equal(listener.pendingIonSelectInteractions.has(target), true);
+  }
+});
+
+test("iframe clicks record their position relative to the selected click target", () => {
+  const target = {
+    nodeType: 1,
+    tagName: "ION-GRID",
+    offsetWidth: 200,
+    offsetHeight: 120,
+    clientWidth: 200,
+    clientHeight: 120,
+    clientLeft: 0,
+    clientTop: 0,
+    getBoundingClientRect: () => ({
+      left: 100,
+      top: 40,
+      width: 200,
+      height: 120
+    })
+  };
+  const listener = Object.create(IframeEventListener.prototype);
+  const dispatched = [];
+  Object.assign(listener, {
+    isRecording: true,
+    suppressClickUntil: 0,
+    activeIonSelect: null,
+    shouldSuppressSyntheticPageEvent: () => false,
+    getClickTarget: () => target,
+    describeDebugElement: () => "ion-grid",
+    describeDebugRoot: () => "document",
+    dispatchAction: (...args) => dispatched.push(args)
+  });
+
+  listener.clickHandler({
+    isTrusted: true,
+    clientX: 130,
+    clientY: 90,
+    target,
+    composedPath: () => [target]
+  });
+
+  assert.equal(dispatched.length, 1);
+  assert.equal(dispatched[0][0], "click");
+  assert.deepEqual(dispatched[0][3].clickPosition, { x: 30, y: 50 });
+});
+
+test("iframe click code includes the recorded element-relative position", () => {
+  const generator = new PlaywrightCodeGenerator({ priSize: 2 }, {}, "page");
+  generator._getBestPath = () => ({ funName: "ByDomPath", obj: {} });
+  generator._getContextPrefix = () =>
+    'page.locator("iframe#gjsiframe").contentFrame()';
+  generator._buildLocatorString = prefix =>
+    `${prefix}.locator('ion-grid').nth(1)`;
+  generator.updateUserActionDB = () => {};
+
+  const code = generator.clickSetter(
+    {
+      type: "click",
+      clickPosition: { x: 30, y: 50 }
+    },
+    { funName: "ByDomPath", obj: {} },
+    "iframe_1"
+  );
+
+  assert.equal(
+    code,
+    'await page.locator("iframe#gjsiframe").contentFrame().locator(\'ion-grid\').nth(1).click({ position: { x: 30, y: 50 } });'
+  );
 });
 
 test("keyboard actions use locator.press when a source locator is available", () => {

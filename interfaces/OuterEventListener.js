@@ -27,6 +27,8 @@ export class OuterEventListener {
     this.userEditedInputs = new WeakSet();
     this.composingInputs = new WeakSet();
     this.lastColorInput = new WeakMap();
+    this.pendingIonSelectInteractions = new WeakMap();
+    this.activeIonSelect = null;
     this.dragStart = { x: 0, y: 0 };
     this.isDragging = false;
     this.DRAG_THRESHOLD = 5;
@@ -59,6 +61,9 @@ export class OuterEventListener {
     this.mainDocument.addEventListener('dblclick', this.dblClickHandler.bind(this), true);
     this.mainDocument.addEventListener('keydown', this.keydownHandler.bind(this));
     this.mainDocument.addEventListener("change", this.changeHandler.bind(this), true);
+    this.mainDocument.addEventListener("ionChange", this.ionSelectChangeHandler.bind(this), true);
+    this.mainDocument.addEventListener("ionCancel", this.ionSelectDismissHandler.bind(this), true);
+    this.mainDocument.addEventListener("ionDismiss", this.ionSelectDismissHandler.bind(this), true);
     this.mainDocument.addEventListener("compositionstart", this.compositionStartHandler.bind(this), true);
     this.mainDocument.addEventListener("compositionend", this.compositionEndHandler.bind(this), true);
     this.mainDocument.addEventListener("beforeinput", this.beforeInputHandler.bind(this), true);
@@ -126,6 +131,9 @@ export class OuterEventListener {
     if (extraData.inputText !== undefined) action.setInputText(extraData.inputText);
     if (extraData.selectedValue !== undefined) action.setSelectedValue(extraData.selectedValue);
     if (extraData.selectedText !== undefined) action.setSelectedText(extraData.selectedText);
+    if (extraData.selectInterface) action.selectInterface = extraData.selectInterface;
+    if (extraData.selectedTexts) action.selectedTexts = extraData.selectedTexts;
+    if (extraData.isMultiple !== undefined) action.isMultiple = extraData.isMultiple === true;
     if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
     if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
     if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
@@ -273,7 +281,12 @@ export class OuterEventListener {
     if (!this.isRecording || !e.isTrusted) return;
 
     const element = this.getTextInputEventTarget(e) || e.target;
-    if (!this.isTextInputElement(element) || this.preEditSourcePaths.has(element)) return;
+    if (!this.isTextInputElement(element)) return;
+
+    if (this.isDirectUserInputType(e.inputType)) {
+      this.markTextInputEdited(element);
+    }
+    if (this.preEditSourcePaths.has(element)) return;
 
     const sourcePath = this.domParserService.getOpenSourcePath(element, this.mainWindow);
     if (sourcePath && Object.keys(sourcePath).length > 0) {
@@ -362,7 +375,6 @@ export class OuterEventListener {
       });
       return;
     }
-    this.markTextInputEdited(target);
     if (e.isComposing || this.composingInputs.has(target)) {
       this.debugInputEvent("input:ignored-composing", e, {
         isComposing: e.isComposing,
@@ -499,6 +511,48 @@ export class OuterEventListener {
     }
   }
 
+  ionSelectChangeHandler(e) {
+    if (!this.isRecording) return;
+    const target = e.target;
+    if (target?.tagName !== "ION-SELECT") return;
+
+    const interactionAt = Number(this.pendingIonSelectInteractions.get(target));
+    if (!Number.isFinite(interactionAt) || Date.now() - interactionAt > 30000) return;
+
+    const selectedValue = e.detail?.value ?? target.value;
+    const selectedTexts = this.getIonSelectSelectedTexts(target, selectedValue);
+    const selectedText = selectedTexts.join(", ") || String(selectedValue ?? "");
+
+    this.pendingIonSelectInteractions.delete(target);
+    this.activeIonSelect = null;
+    this.dispatchAction("ionSelect", target, null, {
+      selectedValue,
+      selectedText,
+      selectedTexts,
+      selectInterface: target.getAttribute?.("interface") || "alert",
+      isMultiple: target.multiple === true || target.hasAttribute?.("multiple") === true
+    });
+  }
+
+  ionSelectDismissHandler(e) {
+    const target = e.target;
+    if (target?.tagName === "ION-SELECT") {
+      this.pendingIonSelectInteractions.delete(target);
+      if (this.activeIonSelect === target) this.activeIonSelect = null;
+    }
+  }
+
+  getIonSelectSelectedTexts(target, selectedValue) {
+    const selectedValues = Array.isArray(selectedValue) ? selectedValue : [selectedValue];
+    const options = [...(target?.querySelectorAll?.("ion-select-option") || [])];
+    return selectedValues.map(value => {
+      const option = options.find(item => {
+        const optionValue = item.value ?? item.getAttribute?.("value");
+        return optionValue === value || String(optionValue) === String(value);
+      });
+      return (option?.textContent || "").trim() || String(value ?? "");
+    }).filter(Boolean);
+  }
   dblClickHandler(e) {
     if (!this.isRecording) return;
     if (this.shouldSuppressSyntheticPageEvent()) return;
@@ -693,6 +747,12 @@ export class OuterEventListener {
     if (Date.now() < this.suppressClickUntil) return;
     if (this.shouldSuppressSyntheticPageEvent()) return;
     const target = this.getComposedEventTarget(e);
+    if (target?.tagName === "ION-SELECT") {
+      this.pendingIonSelectInteractions.set(target, Date.now());
+      this.activeIonSelect = target;
+      return;
+    }
+    if (this.isActiveIonSelectOverlayInteraction(e)) return;
     const toolbarItem = target?.closest?.(
       ".gjs-toolbar-item, [data-command], [data-cmd]"
     );
@@ -722,6 +782,21 @@ export class OuterEventListener {
       clickableRoot: this.describeDebugRoot(clickable?.getRootNode?.())
     });
     this.dispatchAction("click", this.currentHoveredElement);
+  }
+
+  isActiveIonSelectOverlayInteraction(e) {
+    if (!this.activeIonSelect) return false;
+    const interactionAt = Number(this.pendingIonSelectInteractions.get(this.activeIonSelect));
+    if (!Number.isFinite(interactionAt) || Date.now() - interactionAt > 30000) {
+      this.pendingIonSelectInteractions.delete(this.activeIonSelect);
+      this.activeIonSelect = null;
+      return false;
+    }
+    return (typeof e.composedPath === "function" ? e.composedPath() : []).some(item =>
+      item?.matches?.(
+        "ion-popover, ion-alert, ion-action-sheet, ion-modal, ion-select-option, ion-radio, ion-checkbox"
+      )
+    );
   }
 
   isRangeInput(element) {
@@ -863,6 +938,7 @@ export class OuterEventListener {
     try {
       this.initialInputValues = new WeakMap();
       this.preEditSourcePaths = new WeakMap();
+      this.lastUserTypedAt = new WeakMap();
       this.userEditedInputs = new WeakSet();
       this.composingInputs = new WeakSet();
       this.mainDocument?.querySelectorAll?.("input, textarea, [contenteditable='true']").forEach((element) => {
@@ -879,6 +955,8 @@ export class OuterEventListener {
 
   shouldRecordTextInputEvent(element) {
     if (!this.userEditedInputs.has(element)) return false;
+    const lastUserEditAt = Number(this.lastUserTypedAt.get(element));
+    if (!Number.isFinite(lastUserEditAt) || Date.now() - lastUserEditAt > 2000) return false;
 
     const value = this.getInputValue(element);
     if (this.initialInputValues.get(element) === value) return false;
@@ -924,6 +1002,8 @@ export class OuterEventListener {
         inputText: this.getInputValue(element),
         preParsedSourcePath
       });
+      this.userEditedInputs.delete(element);
+      this.lastUserTypedAt.delete(element);
       this.preEditSourcePaths.delete(element);
     }, delay);
   }
@@ -942,6 +1022,8 @@ export class OuterEventListener {
       inputText: this.getInputValue(element),
       preParsedSourcePath
     });
+    this.userEditedInputs.delete(element);
+    this.lastUserTypedAt.delete(element);
     this.preEditSourcePaths.delete(element);
   }
 
@@ -957,6 +1039,25 @@ export class OuterEventListener {
   isTextEditingKey(e) {
     if (e.ctrlKey || e.metaKey || e.altKey) return false;
     return e.key?.length === 1 || ["Backspace", "Delete"].includes(e.key);
+  }
+
+  isDirectUserInputType(inputType) {
+    return [
+      "insertText",
+      "insertLineBreak",
+      "insertParagraph",
+      "insertCompositionText",
+      "insertFromComposition",
+      "insertFromPaste",
+      "insertFromPasteAsQuotation",
+      "insertFromDrop",
+      "insertFromYank",
+      "deleteContentBackward",
+      "deleteContentForward",
+      "deleteByCut",
+      "historyUndo",
+      "historyRedo"
+    ].includes(String(inputType || ""));
   }
 
   isTextInputElement(element) {

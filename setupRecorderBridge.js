@@ -147,9 +147,12 @@ export function setupRecorderBridge({ MainApp }) {
     }
   }
 
-  function startRecording() {
+  function startRecording(dropPositionMode = "ratio") {
     const instance = ensureApp();
     if (!instance) return;
+    if (typeof instance.setDropPositionMode === "function") {
+      instance.setDropPositionMode(dropPositionMode);
+    }
     if (typeof instance.setHoverPreviewSessionEnabled === "function") {
       instance.setHoverPreviewSessionEnabled(true);
     }
@@ -219,7 +222,14 @@ export function setupRecorderBridge({ MainApp }) {
     // 🚨 關鍵修復 1：防止 iframe 接收背景指令並重複啟動
     if (window !== window.top) return;
     if (message.type === "START_RECORDING") {
-      startRecording();
+      startRecording(message.dropPositionMode);
+      sendResponse({ ok: true });
+      return;
+    }
+
+    if (message.type === "SET_DROP_POSITION_MODE") {
+      const instance = ensureApp();
+      instance?.setDropPositionMode?.(message.dropPositionMode);
       sendResponse({ ok: true });
       return;
     }
@@ -250,7 +260,10 @@ export function setupRecorderBridge({ MainApp }) {
     if (event.source !== window || !event.data || event.data.source !== "RECORDER_EXTENSION") return;
     // 🚨 防止 iframe 執行
     if (window !== window.top) return;
-    if (event.data.type === "START_RECORDING") startRecording();
+    if (event.data.type === "START_RECORDING") startRecording(event.data.dropPositionMode);
+    if (event.data.type === "SET_DROP_POSITION_MODE") {
+      ensureApp()?.setDropPositionMode?.(event.data.dropPositionMode);
+    }
     if (event.data.type === "STOP_RECORDING") stopRecording();
     if (event.data.type === "CLEAR_RECORDING") clearRecording();
     if (event.data.type === "UPDATE_RECORDED_ACTION") updateRecordedAction(event.data);

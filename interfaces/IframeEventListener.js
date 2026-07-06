@@ -24,6 +24,8 @@ export class IframeEventListener {
     this.userEditedInputs = new WeakSet();
     this.composingInputs = new WeakSet();
     this.lastColorInput = new WeakMap();
+    this.pendingIonSelectInteractions = new WeakMap();
+    this.activeIonSelect = null;
     this.dragStart = { x: 0, y: 0 };
     this.isDragging = false;
     this.DRAG_THRESHOLD = 5;
@@ -54,6 +56,9 @@ export class IframeEventListener {
     this.iframeDocument.addEventListener("dblclick", this.dblClickHandler.bind(this), true);
     this.iframeDocument.addEventListener("keydown", this.keydownHandler.bind(this));
     this.iframeDocument.addEventListener("change", this.changeHandler.bind(this), true);
+    this.iframeDocument.addEventListener("ionChange", this.ionSelectChangeHandler.bind(this), true);
+    this.iframeDocument.addEventListener("ionCancel", this.ionSelectDismissHandler.bind(this), true);
+    this.iframeDocument.addEventListener("ionDismiss", this.ionSelectDismissHandler.bind(this), true);
     this.iframeDocument.addEventListener("compositionstart", this.compositionStartHandler.bind(this), true);
     this.iframeDocument.addEventListener("compositionend", this.compositionEndHandler.bind(this), true);
     this.iframeDocument.addEventListener("beforeinput", this.beforeInputHandler.bind(this), true);
@@ -117,9 +122,13 @@ export class IframeEventListener {
     if (extraData.inputText !== undefined) action.setInputText(extraData.inputText);
     if (extraData.selectedValue !== undefined) action.setSelectedValue(extraData.selectedValue);
     if (extraData.selectedText !== undefined) action.setSelectedText(extraData.selectedText);
+    if (extraData.selectInterface) action.selectInterface = extraData.selectInterface;
+    if (extraData.selectedTexts) action.selectedTexts = extraData.selectedTexts;
+    if (extraData.isMultiple !== undefined) action.isMultiple = extraData.isMultiple === true;
     if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
     if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
     if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
+    if (extraData.clickPosition) action.clickPosition = extraData.clickPosition;
 
     if (extraData.isDragStart) action.isDragStart = true;
     if (extraData.isDrop) action.isDrop = true;
@@ -262,7 +271,12 @@ export class IframeEventListener {
     if (!this.isRecording || !e.isTrusted) return;
 
     const element = this.getTextInputEventTarget(e) || e.target;
-    if (!this.isTextInputElement(element) || this.preEditSourcePaths.has(element)) return;
+    if (!this.isTextInputElement(element)) return;
+
+    if (this.isDirectUserInputType(e.inputType)) {
+      this.markTextInputEdited(element);
+    }
+    if (this.preEditSourcePaths.has(element)) return;
 
     const sourcePath = this.domParserService.getOpenSourcePath(element, this.iframeWindow);
     if (sourcePath && Object.keys(sourcePath).length > 0) {
@@ -351,7 +365,6 @@ export class IframeEventListener {
       });
       return;
     }
-    this.markTextInputEdited(target);
     if (e.isComposing || this.composingInputs.has(target)) {
       this.debugInputEvent("input:ignored-composing", e, {
         isComposing: e.isComposing,
@@ -488,6 +501,48 @@ export class IframeEventListener {
     }
   }
 
+  ionSelectChangeHandler(e) {
+    if (!this.isRecording) return;
+    const target = e.target;
+    if (target?.tagName !== "ION-SELECT") return;
+
+    const interactionAt = Number(this.pendingIonSelectInteractions.get(target));
+    if (!Number.isFinite(interactionAt) || Date.now() - interactionAt > 30000) return;
+
+    const selectedValue = e.detail?.value ?? target.value;
+    const selectedTexts = this.getIonSelectSelectedTexts(target, selectedValue);
+    const selectedText = selectedTexts.join(", ") || String(selectedValue ?? "");
+
+    this.pendingIonSelectInteractions.delete(target);
+    this.activeIonSelect = null;
+    this.dispatchAction("ionSelect", target, null, {
+      selectedValue,
+      selectedText,
+      selectedTexts,
+      selectInterface: target.getAttribute?.("interface") || "alert",
+      isMultiple: target.multiple === true || target.hasAttribute?.("multiple") === true
+    });
+  }
+
+  ionSelectDismissHandler(e) {
+    const target = e.target;
+    if (target?.tagName === "ION-SELECT") {
+      this.pendingIonSelectInteractions.delete(target);
+      if (this.activeIonSelect === target) this.activeIonSelect = null;
+    }
+  }
+
+  getIonSelectSelectedTexts(target, selectedValue) {
+    const selectedValues = Array.isArray(selectedValue) ? selectedValue : [selectedValue];
+    const options = [...(target?.querySelectorAll?.("ion-select-option") || [])];
+    return selectedValues.map(value => {
+      const option = options.find(item => {
+        const optionValue = item.value ?? item.getAttribute?.("value");
+        return optionValue === value || String(optionValue) === String(value);
+      });
+      return (option?.textContent || "").trim() || String(value ?? "");
+    }).filter(Boolean);
+  }
   dblClickHandler(e) {
     if (!this.isRecording || !e.isTrusted) return;
     if (this.shouldSuppressSyntheticPageEvent()) return;
@@ -678,6 +733,12 @@ export class IframeEventListener {
     if (this.shouldSuppressSyntheticPageEvent()) return;
     const target = this.getClickTarget(e);
     if (!target) return;
+    if (target.tagName === "ION-SELECT") {
+      this.pendingIonSelectInteractions.set(target, Date.now());
+      this.activeIonSelect = target;
+      return;
+    }
+    if (this.isActiveIonSelectOverlayInteraction(e)) return;
 
     this.currentHoveredElement = target;
     console.log("[RecorderDebug][Iframe2 clickHandler] dispatch click target", {
@@ -686,7 +747,24 @@ export class IframeEventListener {
       clickable: this.describeDebugElement(target),
       clickableRoot: this.describeDebugRoot(target?.getRootNode?.())
     });
-    this.dispatchAction("click", this.currentHoveredElement);
+    this.dispatchAction("click", this.currentHoveredElement, null, {
+      clickPosition: this.getClickPosition(e, this.currentHoveredElement)
+    });
+  }
+
+  isActiveIonSelectOverlayInteraction(e) {
+    if (!this.activeIonSelect) return false;
+    const interactionAt = Number(this.pendingIonSelectInteractions.get(this.activeIonSelect));
+    if (!Number.isFinite(interactionAt) || Date.now() - interactionAt > 30000) {
+      this.pendingIonSelectInteractions.delete(this.activeIonSelect);
+      this.activeIonSelect = null;
+      return false;
+    }
+    return (typeof e.composedPath === "function" ? e.composedPath() : []).some(item =>
+      item?.matches?.(
+        "ion-popover, ion-alert, ion-action-sheet, ion-modal, ion-select-option, ion-radio, ion-checkbox"
+      )
+    );
   }
 
   getClickTarget(e) {
@@ -705,6 +783,35 @@ export class IframeEventListener {
     }
 
     return target.closest(clickableSelector) || target;
+  }
+
+  getClickPosition(e, element) {
+    if (
+      !element ||
+      typeof element.getBoundingClientRect !== "function" ||
+      !Number.isFinite(Number(e?.clientX)) ||
+      !Number.isFinite(Number(e?.clientY))
+    ) {
+      return null;
+    }
+
+    const rect = element.getBoundingClientRect();
+    const layoutWidth = Number(element.offsetWidth) || Number(rect.width);
+    const layoutHeight = Number(element.offsetHeight) || Number(rect.height);
+    const scaleX = layoutWidth > 0 && Number(rect.width) > 0 ? Number(rect.width) / layoutWidth : 1;
+    const scaleY = layoutHeight > 0 && Number(rect.height) > 0 ? Number(rect.height) / layoutHeight : 1;
+    const paddingWidth = Number(element.clientWidth) || Math.max(0, layoutWidth);
+    const paddingHeight = Number(element.clientHeight) || Math.max(0, layoutHeight);
+    const borderLeft = Number(element.clientLeft) || 0;
+    const borderTop = Number(element.clientTop) || 0;
+    const rawX = (Number(e.clientX) - Number(rect.left)) / scaleX - borderLeft;
+    const rawY = (Number(e.clientY) - Number(rect.top)) / scaleY - borderTop;
+    const round = value => Math.round(value * 100) / 100;
+
+    return {
+      x: round(Math.max(0, Math.min(paddingWidth, rawX))),
+      y: round(Math.max(0, Math.min(paddingHeight, rawY)))
+    };
   }
 
   isRangeInput(element) {
@@ -857,6 +964,7 @@ export class IframeEventListener {
     try {
       this.initialInputValues = new WeakMap();
       this.preEditSourcePaths = new WeakMap();
+      this.lastUserTypedAt = new WeakMap();
       this.userEditedInputs = new WeakSet();
       this.composingInputs = new WeakSet();
       this.iframeDocument?.querySelectorAll?.("input, textarea, [contenteditable='true']").forEach((element) => {
@@ -873,6 +981,8 @@ export class IframeEventListener {
 
   shouldRecordTextInputEvent(element) {
     if (!this.userEditedInputs.has(element)) return false;
+    const lastUserEditAt = Number(this.lastUserTypedAt.get(element));
+    if (!Number.isFinite(lastUserEditAt) || Date.now() - lastUserEditAt > 2000) return false;
 
     const value = this.getInputValue(element);
     if (this.initialInputValues.get(element) === value) return false;
@@ -918,6 +1028,8 @@ export class IframeEventListener {
         inputText: this.getInputValue(element),
         preParsedSourcePath
       });
+      this.userEditedInputs.delete(element);
+      this.lastUserTypedAt.delete(element);
       this.preEditSourcePaths.delete(element);
     }, delay);
   }
@@ -936,6 +1048,8 @@ export class IframeEventListener {
       inputText: this.getInputValue(element),
       preParsedSourcePath
     });
+    this.userEditedInputs.delete(element);
+    this.lastUserTypedAt.delete(element);
     this.preEditSourcePaths.delete(element);
   }
 
@@ -951,6 +1065,25 @@ export class IframeEventListener {
   isTextEditingKey(e) {
     if (e.ctrlKey || e.metaKey || e.altKey) return false;
     return e.key?.length === 1 || ["Backspace", "Delete"].includes(e.key);
+  }
+
+  isDirectUserInputType(inputType) {
+    return [
+      "insertText",
+      "insertLineBreak",
+      "insertParagraph",
+      "insertCompositionText",
+      "insertFromComposition",
+      "insertFromPaste",
+      "insertFromPasteAsQuotation",
+      "insertFromDrop",
+      "insertFromYank",
+      "deleteContentBackward",
+      "deleteContentForward",
+      "deleteByCut",
+      "historyUndo",
+      "historyRedo"
+    ].includes(String(inputType || ""));
   }
 
   isTextInputElement(element) {

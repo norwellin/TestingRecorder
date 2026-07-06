@@ -78,6 +78,13 @@ export class PlaywrightCodeGenerator {
     // 🌟 核心修改：將 Promise.all 的組合邏輯封裝在 Generator 內
     if (action.type === 'popup') {
       const popupName = action.popupId || 'newPopup';
+      const popupWidth = Math.floor(Number(action.viewport?.width));
+      const popupHeight = Math.floor(Number(action.viewport?.height));
+      const popupViewportLine =
+        Number.isFinite(popupWidth) && Number.isFinite(popupHeight) &&
+        popupWidth > 0 && popupHeight > 0
+          ? `await ${popupName}.setViewportSize({ width: ${popupWidth}, height: ${popupHeight} });`
+          : "";
       // 從本地的 Command 陣列取出最後一行程式碼 (通常是剛剛的 click)
       const codeArr = this.command.code;
       const lastLine = codeArr.length > 0 ? codeArr[codeArr.length - 1] : null;
@@ -94,11 +101,16 @@ export class PlaywrightCodeGenerator {
                   `const [${popupName}] = await Promise.all([`,
                   `  ${contextPrefix}.waitForEvent('popup'),`,
                   `  ${cleanAction}`,
-                  `]);`
+                  `]);`,
+                  ...(popupViewportLine ? [popupViewportLine] : [])
               ]
           };
       }
-      return `const ${popupName} = await ${this.pageAlias}.waitForEvent('popup');`;
+      const popupLines = [
+        `const ${popupName} = await ${this.pageAlias}.waitForEvent('popup');`,
+        ...(popupViewportLine ? [popupViewportLine] : [])
+      ];
+      return popupLines.length === 1 ? popupLines[0] : popupLines;
     }
 
     // ==========================================
@@ -180,6 +192,8 @@ export class PlaywrightCodeGenerator {
       generatedCode = this.keyboardSetter(action, sourcepath, inputKey, sourceWindow);
     } else if (action.type === 'change') {
       generatedCode = this.changeSetter(action, sourcepath, selectValue, sourceWindow);
+    } else if (action.type === 'ionSelect') {
+      generatedCode = this.ionSelectSetter(action, sourcepath, sourceWindow);
     }
 
     console.log("[Debug PlaywrightCodeGenerator] generatedCode", {
@@ -692,6 +706,53 @@ declareContexts(contexts, rootAlias) {
     return code;
   }
 
+  ionSelectSetter(action, sourcepath, sourceWindow) {
+    const best = this._getBestPath(sourcepath);
+    if (!best) return null;
+
+    const winPrefix = this._getContextPrefix(sourceWindow);
+    const selectLocator = this._buildLocatorString(winPrefix, best);
+    const selectInterface = ["popover", "alert", "action-sheet", "modal"].includes(action.selectInterface)
+      ? action.selectInterface
+      : "alert";
+    const overlayTag = {
+      popover: "ion-popover",
+      alert: "ion-alert",
+      "action-sheet": "ion-action-sheet",
+      modal: "ion-modal"
+    }[selectInterface];
+    const selectedTexts = Array.isArray(action.selectedTexts) && action.selectedTexts.length
+      ? action.selectedTexts
+      : [action.selectedText || String(action.selectedValue ?? "")].filter(Boolean);
+    const optionRole = selectInterface === "action-sheet"
+      ? "button"
+      : action.isMultiple === true
+        ? "checkbox"
+        : "radio";
+
+    this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
+
+    const optionClickLines = selectedTexts.map(text => {
+      if (selectInterface === "popover") {
+        const optionTag = action.isMultiple === true ? "ion-checkbox" : "ion-radio";
+        return `await ${winPrefix}.locator("ion-popover").locator(${this.quoteForCode(optionTag)}).filter({ hasText: ${this.quoteForCode(text)} }).click();`;
+      }
+      return `await ${winPrefix}.locator(${this.quoteForCode(overlayTag)}).getByRole(${this.quoteForCode(optionRole)}, { name: ${this.quoteForCode(text)}, exact: true }).click();`;
+    });
+
+    const lines = [
+      `await ${selectLocator}.click();`,
+      ...optionClickLines
+    ];
+
+    if (selectInterface === "alert") {
+      lines.push(
+        `await ${winPrefix}.locator("ion-alert").getByRole("button", { name: "OK", exact: true }).click();`
+      );
+    }
+    return lines;
+  }
+
   _getKeyboardPagePrefix(sourceWindow) {
     let context = this.contextMap.get(sourceWindow);
 
@@ -735,35 +796,46 @@ declareContexts(contexts, rootAlias) {
     const dropXRatio = Number(action?.dropPosition?.xRatio);
     const dropYRatio = Number(action?.dropPosition?.yRatio);
     const hasDropRatio = Number.isFinite(dropXRatio) && Number.isFinite(dropYRatio);
-
-    let targetPosition = "";
-    if (hasDropRatio) {
-      const xRatio = Math.max(0, Math.min(1, dropXRatio));
-      const yRatio = Math.max(0, Math.min(1, dropYRatio));
-      const recordedScrollState = action?.dropPosition?.scrollState;
-      const scrollState = recordedScrollState?.scope === "element"
+    const dropX = Number(action?.dropPosition?.x);
+    const dropY = Number(action?.dropPosition?.y);
+    const hasAbsolutePosition = Number.isFinite(dropX) && Number.isFinite(dropY);
+    const positionMode = ["ratio", "absolute", "center"].includes(action?.dropPositionMode)
+      ? action.dropPositionMode
+      : "ratio";
+    const useRatio = positionMode === "ratio"
+      ? hasDropRatio
+      : positionMode === "absolute" && !hasAbsolutePosition && hasDropRatio;
+    const useAbsolute = positionMode === "absolute"
+      ? hasAbsolutePosition
+      : positionMode === "ratio" && !hasDropRatio && hasAbsolutePosition;
+    const xRatio = Math.max(0, Math.min(1, dropXRatio));
+    const yRatio = Math.max(0, Math.min(1, dropYRatio));
+    const recordedScrollState = action?.dropPosition?.scrollState;
+    const scrollState = recordedScrollState?.scope === "element"
+      ? {
+          scope: "element",
+          ancestorDepth: Math.max(0, Math.floor(Number(recordedScrollState.ancestorDepth) || 0)),
+          scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
+          scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
+        }
+      : recordedScrollState?.scope === "document"
         ? {
-            scope: "element",
-            ancestorDepth: Math.max(0, Math.floor(Number(recordedScrollState.ancestorDepth) || 0)),
+            scope: "document",
+            rootTag: ["html", "body"].includes(String(recordedScrollState.rootTag || "").toLowerCase())
+              ? String(recordedScrollState.rootTag).toLowerCase()
+              : "",
             scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
             scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
           }
-        : recordedScrollState?.scope === "document"
+        : recordedScrollState?.scope === "ion-content"
           ? {
-              scope: "document",
-              rootTag: ["html", "body"].includes(String(recordedScrollState.rootTag || "").toLowerCase())
-                ? String(recordedScrollState.rootTag).toLowerCase()
-                : "",
+              scope: "ion-content",
               scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
               scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
             }
-          : recordedScrollState?.scope === "ion-content"
-            ? {
-                scope: "ion-content",
-                scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
-                scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
-              }
-          : null;
+        : null;
+
+    if (useRatio || scrollState) {
       const lines = [
         "{",
         `  const dropTarget = ${tarLocator};`
@@ -806,22 +878,29 @@ declareContexts(contexts, rootAlias) {
       lines.push(
         `  await ${souLocator}.scrollIntoViewIfNeeded();`,
         "  await dropTarget.scrollIntoViewIfNeeded();",
-        "  await dropTarget.waitFor({ state: 'visible' });",
-        "  const dropSize = await dropTarget.evaluate(element => { const rect = element.getBoundingClientRect(); return { width: rect.width, height: rect.height }; });",
-        `  await ${souLocator}.dragTo(dropTarget, { targetPosition: { x: dropSize.width * ${xRatio}, y: dropSize.height * ${yRatio} } });`,
-        "}"
+        "  await dropTarget.waitFor({ state: 'visible' });"
       );
-      return lines;
-    } else {
-      // Keep actions recorded by older versions replayable.
-      const dropX = Number(action?.dropPosition?.x);
-      const dropY = Number(action?.dropPosition?.y);
-      if (Number.isFinite(dropX) && Number.isFinite(dropY)) {
-        targetPosition = `, { targetPosition: { x: ${dropX}, y: ${dropY} } }`;
+
+      if (useRatio) {
+        lines.push(
+          "  const dropSize = await dropTarget.evaluate(element => { const rect = element.getBoundingClientRect(); return { width: rect.width, height: rect.height }; });",
+          `  await ${souLocator}.dragTo(dropTarget, { targetPosition: { x: dropSize.width * ${xRatio}, y: dropSize.height * ${yRatio} } });`
+        );
+      } else if (useAbsolute) {
+        lines.push(
+          `  await ${souLocator}.dragTo(dropTarget, { targetPosition: { x: ${dropX}, y: ${dropY} } });`
+        );
+      } else {
+        lines.push(`  await ${souLocator}.dragTo(dropTarget);`);
       }
+      lines.push("}");
+      return lines;
     }
 
-    return `await ${souLocator}.dragTo(${tarLocator}${targetPosition});`;
+    if (useAbsolute) {
+      return `await ${souLocator}.dragTo(${tarLocator}, { targetPosition: { x: ${dropX}, y: ${dropY} } });`;
+    }
+    return `await ${souLocator}.dragTo(${tarLocator});`;
   }
 
   _getActionContextPrefix(action, field, fallbackContextId) {
@@ -838,7 +917,13 @@ declareContexts(contexts, rootAlias) {
     const locator = this._buildLocatorString(winPrefix, best);
     
     this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
-    
+
+    const clickX = Number(action?.clickPosition?.x);
+    const clickY = Number(action?.clickPosition?.y);
+    if (action?.type === "click" && Number.isFinite(clickX) && Number.isFinite(clickY)) {
+      return `await ${locator}.click({ position: { x: ${clickX}, y: ${clickY} } });`;
+    }
+
     return `await ${locator}.click();`;
   }
 

@@ -66,6 +66,16 @@ function preserveSelectorOverrides(nextAction, storedAction) {
   const mergedAction = { ...nextAction };
   let hasOverride = false;
 
+  if (
+    storedAction.type === "popup" &&
+    storedAction.viewport &&
+    !nextAction.viewport
+  ) {
+    mergedAction.viewport = storedAction.viewport;
+    mergedAction.generatedCodeLines = storedAction.generatedCodeLines || [];
+    mergedAction.generatedCodeLine = storedAction.generatedCodeLine || "";
+  }
+
   if (storedAction.codeNote !== undefined) {
     mergedAction.codeNote = storedAction.codeNote;
   }
@@ -219,11 +229,70 @@ function annotateCodeBodyWithNotes(codeBody, actions) {
   ]);
 }
 
+function normalizeViewport(viewport) {
+  const width = Math.floor(Number(viewport?.width));
+  const height = Math.floor(Number(viewport?.height));
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+  return { width, height };
+}
+
+function getPopupViewportCodeLine(popupId, viewport) {
+  const normalizedViewport = normalizeViewport(viewport);
+  if (!popupId || !normalizedViewport) return "";
+  return `await ${popupId}.setViewportSize({ width: ${normalizedViewport.width}, height: ${normalizedViewport.height} });`;
+}
+
+function attachPopupViewportToCodeLines(lines, popupId, viewport) {
+  const viewportLine = getPopupViewportCodeLine(popupId, viewport);
+  const normalizedLines = Array.isArray(lines) ? lines.filter(Boolean) : [];
+  if (!viewportLine) return normalizedLines;
+
+  const viewportPrefix = `await ${popupId}.setViewportSize(`;
+  const withoutPreviousViewport = normalizedLines.filter(line =>
+    !String(line).trim().startsWith(viewportPrefix)
+  );
+  return [...withoutPreviousViewport, viewportLine];
+}
+
+function replaceActionCodeBlock(codeBody, oldLines, newLines) {
+  const lines = Array.isArray(codeBody) ? [...codeBody] : [];
+  const previousLines = Array.isArray(oldLines) ? oldLines.filter(Boolean) : [];
+  if (!previousLines.length) return lines;
+
+  const lastStartIndex = lines.length - previousLines.length;
+  for (let index = 0; index <= lastStartIndex; index++) {
+    if (previousLines.every((line, offset) => lines[index + offset] === line)) {
+      lines.splice(index, previousLines.length, ...newLines);
+      return lines;
+    }
+  }
+  return lines;
+}
+
+function buildFullCode(codeBody, actions) {
+  const annotatedCodeBody = annotateCodeBodyWithNotes(codeBody, actions);
+  return [
+    "import { test, expect } from '@playwright/test';",
+    "",
+    "test('test', async ({ page }) => {",
+    ...annotatedCodeBody.map(line => "  " + line),
+    "});"
+  ];
+}
+
+const pendingPopupViewports = new Map();
+
 function mergeSelectorOverrides(nextActions, storedActions) {
   return nextActions.map((nextAction, index) => {
-    const storedAction = nextAction?.id != null
-      ? storedActions.find(action => action?.id === nextAction.id) || storedActions[index]
-      : storedActions[index];
+    const indexedAction = storedActions[index];
+    const storedAction =
+      nextAction?.id != null && indexedAction?.id === nextAction.id
+        ? indexedAction
+        : nextAction?.id != null
+          ? storedActions.find(action => action?.id === nextAction.id) || indexedAction
+          : indexedAction;
     return preserveSelectorOverrides(nextAction, storedAction);
   });
 }
@@ -233,8 +302,76 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   (async () => {
     if (message.type === "START_RECORDING") {
-      await chrome.storage.local.set({ recorderStatus: "recording" });
-      await sendCommandToRecorder("START_RECORDING");
+      const dropPositionMode = ["ratio", "absolute", "center"].includes(message.dropPositionMode)
+        ? message.dropPositionMode
+        : "ratio";
+      await chrome.storage.local.set({
+        recorderStatus: "recording",
+        dropPositionMode
+      });
+      await sendCommandToRecorder({
+        type: "START_RECORDING",
+        dropPositionMode
+      });
+      sendResponse({ ok: true });
+      return;
+    }
+
+    if (message.type === "SET_DROP_POSITION_MODE") {
+      const dropPositionMode = ["ratio", "absolute", "center"].includes(message.dropPositionMode)
+        ? message.dropPositionMode
+        : "ratio";
+      await chrome.storage.local.set({ dropPositionMode });
+      const updated = await sendCommandToRecorder({
+        type: "SET_DROP_POSITION_MODE",
+        dropPositionMode
+      });
+      sendResponse({ ok: updated });
+      return;
+    }
+
+    if (message.type === "POPUP_VIEWPORT_DETECTED") {
+      const popupId = String(message.popupId || "");
+      const viewport = normalizeViewport(message.viewport);
+      if (!popupId || !viewport) {
+        sendResponse({ ok: false, error: "Invalid popup viewport" });
+        return;
+      }
+
+      const data = await chrome.storage.local.get([
+        "generatedCodeBody",
+        "generatedAction"
+      ]);
+      const currentActions = Array.isArray(data.generatedAction) ? data.generatedAction : [];
+      const actionIndex = currentActions.findIndex(action =>
+        action?.type === "popup" && action?.popupId === popupId
+      );
+
+      if (actionIndex < 0) {
+        pendingPopupViewports.set(popupId, viewport);
+        sendResponse({ ok: true, pending: true });
+        return;
+      }
+
+      const action = currentActions[actionIndex];
+      const oldLines = Array.isArray(action.generatedCodeLines)
+        ? action.generatedCodeLines.filter(Boolean)
+        : (action.generatedCodeLine ? [action.generatedCodeLine] : []);
+      const newLines = attachPopupViewportToCodeLines(oldLines, popupId, viewport);
+      let codeBody = replaceActionCodeBlock(data.generatedCodeBody, oldLines, newLines);
+
+      action.viewport = viewport;
+      action.generatedCodeLines = newLines;
+      action.generatedCodeLine = newLines[newLines.length - 1] || "";
+      currentActions[actionIndex] = action;
+      pendingPopupViewports.delete(popupId);
+
+      const fullCode = buildFullCode(codeBody, currentActions);
+      await chrome.storage.local.set({
+        generatedCodeBody: codeBody,
+        generatedCode: fullCode,
+        generatedAction: currentActions
+      });
       sendResponse({ ok: true });
       return;
     }
@@ -287,6 +424,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       if (message.newAction) {
+          const popupViewport = message.newAction.type === "popup"
+              ? pendingPopupViewports.get(message.newAction.popupId)
+              : null;
+          if (popupViewport) {
+              const originalNewLines = message.newCode
+                  ? (Array.isArray(message.newCode) ? message.newCode : [message.newCode])
+                  : [];
+              message.newAction.viewport = popupViewport;
+              message.newCode = attachPopupViewportToCodeLines(
+                  originalNewLines,
+                  message.newAction.popupId,
+                  popupViewport
+              );
+              pendingPopupViewports.delete(message.newAction.popupId);
+              codeBody.splice(
+                  Math.max(0, codeBody.length - originalNewLines.length),
+                  originalNewLines.length,
+                  ...message.newCode
+              );
+          }
           const newLines = message.newCode
               ? (Array.isArray(message.newCode) ? message.newCode : [message.newCode])
               : [];
@@ -299,14 +456,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       
       // 🌟 在這裡單純地套上靜態外框
-      const annotatedCodeBody = annotateCodeBodyWithNotes(codeBody, currentAction);
-      const fullCode = [
-          "import { test, expect } from '@playwright/test';",
-          "",
-          "test('test', async ({ page }) => {",
-          ...annotatedCodeBody.map(line => "  " + line),
-          "});"
-      ];
+      const fullCode = buildFullCode(codeBody, currentAction);
       
       await chrome.storage.local.set({
           generatedCodeBody: codeBody,
@@ -333,6 +483,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     
     // ⚠️ 記得在 CLEAR_RECORDING 時，也把 generatedCodeBody 清空：
     if (message.type === "CLEAR_RECORDING") {
+      pendingPopupViewports.clear();
       await chrome.storage.local.set({
         generatedCode: [],
         generatedCodeBody: [], // 新增這行

@@ -308,6 +308,15 @@
     font-family: Consolas, monospace;
 }
 
+.action-readonly-row {
+    margin-top: 4px;
+}
+
+.action-readonly-value {
+    color: #444;
+    font-family: Arial, sans-serif;
+}
+
 .locator-dropdown {
     width: 100%;
     max-width: 100%;
@@ -574,7 +583,12 @@
         <label for="language-select">Output language:</label>
         <select id="language-select">
             <option value="javascript">JavaScript</option>
-
+        </select>
+        <label for="drop-position-mode">Drop positioning:</label>
+        <select id="drop-position-mode">
+            <option value="ratio">Relative ratio</option>
+            <option value="absolute">Absolute coordinates</option>
+            <option value="center">Target center</option>
         </select>
     </div>
 

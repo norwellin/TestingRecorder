@@ -6,6 +6,7 @@ document.addEventListener("DOMContentLoaded", async function () {
     const clearButton = document.getElementById("clear-recording"); // 皜蝝????
     const exportButton = document.getElementById("export-script");  // ?臬?單??
     const hoverHighlightButton = document.getElementById("toggle-hover-highlight");
+    const dropPositionModeSelect = document.getElementById("drop-position-mode");
     const statusDiv = document.getElementById("status");            // ???摮＊蝷箏?憛?
     const recordingIndicator = document.getElementById("recording-indicator"); // ?ˊ銝剔?蝝??內??
     const actionsDiv = document.getElementById("recorded-actions"); // 憿舐內雿輻??雿???皜?憛?
@@ -14,10 +15,25 @@ document.addEventListener("DOMContentLoaded", async function () {
 
     let actions = []; // ?脣??刻??園?銝剔??????
     let hoverHighlightEnabled = true;
+    let dropPositionMode = "ratio";
     let pendingActionsRefresh = null;
     let pendingCodeViewRefresh = null;
     let locatorSelectInteractionActive = false;
     const noteSaveTimers = new Map();
+
+    function findMatchingActionIndex(actionList, action, preferredIndex) {
+        const list = Array.isArray(actionList) ? actionList : [];
+        const indexedAction = list[preferredIndex];
+        if (indexedAction && (action?.id == null || indexedAction.id === action.id)) {
+            return preferredIndex;
+        }
+        if (action?.id != null) {
+            return list.findIndex(item => item?.id === action.id);
+        }
+        return Number.isInteger(preferredIndex) && preferredIndex >= 0 && preferredIndex < list.length
+            ? preferredIndex
+            : -1;
+    }
 
     function isLocatorSelectActive() {
         const activeElement = document.activeElement;
@@ -61,9 +77,8 @@ document.addEventListener("DOMContentLoaded", async function () {
 
         return nextActions.map((nextAction, index) => {
             if (!nextAction) return nextAction;
-            const currentAction = nextAction.id != null
-                ? existingActions.find(action => action?.id === nextAction.id) || existingActions[index]
-                : existingActions[index];
+            const currentIndex = findMatchingActionIndex(existingActions, nextAction, index);
+            const currentAction = currentIndex >= 0 ? existingActions[currentIndex] : null;
             if (!currentAction) return nextAction;
 
             const mergedAction = { ...nextAction };
@@ -275,13 +290,21 @@ document.addEventListener("DOMContentLoaded", async function () {
         if (action.type === "dialog" && action.triggerAction?.type) {
             return `dialog\ntrigger: ${action.triggerAction.type}`;
         }
+        if (action.type === "dragANDdrop") {
+            return `dragANDdrop\nposition: ${action.dropPositionMode || "ratio"}`;
+        }
+        if (action.type === "ionSelect") {
+            return `ionSelect\nselected: ${action.selectedText || action.selectedValue || ""}`;
+        }
         return action.type || "unknown";
     }
 
     function getActionValue(action) {
         if (action.type === "navigate" || action.type === "popup") return action.url || "";
         if (action.type === "input") return action.inputText || action.sourceData || "";
-        if (action.type === "change") return action.selectedText || action.selectedValue || action.sourceData || "";
+        if (action.type === "change" || action.type === "ionSelect") {
+            return action.selectedText || action.selectedValue || action.sourceData || "";
+        }
         if (action.type === "keyboard") return action.keyboard || "";
         return action.sourceData || "";
     }
@@ -310,7 +333,36 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
 
         if (action.type === "navigate" || action.type === "popup") {
-            cell.textContent = action.url || "";
+            const viewportText = action.type === "popup" && action.viewport
+                ? `\nviewport: ${action.viewport.width} × ${action.viewport.height}`
+                : "";
+            cell.textContent = `${action.url || ""}${viewportText}`;
+            return cell;
+        }
+
+        if (action.type === "ionSelect") {
+            appendLabeledElement(
+                cell,
+                "元件",
+                action.sourceData,
+                action.sourceMethod,
+                action.sourceDomPathOptions,
+                action.sourceDomPathChain,
+                index,
+                "source"
+            );
+            const selectedValue = Array.isArray(action.selectedValue)
+                ? action.selectedValue.join(", ")
+                : String(action.selectedValue ?? "");
+            const selectedText = action.selectedText || selectedValue;
+            const optionDisplay = selectedValue && selectedValue !== selectedText
+                ? `${selectedText} (${selectedValue})`
+                : selectedText;
+            appendReadOnlyLabeledValue(
+                cell,
+                "選項",
+                optionDisplay
+            );
             return cell;
         }
 
@@ -340,6 +392,22 @@ document.addEventListener("DOMContentLoaded", async function () {
         prefix.textContent = `${label}: `;
         wrapper.appendChild(prefix);
         appendDomPathOrText(wrapper, value, method, options, chain, actionIndex, field);
+        parent.appendChild(wrapper);
+    }
+
+    function appendReadOnlyLabeledValue(parent, label, value) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "action-readonly-row";
+
+        const prefix = document.createElement("span");
+        prefix.textContent = `${label}: `;
+        wrapper.appendChild(prefix);
+
+        const text = document.createElement("span");
+        text.className = "action-readonly-value";
+        text.textContent = value ?? "";
+        wrapper.appendChild(text);
+
         parent.appendChild(wrapper);
     }
 
@@ -858,6 +926,10 @@ document.addEventListener("DOMContentLoaded", async function () {
         if (action.type === "dragANDdrop") return text.includes(".dragTo(");
         if (action.type === "input") return text.includes(".fill(");
         if (action.type === "change") return text.includes(".selectOption(");
+        if (action.type === "ionSelect") {
+            return text.includes(".click(")
+                && !/\.locator\(["']ion-(?:popover|alert|action-sheet|modal)["']\)/.test(text);
+        }
         if (action.type === "dbclick") return text.includes(".dblclick(");
         if (action.type === "keyboard") return text.includes(".press(") || text.includes(".keyboard.press(");
         if (action.type === "popup") return text.includes("waitForEvent('popup')");
@@ -1106,6 +1178,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         if (action?.type === "dragANDdrop") return ".dragTo(";
         if (action?.type === "input") return ".fill(";
         if (action?.type === "change") return ".selectOption(";
+        if (action?.type === "ionSelect") return ".click(";
         if (action?.type === "dbclick") return ".dblclick(";
         if (action?.type === "keyboard") return ".press(";
         return ".click(";
@@ -1200,9 +1273,11 @@ document.addEventListener("DOMContentLoaded", async function () {
         if (nextLines.length) setActionGeneratedLines(action, nextLines);
 
         if (latestStoredActions.length) {
-            const matchingIndex = action.id != null
-                ? latestStoredActions.findIndex(item => item?.id === action.id)
-                : actionIndex;
+            const matchingIndex = findMatchingActionIndex(
+                latestStoredActions,
+                action,
+                actionIndex
+            );
 
             if (matchingIndex >= 0 && matchingIndex < latestStoredActions.length) {
                 actions = latestStoredActions.map((storedAction, index) => {
@@ -1485,7 +1560,10 @@ document.addEventListener("DOMContentLoaded", async function () {
     // 暺???憪?鋆賬?
     startButton.addEventListener("click", async () => {
         await chrome.storage.local.set({ hoverPreviewSessionEnabled: true });
-        const response = await chrome.runtime.sendMessage({ type: "START_RECORDING" });
+        const response = await chrome.runtime.sendMessage({
+            type: "START_RECORDING",
+            dropPositionMode
+        });
         if (!response?.ok) {
             await chrome.storage.local.set({ hoverPreviewSessionEnabled: false });
             alert(response?.error || "Failed to start recording");
@@ -1551,8 +1629,27 @@ document.addEventListener("DOMContentLoaded", async function () {
         updateHoverHighlightButton(nextEnabled);
     });
 
+    dropPositionModeSelect?.addEventListener("change", async () => {
+        const nextMode = ["ratio", "absolute", "center"].includes(dropPositionModeSelect.value)
+            ? dropPositionModeSelect.value
+            : "ratio";
+        dropPositionMode = nextMode;
+        await chrome.storage.local.set({ dropPositionMode: nextMode });
+        await chrome.runtime.sendMessage({
+            type: "SET_DROP_POSITION_MODE",
+            dropPositionMode: nextMode
+        });
+    });
+
     // 10. ?瑁??????單頛摰敺??餃? Background ?輯???
-    const hoverStorage = await chrome.storage.local.get(["hoverHighlightEnabled"]);
+    const hoverStorage = await chrome.storage.local.get([
+        "hoverHighlightEnabled",
+        "dropPositionMode"
+    ]);
     updateHoverHighlightButton(hoverStorage.hoverHighlightEnabled !== false);
+    dropPositionMode = ["ratio", "absolute", "center"].includes(hoverStorage.dropPositionMode)
+        ? hoverStorage.dropPositionMode
+        : "ratio";
+    if (dropPositionModeSelect) dropPositionModeSelect.value = dropPositionMode;
     await loadInitialState();
 });

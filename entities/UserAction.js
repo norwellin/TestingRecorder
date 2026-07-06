@@ -20,6 +20,10 @@ export class UserAction {
     this.keyboard = null; //only use for keyboard event - type: text
     this.selectedText = null;// only use for drop-down menu - type: text
     this.selectedValue = null;
+    this.selectedTexts = [];
+    this.selectInterface = null;
+    this.isMultiple = false;
+    this.clickPosition = null;
     this.path = null; //csspath
     this.inputText = ""; //only use for input event - type: text 
     this.codeNote = "";
