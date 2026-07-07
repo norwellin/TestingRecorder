@@ -938,6 +938,49 @@ export class MainApp {
     return this.store.updateAction(actionId, actionIndex, patch);
   }
 
+  removeRecordedAction(actionId, actionIndex) {
+    const currentActions = this.store.getActions();
+    const resolvedIndex = actionId != null
+      ? currentActions.findIndex(action => action?.id === actionId)
+      : (Number.isInteger(actionIndex) ? actionIndex : -1);
+    if (resolvedIndex < 0 || resolvedIndex >= currentActions.length) return false;
+
+    const action = currentActions[resolvedIndex];
+    const actionLines = Array.isArray(action?.generatedCodeLines)
+      ? action.generatedCodeLines.filter(Boolean)
+      : (action?.generatedCodeLine ? [action.generatedCodeLine] : []);
+    const code = Array.isArray(this.command?.code) ? this.command.code : [];
+
+    if (actionLines.length) {
+      let occurrence = 0;
+      for (let index = 0; index < resolvedIndex; index++) {
+        const previous = currentActions[index];
+        const previousLines = Array.isArray(previous?.generatedCodeLines)
+          ? previous.generatedCodeLines.filter(Boolean)
+          : (previous?.generatedCodeLine ? [previous.generatedCodeLine] : []);
+        if (
+          previousLines.length === actionLines.length &&
+          previousLines.every((line, lineIndex) => line === actionLines[lineIndex])
+        ) {
+          occurrence += 1;
+        }
+      }
+
+      let matchedOccurrence = 0;
+      const lastStartIndex = code.length - actionLines.length;
+      for (let index = 0; index <= lastStartIndex; index++) {
+        if (!actionLines.every((line, offset) => code[index + offset] === line)) continue;
+        if (matchedOccurrence === occurrence) {
+          code.splice(index, actionLines.length);
+          break;
+        }
+        matchedOccurrence += 1;
+      }
+    }
+
+    return !!this.store.removeAction(actionId, actionIndex);
+  }
+
   setHoverPreviewSessionEnabled(enabled) {
     this.hoverPreviewSessionEnabled = enabled === true;
     try {

@@ -144,6 +144,20 @@ test("an unknown action id cannot update an unrelated local action by global ind
   assert.equal(store.getActions()[0].sourceData, "original");
 });
 
+test("removing an action by id keeps the recorder user-action store synchronized", () => {
+  const store = new RecorderStore();
+  const first = store.addAction({ type: "click", sourceData: "first" });
+  const second = store.addAction({ type: "click", sourceData: "second" });
+  const third = store.addAction({ type: "input", sourceData: "third" });
+
+  const removed = store.removeAction(second.id, 0);
+
+  assert.equal(removed.id, second.id);
+  assert.deepEqual(store.getActions().map(action => action.id), [first.id, third.id]);
+  assert.equal(store.getCurrentAction().id, third.id);
+  assert.equal(store.getLastAction().id, third.id);
+});
+
 test("locator updates prefer the selected row when legacy action ids collide", async () => {
   const source = await readFile(new URL("../test.js", import.meta.url), "utf8");
   const start = source.indexOf("    function findMatchingActionIndex");
@@ -724,6 +738,50 @@ test("locator candidates keep semantic methods and multiple DOM paths", () => {
   assert.equal(options.filter(option => option.recommended).length, 1);
   assert.equal(options[0].recommended, true);
   assert.equal(options[4].data.csspath, "form > button:nth-of-type(1)");
+});
+
+test("gjs selected-parent selectors are excluded without blocking ordinary Ionic classes", () => {
+  const service = new DOMParserService({ mainWindow: {} });
+  assert.equal(
+    service.isBlockedSelectorCandidate(".md.hydrated.gjs-selected-parent"),
+    true
+  );
+  assert.equal(service.isBlockedSelectorCandidate("ion-button.md.hydrated"), false);
+
+  const generator = new PlaywrightCodeGenerator({ priSize: 2 }, {}, "page");
+  const candidates = {
+    0: {
+      funName: "ByPlaywright",
+      obj: {
+        selector: ".md.hydrated.gjs-selected-parent",
+        selectors: [
+          ".md.hydrated.gjs-selected-parent",
+          'internal:role=button[name="Save"i]'
+        ]
+      }
+    },
+    1: {
+      funName: "ByDomPath",
+      obj: {
+        csspath: "ion-grid:nth-child(2)",
+        shadowChain: [],
+        options: [
+          { path: ".md.hydrated.gjs-selected-parent", shadowChain: [] },
+          { path: "ion-grid:nth-child(2)", shadowChain: [] }
+        ]
+      }
+    }
+  };
+
+  const options = generator._buildLocatorOptions(candidates);
+  assert.equal(
+    options.some(option =>
+      JSON.stringify(option).includes(".md.hydrated.gjs-selected-parent")
+    ),
+    false
+  );
+  assert.equal(options.some(option => option.data.csspath === "ion-grid:nth-child(2)"), true);
+  assert.equal(generator._getBestPath(candidates), candidates[1]);
 });
 
 test("playwright-injected selectors are converted to semantic locator code", () => {

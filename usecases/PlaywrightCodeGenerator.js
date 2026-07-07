@@ -257,10 +257,28 @@ export class PlaywrightCodeGenerator {
     };
   }
 
+  _isBlockedSelectorCandidate(selector) {
+    return /\.gjs-selected-parent(?![a-zA-Z0-9_-])/.test(
+      String(selector || "")
+    );
+  }
+
+  _isBlockedPathCandidate(candidate) {
+    if (candidate?.funName === "ByPlaywright") {
+      return this._isBlockedSelectorCandidate(
+        candidate.obj?.selector || candidate.obj?.locator
+      );
+    }
+    if (candidate?.funName === "ByDomPath") {
+      return this._isBlockedSelectorCandidate(candidate.obj?.csspath);
+    }
+    return false;
+  }
+
   _getBestPath(paths) {
     if (!paths) return null;
     for (let i = 0; i < this.domService.priSize; i++) {
-      if (paths[i]) return paths[i];
+      if (paths[i] && !this._isBlockedPathCandidate(paths[i])) return paths[i];
     }
     return null;
   }
@@ -271,7 +289,9 @@ export class PlaywrightCodeGenerator {
 
     const candidates = Array.isArray(paths) ? paths : Object.values(paths || {});
     return candidates.find(candidate =>
-      candidate?.funName === "ByDomPath" && candidate?.obj?.csspath
+      candidate?.funName === "ByDomPath" &&
+      candidate?.obj?.csspath &&
+      !this._isBlockedPathCandidate(candidate)
     ) || best;
   }
 
@@ -291,7 +311,7 @@ export class PlaywrightCodeGenerator {
 
         selectors.forEach((selector, selectorIndex) => {
           const locator = this._playwrightSelectorToLocator(selector);
-          if (!selector || !locator) return;
+          if (!selector || !locator || this._isBlockedSelectorCandidate(selector) || this._isBlockedSelectorCandidate(locator)) return;
           options.push({
             id: `ByPlaywright-${selectorIndex}`,
             method: "ByPlaywright",
@@ -311,7 +331,7 @@ export class PlaywrightCodeGenerator {
             }];
 
         domOptions.forEach((option, domIndex) => {
-          if (!option?.path) return;
+          if (!option?.path || this._isBlockedSelectorCandidate(option.path)) return;
           options.push({
             id: `ByDomPath-${domIndex}`,
             method: "ByDomPath",
@@ -991,7 +1011,9 @@ declareContexts(contexts, rootAlias) {
       action.targetLocatorOptions = this._buildLocatorOptions(locatorCandidates);
       if (funName === "ByDomPath") {
         action.targetDomPathChain = obj.shadowChain || [];
-        action.targetDomPathOptions = Array.isArray(obj.options) ? obj.options : [];
+        action.targetDomPathOptions = Array.isArray(obj.options)
+          ? obj.options.filter(option => !this._isBlockedSelectorCandidate(option?.path))
+          : [];
       }
       console.log("[RecorderDebug][CodeGenerator updateUserActionDB] target stored", {
         actionType: action.type,
@@ -1007,7 +1029,9 @@ declareContexts(contexts, rootAlias) {
       action.sourceLocatorOptions = this._buildLocatorOptions(locatorCandidates);
       if (funName === "ByDomPath") {
         action.sourceDomPathChain = obj.shadowChain || [];
-        action.sourceDomPathOptions = Array.isArray(obj.options) ? obj.options : [];
+        action.sourceDomPathOptions = Array.isArray(obj.options)
+          ? obj.options.filter(option => !this._isBlockedSelectorCandidate(option?.path))
+          : [];
       }
       console.log("[RecorderDebug][CodeGenerator updateUserActionDB] source stored", {
         actionType: action.type,

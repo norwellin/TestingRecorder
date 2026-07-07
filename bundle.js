@@ -572,6 +572,21 @@
       this.notify();
       return removedAction;
     }
+    removeAction(actionId, actionIndex) {
+      let resolvedIndex = -1;
+      if (actionId != null) {
+        resolvedIndex = this.state.actions.findIndex((item) => item?.id === actionId);
+      }
+      if (resolvedIndex < 0 && actionId == null && Number.isInteger(actionIndex) && actionIndex >= 0 && actionIndex < this.state.actions.length) {
+        resolvedIndex = actionIndex;
+      }
+      if (resolvedIndex < 0) return null;
+      const [removedAction] = this.state.actions.splice(resolvedIndex, 1);
+      this.state.lastAction = this.state.actions[this.state.actions.length - 1] || null;
+      this.state.currentAction = this.state.lastAction;
+      this.notify();
+      return removedAction || null;
+    }
     updateCurrentAction(patch) {
       if (!this.state.currentAction || !patch || typeof patch !== "object") return;
       Object.assign(this.state.currentAction, patch);
@@ -6879,6 +6894,11 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       return [...stableSelectors, ...dynamicIdSelectors];
     }
+    isBlockedSelectorCandidate(selector2) {
+      return /\.gjs-selected-parent(?![a-zA-Z0-9_-])/.test(
+        String(selector2 || "")
+      );
+    }
     generateLocatorCandidatesWithPlaywrightInjected(el, root = el?.getRootNode?.()) {
       if (el?.nodeType !== 1 || !root) {
         return {
@@ -6898,7 +6918,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         });
         const generatedSelectors = [...new Set(
           [generated.selector, ...generated.selectors || []].filter(Boolean)
-        )];
+        )].filter((selector2) => !this.isBlockedSelectorCandidate(selector2));
         playwrightSelectors = this.moveDynamicIdSelectorsToEnd(generatedSelectors, el);
         playwrightSelector = playwrightSelectors[0] || "";
       } catch (err) {
@@ -6911,6 +6931,9 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           idName: () => false,
           className: (name) => !this.isDynamicOrUnstableClass(name)
         });
+        if (this.isBlockedSelectorCandidate(finderWithoutIdSelector)) {
+          finderWithoutIdSelector = "";
+        }
       } catch (err) {
         console.warn("[DOMParser] finder selector generation without id failed", err);
       }
@@ -7502,10 +7525,26 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         text: (element.innerText || element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80)
       };
     }
+    _isBlockedSelectorCandidate(selector2) {
+      return /\.gjs-selected-parent(?![a-zA-Z0-9_-])/.test(
+        String(selector2 || "")
+      );
+    }
+    _isBlockedPathCandidate(candidate) {
+      if (candidate?.funName === "ByPlaywright") {
+        return this._isBlockedSelectorCandidate(
+          candidate.obj?.selector || candidate.obj?.locator
+        );
+      }
+      if (candidate?.funName === "ByDomPath") {
+        return this._isBlockedSelectorCandidate(candidate.obj?.csspath);
+      }
+      return false;
+    }
     _getBestPath(paths) {
       if (!paths) return null;
       for (let i = 0; i < this.domService.priSize; i++) {
-        if (paths[i]) return paths[i];
+        if (paths[i] && !this._isBlockedPathCandidate(paths[i])) return paths[i];
       }
       return null;
     }
@@ -7514,7 +7553,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (best?.funName !== "ByText" || String(best.obj?.text || "").length <= 80) return best;
       const candidates = Array.isArray(paths) ? paths : Object.values(paths || {});
       return candidates.find(
-        (candidate) => candidate?.funName === "ByDomPath" && candidate?.obj?.csspath
+        (candidate) => candidate?.funName === "ByDomPath" && candidate?.obj?.csspath && !this._isBlockedPathCandidate(candidate)
       ) || best;
     }
     _buildLocatorOptions(paths) {
@@ -7528,7 +7567,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           const selectors = Array.isArray(candidate.obj.selectors) && candidate.obj.selectors.length ? candidate.obj.selectors : [candidate.obj.selector];
           selectors.forEach((selector2, selectorIndex) => {
             const locator = this._playwrightSelectorToLocator(selector2);
-            if (!selector2 || !locator) return;
+            if (!selector2 || !locator || this._isBlockedSelectorCandidate(selector2) || this._isBlockedSelectorCandidate(locator)) return;
             options.push({
               id: `ByPlaywright-${selectorIndex}`,
               method: "ByPlaywright",
@@ -7544,7 +7583,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
             shadowChain: candidate.obj.shadowChain || []
           }];
           domOptions.forEach((option, domIndex) => {
-            if (!option?.path) return;
+            if (!option?.path || this._isBlockedSelectorCandidate(option.path)) return;
             options.push({
               id: `ByDomPath-${domIndex}`,
               method: "ByDomPath",
@@ -8080,7 +8119,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         action.targetLocatorOptions = this._buildLocatorOptions(locatorCandidates);
         if (funName === "ByDomPath") {
           action.targetDomPathChain = obj.shadowChain || [];
-          action.targetDomPathOptions = Array.isArray(obj.options) ? obj.options : [];
+          action.targetDomPathOptions = Array.isArray(obj.options) ? obj.options.filter((option) => !this._isBlockedSelectorCandidate(option?.path)) : [];
         }
         console.log("[RecorderDebug][CodeGenerator updateUserActionDB] target stored", {
           actionType: action.type,
@@ -8096,7 +8135,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         action.sourceLocatorOptions = this._buildLocatorOptions(locatorCandidates);
         if (funName === "ByDomPath") {
           action.sourceDomPathChain = obj.shadowChain || [];
-          action.sourceDomPathOptions = Array.isArray(obj.options) ? obj.options : [];
+          action.sourceDomPathOptions = Array.isArray(obj.options) ? obj.options.filter((option) => !this._isBlockedSelectorCandidate(option?.path)) : [];
         }
         console.log("[RecorderDebug][CodeGenerator updateUserActionDB] source stored", {
           actionType: action.type,
@@ -11148,6 +11187,35 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     updateRecordedAction(actionId, actionIndex, patch) {
       return this.store.updateAction(actionId, actionIndex, patch);
     }
+    removeRecordedAction(actionId, actionIndex) {
+      const currentActions = this.store.getActions();
+      const resolvedIndex = actionId != null ? currentActions.findIndex((action2) => action2?.id === actionId) : Number.isInteger(actionIndex) ? actionIndex : -1;
+      if (resolvedIndex < 0 || resolvedIndex >= currentActions.length) return false;
+      const action = currentActions[resolvedIndex];
+      const actionLines = Array.isArray(action?.generatedCodeLines) ? action.generatedCodeLines.filter(Boolean) : action?.generatedCodeLine ? [action.generatedCodeLine] : [];
+      const code = Array.isArray(this.command?.code) ? this.command.code : [];
+      if (actionLines.length) {
+        let occurrence = 0;
+        for (let index = 0; index < resolvedIndex; index++) {
+          const previous = currentActions[index];
+          const previousLines = Array.isArray(previous?.generatedCodeLines) ? previous.generatedCodeLines.filter(Boolean) : previous?.generatedCodeLine ? [previous.generatedCodeLine] : [];
+          if (previousLines.length === actionLines.length && previousLines.every((line, lineIndex) => line === actionLines[lineIndex])) {
+            occurrence += 1;
+          }
+        }
+        let matchedOccurrence = 0;
+        const lastStartIndex = code.length - actionLines.length;
+        for (let index = 0; index <= lastStartIndex; index++) {
+          if (!actionLines.every((line, offset) => code[index + offset] === line)) continue;
+          if (matchedOccurrence === occurrence) {
+            code.splice(index, actionLines.length);
+            break;
+          }
+          matchedOccurrence += 1;
+        }
+      }
+      return !!this.store.removeAction(actionId, actionIndex);
+    }
     setHoverPreviewSessionEnabled(enabled) {
       this.hoverPreviewSessionEnabled = enabled === true;
       try {
@@ -11342,6 +11410,11 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         message.patch
       );
     }
+    function removeRecordedAction(message) {
+      const instance = ensureApp();
+      if (!instance || typeof instance.removeRecordedAction !== "function") return false;
+      return instance.removeRecordedAction(message.actionId, message.actionIndex) === true;
+    }
     if (isExtensionContextAvailable() && chrome.runtime?.onMessage) {
       try {
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -11372,6 +11445,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
             sendResponse({ ok: updateRecordedAction(message) });
             return;
           }
+          if (message.type === "DELETE_RECORDED_ACTION") {
+            sendResponse({ ok: removeRecordedAction(message) });
+            return;
+          }
         });
       } catch (error) {
         handleExtensionContextError(error, "register runtime message listener");
@@ -11387,6 +11464,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (event.data.type === "STOP_RECORDING") stopRecording();
       if (event.data.type === "CLEAR_RECORDING") clearRecording();
       if (event.data.type === "UPDATE_RECORDED_ACTION") updateRecordedAction(event.data);
+      if (event.data.type === "DELETE_RECORDED_ACTION") removeRecordedAction(event.data);
     });
     if (isExtensionContextAvailable() && chrome.storage?.local) {
       if (window === window.top) {

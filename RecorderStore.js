@@ -115,6 +115,29 @@ export class RecorderStore {
     return removedAction;
   }
 
+  removeAction(actionId, actionIndex) {
+    let resolvedIndex = -1;
+    if (actionId != null) {
+      resolvedIndex = this.state.actions.findIndex(item => item?.id === actionId);
+    }
+    if (
+      resolvedIndex < 0 &&
+      actionId == null &&
+      Number.isInteger(actionIndex) &&
+      actionIndex >= 0 &&
+      actionIndex < this.state.actions.length
+    ) {
+      resolvedIndex = actionIndex;
+    }
+    if (resolvedIndex < 0) return null;
+
+    const [removedAction] = this.state.actions.splice(resolvedIndex, 1);
+    this.state.lastAction = this.state.actions[this.state.actions.length - 1] || null;
+    this.state.currentAction = this.state.lastAction;
+    this.notify();
+    return removedAction || null;
+  }
+
   updateCurrentAction(patch) {
     if (!this.state.currentAction || !patch || typeof patch !== 'object') return;
 

@@ -167,6 +167,12 @@ export class DOMParserService {
     return [...stableSelectors, ...dynamicIdSelectors];
   }
 
+  isBlockedSelectorCandidate(selector) {
+    return /\.gjs-selected-parent(?![a-zA-Z0-9_-])/.test(
+      String(selector || "")
+    );
+  }
+
   generateLocatorCandidatesWithPlaywrightInjected(el, root = el?.getRootNode?.()) {
     if (el?.nodeType !== 1 || !root) {
       return {
@@ -187,7 +193,7 @@ export class DOMParserService {
       });
       const generatedSelectors = [...new Set(
         [generated.selector, ...(generated.selectors || [])].filter(Boolean)
-      )];
+      )].filter(selector => !this.isBlockedSelectorCandidate(selector));
       playwrightSelectors = this.moveDynamicIdSelectorsToEnd(generatedSelectors, el);
       playwrightSelector = playwrightSelectors[0] || "";
     } catch (err) {
@@ -201,6 +207,9 @@ export class DOMParserService {
         idName: () => false,
         className: name => !this.isDynamicOrUnstableClass(name)
       });
+      if (this.isBlockedSelectorCandidate(finderWithoutIdSelector)) {
+        finderWithoutIdSelector = "";
+      }
     } catch (err) {
       console.warn("[DOMParser] finder selector generation without id failed", err);
     }

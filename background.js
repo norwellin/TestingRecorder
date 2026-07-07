@@ -44,8 +44,8 @@ async function sendCommandToRecorder(command) {
   }
 
   try {
-    await chrome.tabs.sendMessage(targetTab.id, message);
-    return true;
+    const response = await chrome.tabs.sendMessage(targetTab.id, message);
+    return response?.ok !== false;
   } catch (err) {
     console.warn("tabs.sendMessage failed, trying executeScript fallback:", err);
 
@@ -134,10 +134,20 @@ function formatLocatorOptionForComment(option) {
   return data.locator || data.value || "";
 }
 
+function isBlockedSelectorCandidate(selector) {
+  return /\.gjs-selected-parent(?![a-zA-Z0-9_-])/.test(
+    String(selector || "")
+  );
+}
+
 function getAllSelectablePaths(action, field = "source") {
   const values = [];
   const add = value => {
-    if (value && !values.includes(value)) values.push(value);
+    if (
+      value &&
+      !isBlockedSelectorCandidate(value) &&
+      !values.includes(value)
+    ) values.push(value);
   };
 
   const locatorOptions = action?.[`${field}LocatorOptions`];
@@ -271,6 +281,49 @@ function replaceActionCodeBlock(codeBody, oldLines, newLines) {
   return lines;
 }
 
+function findActionCodeBlock(codeBody, actions, targetActionIndex) {
+  const lines = Array.isArray(codeBody) ? codeBody : [];
+  const claimedCodeIndexes = new Set();
+  let searchFrom = 0;
+
+  for (let actionIndex = 0; actionIndex <= targetActionIndex; actionIndex++) {
+    const action = actions?.[actionIndex];
+    const actionLines = Array.isArray(action?.generatedCodeLines) && action.generatedCodeLines.length
+      ? action.generatedCodeLines.filter(Boolean)
+      : (action?.generatedCodeLine ? [action.generatedCodeLine] : []);
+    if (!actionLines.length) {
+      if (actionIndex === targetActionIndex) return null;
+      continue;
+    }
+
+    const findBlock = startIndex => {
+      const lastStartIndex = lines.length - actionLines.length;
+      for (let index = startIndex; index <= lastStartIndex; index++) {
+        if (actionLines.every((line, offset) =>
+          !claimedCodeIndexes.has(index + offset) && lines[index + offset] === line
+        )) {
+          return { start: index, length: actionLines.length };
+        }
+      }
+      return null;
+    };
+
+    const block = findBlock(searchFrom) || findBlock(0);
+    if (!block) {
+      if (actionIndex === targetActionIndex) return null;
+      continue;
+    }
+
+    for (let index = block.start; index < block.start + block.length; index++) {
+      claimedCodeIndexes.add(index);
+    }
+    searchFrom = block.start + block.length;
+    if (actionIndex === targetActionIndex) return block;
+  }
+
+  return null;
+}
+
 function buildFullCode(codeBody, actions) {
   const annotatedCodeBody = annotateCodeBodyWithNotes(codeBody, actions);
   return [
@@ -391,6 +444,76 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         patch: message.patch
       });
       sendResponse({ ok: updated });
+      return;
+    }
+
+    if (message.type === "DELETE_RECORDED_ACTION") {
+      const data = await chrome.storage.local.get([
+        "generatedCodeBody",
+        "generatedAction"
+      ]);
+      const currentActions = Array.isArray(data.generatedAction)
+        ? [...data.generatedAction]
+        : [];
+      const actionIndex = message.actionId != null
+        ? currentActions.findIndex(action => action?.id === message.actionId)
+        : (Number.isInteger(message.actionIndex) ? message.actionIndex : -1);
+
+      if (actionIndex < 0 || actionIndex >= currentActions.length) {
+        sendResponse({ ok: false, error: "Recorded action not found" });
+        return;
+      }
+
+      const action = currentActions[actionIndex];
+      const actionLines = Array.isArray(action?.generatedCodeLines)
+        ? action.generatedCodeLines.filter(Boolean)
+        : (action?.generatedCodeLine ? [action.generatedCodeLine] : []);
+      const codeBody = Array.isArray(data.generatedCodeBody)
+        ? [...data.generatedCodeBody]
+        : [];
+      const codeBlock = findActionCodeBlock(codeBody, currentActions, actionIndex);
+
+      if (actionLines.length && !codeBlock) {
+        sendResponse({ ok: false, error: "Generated code block not found" });
+        return;
+      }
+
+      const recorderUpdated = await sendCommandToRecorder({
+        type: "DELETE_RECORDED_ACTION",
+        actionId: action.id,
+        actionIndex
+      });
+      if (!recorderUpdated) {
+        sendResponse({ ok: false, error: "Recorder could not delete the action" });
+        return;
+      }
+
+      if (codeBlock) codeBody.splice(codeBlock.start, codeBlock.length);
+      currentActions.splice(actionIndex, 1);
+      const fullCode = buildFullCode(codeBody, currentActions);
+
+      await chrome.storage.local.set({
+        generatedCodeBody: codeBody,
+        generatedCode: fullCode,
+        generatedAction: currentActions
+      });
+
+      chrome.runtime.sendMessage({
+        type: "RECORDER_ACTIONS_UPDATE",
+        action: currentActions
+      }).catch(() => {});
+      chrome.runtime.sendMessage({
+        type: "RECORDER_CODE_UPDATE",
+        code: fullCode
+      }).catch(() => {});
+
+      sendResponse({
+        ok: true,
+        state: {
+          generatedAction: currentActions,
+          generatedCode: fullCode
+        }
+      });
       return;
     }
 

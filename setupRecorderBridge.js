@@ -211,6 +211,12 @@ export function setupRecorderBridge({ MainApp }) {
     );
   }
 
+  function removeRecordedAction(message) {
+    const instance = ensureApp();
+    if (!instance || typeof instance.removeRecordedAction !== "function") return false;
+    return instance.removeRecordedAction(message.actionId, message.actionIndex) === true;
+  }
+
   // ==========================================
   // 監聽器設定 (Listeners)
   // ==========================================
@@ -250,6 +256,11 @@ export function setupRecorderBridge({ MainApp }) {
       sendResponse({ ok: updateRecordedAction(message) });
       return;
     }
+
+    if (message.type === "DELETE_RECORDED_ACTION") {
+      sendResponse({ ok: removeRecordedAction(message) });
+      return;
+    }
       });
     } catch (error) {
       handleExtensionContextError(error, "register runtime message listener");
@@ -267,6 +278,7 @@ export function setupRecorderBridge({ MainApp }) {
     if (event.data.type === "STOP_RECORDING") stopRecording();
     if (event.data.type === "CLEAR_RECORDING") clearRecording();
     if (event.data.type === "UPDATE_RECORDED_ACTION") updateRecordedAction(event.data);
+    if (event.data.type === "DELETE_RECORDED_ACTION") removeRecordedAction(event.data);
   
   
     

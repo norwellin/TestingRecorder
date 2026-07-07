@@ -220,3 +220,47 @@ test("ion-select multi-line replay receives one action comment", async () => {
   assert.equal(annotated[1], ionSelectLines[0]);
   assert.equal(annotated[2], ionSelectLines[1]);
 });
+
+test("action block lookup distinguishes duplicate multi-line code when deleting", async () => {
+  const context = await loadBackgroundContext();
+  const duplicateBlock = [
+    "{",
+    "  const target = page.locator('#same');",
+    "  await target.click();",
+    "}"
+  ];
+  const actions = [
+    { id: "first", generatedCodeLines: duplicateBlock },
+    { id: "second", generatedCodeLines: duplicateBlock }
+  ];
+  const codeBody = [...duplicateBlock, ...duplicateBlock];
+
+  const block = context.findActionCodeBlock(codeBody, actions, 1);
+
+  assert.equal(block.start, duplicateBlock.length);
+  assert.equal(block.length, duplicateBlock.length);
+  codeBody.splice(block.start, block.length);
+  assert.deepEqual(codeBody, duplicateBlock);
+});
+
+test("recorded action comments omit gjs selected-parent selector candidates", async () => {
+  const context = await loadBackgroundContext();
+  const codeLine = "await page.locator('ion-grid').click();";
+  const annotated = context.annotateCodeBodyWithNotes([codeLine], [{
+    type: "click",
+    sourceLocatorOptions: [
+      {
+        method: "ByDomPath",
+        data: { csspath: ".md.hydrated.gjs-selected-parent" }
+      },
+      {
+        method: "ByDomPath",
+        data: { csspath: "ion-grid:nth-child(2)" }
+      }
+    ],
+    generatedCodeLines: [codeLine]
+  }]);
+
+  assert.equal(annotated[0].includes(".gjs-selected-parent"), false);
+  assert.equal(annotated[0].includes("ion-grid:nth-child(2)"), true);
+});

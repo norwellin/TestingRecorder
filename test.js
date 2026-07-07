@@ -220,6 +220,7 @@ document.addEventListener("DOMContentLoaded", async function () {
             actionElement.appendChild(createMethodCell(action));
             actionElement.appendChild(createElementCell(action, index));
             actionElement.appendChild(createNoteCell(action, index));
+            actionElement.appendChild(createDeleteCell(action, index));
 
             actionsDiv.appendChild(actionElement);
         });
@@ -261,6 +262,30 @@ document.addEventListener("DOMContentLoaded", async function () {
         });
 
         cell.appendChild(input);
+        return cell;
+    }
+
+    function createDeleteCell(action, actionIndex) {
+        const cell = createCell("", "action-delete");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "action-delete-button";
+        button.textContent = "刪除";
+        button.title = `Delete Action ${actionIndex + 1}`;
+        button.setAttribute("aria-label", `Delete Action ${actionIndex + 1}`);
+        button.addEventListener("click", async () => {
+            if (!window.confirm(`確定要刪除 Action ${actionIndex + 1}？`)) return;
+            button.disabled = true;
+            try {
+                await deleteRecordedAction(actionIndex);
+            } catch (error) {
+                console.warn("[Recorded Actions] Unable to delete action.", error);
+                window.alert(`刪除失敗：${error?.message || "Unable to delete action"}`);
+            } finally {
+                if (button.isConnected) button.disabled = false;
+            }
+        });
+        cell.appendChild(button);
         return cell;
     }
 
@@ -453,13 +478,31 @@ document.addEventListener("DOMContentLoaded", async function () {
         return data.value || "";
     }
 
+    function isBlockedSelectorCandidate(selector) {
+        return /\.gjs-selected-parent(?![a-zA-Z0-9_-])/.test(
+            String(selector || "")
+        );
+    }
+
+    function isBlockedLocatorOption(candidate) {
+        const data = candidate?.data || {};
+        return isBlockedSelectorCandidate(
+            data.selector ||
+            data.locator ||
+            data.csspath ||
+            data.path ||
+            candidate?.currentValue
+        );
+    }
+
     function getLocatorOptions(action, field, value, method, domOptions, chain) {
         const optionsKey = field === "target" ? "targetLocatorOptions" : "sourceLocatorOptions";
         const storedOptions = Array.isArray(action?.[optionsKey]) ? action[optionsKey] : [];
-        if (storedOptions.length) return storedOptions;
+        const filteredStoredOptions = storedOptions.filter(option => !isBlockedLocatorOption(option));
+        if (filteredStoredOptions.length) return filteredStoredOptions;
 
         const fallback = [];
-        if (method) {
+        if (method && !isBlockedSelectorCandidate(value)) {
             fallback.push({
                 id: `${method}-current`,
                 method,
@@ -476,7 +519,11 @@ document.addEventListener("DOMContentLoaded", async function () {
         if (Array.isArray(domOptions)) {
             domOptions.forEach((option, index) => {
                 const path = typeof option === "string" ? option : option?.path;
-                if (!path || (method === "ByDomPath" && path === value)) return;
+                if (
+                    !path ||
+                    isBlockedSelectorCandidate(path) ||
+                    (method === "ByDomPath" && path === value)
+                ) return;
                 fallback.push({
                     id: `ByDomPath-${index}`,
                     method: "ByDomPath",
@@ -684,7 +731,11 @@ document.addEventListener("DOMContentLoaded", async function () {
     function getAllSelectablePaths(action, field = "source") {
         const values = [];
         const add = value => {
-            if (value && !values.includes(value)) values.push(value);
+            if (
+                value &&
+                !isBlockedSelectorCandidate(value) &&
+                !values.includes(value)
+            ) values.push(value);
         };
 
         const locatorOptions = action?.[`${field}LocatorOptions`];
@@ -1428,6 +1479,38 @@ document.addEventListener("DOMContentLoaded", async function () {
             }
         } catch (error) {
             console.warn("[Recorded Actions] Unable to synchronize code note.", error);
+        }
+    }
+
+    async function deleteRecordedAction(actionIndex) {
+        const action = actions[actionIndex];
+        if (!action) throw new Error("Recorded action not found");
+
+        const response = await chrome.runtime.sendMessage({
+            type: "DELETE_RECORDED_ACTION",
+            actionId: action.id,
+            actionIndex
+        });
+        if (!response?.ok) {
+            throw new Error(response?.error || "Recorder rejected the deletion");
+        }
+
+        noteSaveTimers.forEach(timer => clearTimeout(timer));
+        noteSaveTimers.clear();
+        pendingActionsRefresh = null;
+        pendingCodeViewRefresh = null;
+
+        const previousActions = actions;
+        const nextActions = Array.isArray(response.state?.generatedAction)
+            ? response.state.generatedAction
+            : previousActions.filter((_, index) => index !== actionIndex);
+        applyGeneratedActions(nextActions, previousActions);
+
+        if (response.state?.generatedCode) {
+            setCodeView(normalizeCode(response.state.generatedCode));
+        } else {
+            const storage = await chrome.storage.local.get(["generatedCode"]);
+            setCodeView(normalizeCode(storage.generatedCode));
         }
     }
 

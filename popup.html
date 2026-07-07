@@ -203,7 +203,7 @@
       minmax(220px, 1fr) 隞?”?敺?甈隡貊葬嚗?
       霈?domPath?elector??摮摰寞?頛末憿舐內??
     */
-    grid-template-columns: 45px 110px 110px 110px 130px minmax(220px, 1fr) minmax(180px, 0.8fr);
+    grid-template-columns: 45px 110px 110px 110px 130px minmax(220px, 1fr) minmax(180px, 0.8fr) 64px;
 
     gap: 8px;
     padding: 8px 10px;
@@ -233,7 +233,7 @@
 /* 瘥?蝑?action */
 .action-item {
     display: grid;
-    grid-template-columns: 45px 110px 110px 110px 130px minmax(220px, 1fr) minmax(180px, 0.8fr);
+    grid-template-columns: 45px 110px 110px 110px 130px minmax(220px, 1fr) minmax(180px, 0.8fr) 64px;
     gap: 8px;
 
     padding: 8px 10px;
@@ -248,7 +248,7 @@
       憒? popup 撖砍漲銝?嚗??游?蝬剜?銵冽撖砍漲嚗?
       ?剝? #recorded-actions ??overflow-x: auto ?Ｙ?璈怠??脣???
     */
-    min-width: 980px;
+    min-width: 1050px;
 }
 
 .action-note-input {
@@ -266,6 +266,25 @@
 .action-note-input:focus {
     border-color: #2684ff;
     outline: 2px solid rgba(38, 132, 255, 0.18);
+}
+
+.action-delete-button {
+    padding: 5px 8px;
+    border: 1px solid #d14343;
+    border-radius: 4px;
+    background: #fff;
+    color: #b42323;
+    cursor: pointer;
+    font: inherit;
+}
+
+.action-delete-button:hover {
+    background: #fff0f0;
+}
+
+.action-delete-button:disabled {
+    cursor: wait;
+    opacity: 0.55;
 }
 
 .action-item:nth-child(odd) {
@@ -606,6 +625,7 @@
         <div>定位方法</div>
         <div>物件元素</div>
         <div>備註</div>
+        <div>刪除</div>
     </div>
 
     <div id="recorded-actions"></div>
