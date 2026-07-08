@@ -13,12 +13,13 @@ export class DOMParserService {
     this.currentDoc = null; 
 
     this.DIALOG_SELECTORS = ds;
-    this.priSize = 2;
-    this.priority = { 0: "ByPlaywright", 1: "ByDomPath" };
+    this.priSize = 3;
+    this.priority = { 0: "ByGjsToolbarItem", 1: "ByPlaywright", 2: "ByDomPath" };
     this.allAttributeInfo = {
       tagName: null, id: null, className: null, title: null, text: null, placeholder: null, alt: null, ariaLabel: null, role: null
     };
     this.playwrightObj = {
+      ByGjsToolbarItem: { toolbarSelector: null, itemSelector: null, index: null },
       ByPlaywright: { selector: null, selectors: [] },
       ByDomPath: { csspath: null, shadowChain: [], options: [] }
     };
@@ -49,6 +50,17 @@ export class DOMParserService {
     this.cleanInfo();
     this.setInfo(e);
     this.clearPlaywrightObj();
+
+    const gjsToolbarItem = this.getGjsToolbarItemLocator(e);
+    if (gjsToolbarItem) {
+      this.playwrightObj.ByGjsToolbarItem = gjsToolbarItem;
+      return {
+        0: {
+          funName: "ByGjsToolbarItem",
+          obj: this.playwrightObj.ByGjsToolbarItem
+        }
+      };
+    }
 
     const generated = this.generateLocatorCandidatesWithPlaywrightInjected(e, realRoot);
     const result = {};
@@ -94,6 +106,24 @@ export class DOMParserService {
       finderWithoutId: generated.finderWithoutIdSelector
     });
     return resultIndex ? result : null;
+  }
+
+  getGjsToolbarItemLocator(el) {
+    const item = el?.closest?.(".gjs-toolbar-item");
+    if (!item) return null;
+
+    const toolbar = item.closest?.(".gjs-toolbar");
+    if (!toolbar?.querySelectorAll) return null;
+
+    const items = Array.from(toolbar.querySelectorAll(".gjs-toolbar-item"));
+    const index = items.indexOf(item);
+    if (index < 0) return null;
+
+    return {
+      toolbarSelector: ".gjs-toolbar",
+      itemSelector: ".gjs-toolbar-item",
+      index
+    };
   }
 
   getPlaywrightInjectedScript(targetDocument) {
@@ -555,6 +585,7 @@ export class DOMParserService {
 
   clearPlaywrightObj() {
     this.playwrightObj = {
+      ByGjsToolbarItem: { toolbarSelector: null, itemSelector: null, index: null },
       ByPlaywright: { selector: null, selectors: [] },
       ByDomPath: { csspath: null, shadowChain: [], options: [] }
     };

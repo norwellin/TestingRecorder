@@ -180,7 +180,7 @@ export class PlaywrightCodeGenerator {
     let generatedCode = null;
     if (action.type === 'dragANDdrop') {
       generatedCode = this.dragAndDropCodeSetter(action, targetpath, sourcepath, sourceWindow, targetWindow);
-    } else if (action.type === 'click' || action.type === 'checkBox') {
+    } else if (action.type === 'click' || action.type === 'rightClick' || action.type === 'checkBox') {
       generatedCode = this.clickSetter(action, sourcepath, sourceWindow);
     } else if (action.type === 'dbclick') {
       generatedCode = this.doubleClickSetter(action, sourcepath, sourceWindow);
@@ -318,6 +318,20 @@ export class PlaywrightCodeGenerator {
             data: { selector, locator },
             recommended: selector === candidate.obj.selector
           });
+        });
+        continue;
+      }
+
+      if (candidate.funName === "ByGjsToolbarItem") {
+        options.push({
+          id: "ByGjsToolbarItem-0",
+          method: "ByGjsToolbarItem",
+          data: {
+            toolbarSelector: candidate.obj.toolbarSelector || ".gjs-toolbar",
+            itemSelector: candidate.obj.itemSelector || ".gjs-toolbar-item",
+            index: Math.max(0, Math.floor(Number(candidate.obj.index) || 0))
+          },
+          recommended: best?.funName === "ByGjsToolbarItem"
         });
         continue;
       }
@@ -671,6 +685,8 @@ declareContexts(contexts, rootAlias) {
         const locator = obj.locator || this._playwrightSelectorToLocator(obj.selector);
         return locator ? `${winPrefix}.${locator}` : `${winPrefix}.locator("unknown")`;
       }
+      case "ByGjsToolbarItem":
+        return this._buildGjsToolbarItemLocator(winPrefix, obj);
       case "ByRole": {
         const hasName = obj.name !== null && obj.name !== undefined && obj.name !== "";
         const exactOption = obj.exact === false ? "" : ", exact: true";
@@ -713,6 +729,13 @@ declareContexts(contexts, rootAlias) {
 
     locator += `.locator(${this.quoteForCode(obj.csspath)})`;
     return locator;
+  }
+
+  _buildGjsToolbarItemLocator(winPrefix, obj) {
+    const toolbarSelector = obj.toolbarSelector || ".gjs-toolbar";
+    const itemSelector = obj.itemSelector || ".gjs-toolbar-item";
+    const index = Math.max(0, Math.floor(Number(obj.index) || 0));
+    return `${winPrefix}.locator(${this.quoteForCode(toolbarSelector)}).locator(${this.quoteForCode(itemSelector)}).nth(${index})`;
   }
 
   changeSetter(action, sourcepath, selectedValue, sourceWindow) {
@@ -855,6 +878,23 @@ declareContexts(contexts, rootAlias) {
             }
         : null;
 
+    if (this._shouldUseMouseDragForGrapesIframe(action)) {
+      return this._buildGrapesIframeMouseDragCode({
+        action,
+        souLocator,
+        tarLocator,
+        sourceWindow,
+        targetWindow,
+        scrollState,
+        useRatio,
+        useAbsolute,
+        xRatio,
+        yRatio,
+        dropX,
+        dropY
+      });
+    }
+
     if (useRatio || scrollState) {
       const lines = [
         "{",
@@ -923,6 +963,155 @@ declareContexts(contexts, rootAlias) {
     return `await ${souLocator}.dragTo(${tarLocator});`;
   }
 
+  _shouldUseMouseDragForGrapesIframe(action) {
+    return this._isGrapesIframeContext(action?.sourceContext)
+      && this._isGrapesIframeContext(action?.targetContext);
+  }
+
+  _isGrapesIframeContext(context) {
+    if (!context || context.type !== "iframe") return false;
+    const mapContext = context.contextId ? this.contextMap.get(context.contextId) : null;
+    const frameElement = context.frameElement || mapContext?.frameElement || null;
+    const values = [
+      context.frameSelector,
+      context.frameId,
+      context.frameName,
+      context.frameTitle,
+      context.frameSrc,
+      context.resolvedFrameSrc,
+      context.url,
+      frameElement?.id,
+      frameElement?.name,
+      frameElement?.title,
+      frameElement?.getAttribute?.("id"),
+      frameElement?.getAttribute?.("name"),
+      frameElement?.getAttribute?.("title"),
+      frameElement?.getAttribute?.("src"),
+      frameElement?.src
+    ];
+    return values.some(value => /grapes|grapejs|gjs/i.test(String(value || "")));
+  }
+
+  _getMousePageAliasForAction(action, sourceWindow, targetWindow) {
+    const candidates = [
+      action?.targetContext,
+      action?.sourceContext,
+      this.contextMap.get(targetWindow),
+      this.contextMap.get(sourceWindow)
+    ].filter(Boolean);
+
+    for (const candidate of candidates) {
+      let context = candidate;
+      while (context?.type === "iframe") {
+        context = this.contextMap.get(context.parentContextId);
+      }
+      if (context?.type === "page") return this._getBaseContextAlias(context);
+    }
+
+    return this.pageAlias;
+  }
+
+  _appendDropScrollRestoreLines(lines, scrollState) {
+    if (!scrollState) return;
+
+    if (scrollState.scope === "ion-content") {
+      lines.push(
+        "  await dropTarget.evaluate(async (element, state) => {",
+        "    const ionContent = element.matches('ion-content') ? element : element.closest('ion-content');",
+        "    if (!ionContent) return;",
+        "    const scroller = await ionContent.getScrollElement();",
+        "    const x = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
+        "    const y = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
+        "    await ionContent.scrollToPoint(x, y, 0);",
+        `  }, ${JSON.stringify(scrollState)});`
+      );
+      return;
+    }
+
+    if (scrollState.scope === "element") {
+      lines.push(
+        "  await dropTarget.evaluate((element, state) => {",
+        "    let scroller = element;",
+        "    for (let depth = 0; depth < state.ancestorDepth && scroller; depth += 1) scroller = scroller.parentElement;",
+        "    if (!scroller) return;",
+        "    scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
+        "    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
+        `  }, ${JSON.stringify(scrollState)});`
+      );
+      return;
+    }
+
+    lines.push(
+      "  await dropTarget.evaluate((element, state) => {",
+      "    const doc = element.ownerDocument;",
+      "    const scroller = (state.rootTag && doc.querySelector(state.rootTag)) || doc.scrollingElement || doc.documentElement;",
+      "    scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
+      "    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
+      `  }, ${JSON.stringify(scrollState)});`
+    );
+  }
+
+  _buildGrapesIframeMouseDragCode({
+    action,
+    souLocator,
+    tarLocator,
+    sourceWindow,
+    targetWindow,
+    scrollState,
+    useRatio,
+    useAbsolute,
+    xRatio,
+    yRatio,
+    dropX,
+    dropY
+  }) {
+    const mousePageAlias = this._getMousePageAliasForAction(action, sourceWindow, targetWindow);
+    const sourceXRatio = Number.isFinite(Number(action?.sourcePosition?.xRatio))
+      ? Math.max(0, Math.min(1, Number(action.sourcePosition.xRatio)))
+      : 0.5;
+    const sourceYRatio = Number.isFinite(Number(action?.sourcePosition?.yRatio))
+      ? Math.max(0, Math.min(1, Number(action.sourcePosition.yRatio)))
+      : 0.5;
+
+    const lines = [
+      "{",
+      `  const dragSource = ${souLocator};`,
+      `  const dropTarget = ${tarLocator};`
+    ];
+
+    this._appendDropScrollRestoreLines(lines, scrollState);
+
+    lines.push(
+      "  await dragSource.scrollIntoViewIfNeeded();",
+      "  await dropTarget.scrollIntoViewIfNeeded();",
+      "  await dragSource.waitFor({ state: 'visible' });",
+      "  await dropTarget.waitFor({ state: 'visible' });",
+      "  const sourceBox = await dragSource.boundingBox();",
+      "  const targetBox = await dropTarget.boundingBox();",
+      "  if (!sourceBox || !targetBox) throw new Error('Unable to calculate GrapesJS drag coordinates');",
+      `  const sourcePoint = { x: sourceBox.x + sourceBox.width * ${sourceXRatio}, y: sourceBox.y + sourceBox.height * ${sourceYRatio} };`
+    );
+
+    if (useRatio) {
+      lines.push(`  const targetPoint = { x: targetBox.x + targetBox.width * ${xRatio}, y: targetBox.y + targetBox.height * ${yRatio} };`);
+    } else if (useAbsolute) {
+      lines.push(`  const targetPoint = { x: targetBox.x + ${dropX}, y: targetBox.y + ${dropY} };`);
+    } else {
+      lines.push("  const targetPoint = { x: targetBox.x + targetBox.width / 2, y: targetBox.y + targetBox.height / 2 };");
+    }
+
+    lines.push(
+      `  await ${mousePageAlias}.mouse.move(sourcePoint.x, sourcePoint.y);`,
+      `  await ${mousePageAlias}.mouse.down();`,
+      `  await ${mousePageAlias}.mouse.move((sourcePoint.x + targetPoint.x) / 2, (sourcePoint.y + targetPoint.y) / 2, { steps: 10 });`,
+      `  await ${mousePageAlias}.mouse.move(targetPoint.x, targetPoint.y, { steps: 20 });`,
+      `  await ${mousePageAlias}.mouse.up();`,
+      "}"
+    );
+
+    return lines;
+  }
+
   _getActionContextPrefix(action, field, fallbackContextId) {
     const context = field === "target" ? action?.targetContext : action?.sourceContext;
     if (context?.contextId) return this._getContextPrefix(context.contextId);
@@ -940,6 +1129,14 @@ declareContexts(contexts, rootAlias) {
 
     const clickX = Number(action?.clickPosition?.x);
     const clickY = Number(action?.clickPosition?.y);
+    if (action?.type === "rightClick") {
+      const options = [`button: "right"`];
+      if (Number.isFinite(clickX) && Number.isFinite(clickY)) {
+        options.push(`position: { x: ${clickX}, y: ${clickY} }`);
+      }
+      return `await ${locator}.click({ ${options.join(", ")} });`;
+    }
+
     if (action?.type === "click" && Number.isFinite(clickX) && Number.isFinite(clickY)) {
       return `await ${locator}.click({ position: { x: ${clickX}, y: ${clickY} } });`;
     }
@@ -990,6 +1187,9 @@ declareContexts(contexts, rootAlias) {
     let data = "";
     if (funName === "ByPlaywright") {
       data = obj.locator || this._playwrightSelectorToLocator(obj.selector);
+    }
+    else if (funName === "ByGjsToolbarItem") {
+      data = `${obj.toolbarSelector || ".gjs-toolbar"} ${obj.itemSelector || ".gjs-toolbar-item"} nth=${Math.max(0, Math.floor(Number(obj.index) || 0))}`;
     }
     else if (funName === "ByTitle") data = obj.title;
     else if (funName === "ByText") data = obj.text;

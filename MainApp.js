@@ -84,10 +84,15 @@ export class MainApp {
         this.setDropPositionMode(result.dropPositionMode);
 
         // 1. 如果是新視窗，認領自己的專屬變數名稱 (例如 popup_123456)
-        if (window.opener && result.latestPopupAlias) {
-          this.pageAlias = result.latestPopupAlias;
+        //    若 popup 因 select / navigation / reload 重新注入，latestPopupAlias 可能已被清掉；
+        //    這時改從此 popup 自己的 sessionStorage 找回原本身分，避免後續 code 掉回 page。
+        const savedPopupAlias = this.getStoredPopupAlias();
+        const popupAlias = result.latestPopupAlias || savedPopupAlias;
+        if (this.rootWin.opener && popupAlias) {
+          this.pageAlias = popupAlias;
           this.codeGenerator.pageAlias = this.pageAlias;
-          console.log(`🆔 [MainApp] 認領身分成功！我的 Playwright 變數名稱是: ${this.pageAlias}`);
+          this.setStoredPopupAlias(this.pageAlias);
+          console.log(`🆔 [MainApp] ${result.latestPopupAlias ? '認領' : '恢復'}身分成功！我的 Playwright 變數名稱是: ${this.pageAlias}`);
 
           this.safeChromeSendMessage({
             type: "POPUP_VIEWPORT_DETECTED",
@@ -95,8 +100,11 @@ export class MainApp {
             viewport: this.getRecordingViewport()
           });
 
-          // 認領完畢後，把小本本擦掉，以免其他新視窗誤認
-          this.safeChromeStorageRemove('latestPopupAlias');
+          // 只有真的拿到最新 popup 通知時才清掉全域小本本；
+          // sessionStorage 會留在該 popup 內，供 reload 後恢復身分。
+          if (result.latestPopupAlias) {
+            this.safeChromeStorageRemove('latestPopupAlias');
+          }
         }
 
         // 2. 如果整個系統正在錄製中，這個新視窗必須「自動開工」！
@@ -104,6 +112,24 @@ export class MainApp {
           this.autoStart();
         }
       });
+  }
+
+  getStoredPopupAlias() {
+    try {
+      return this.rootWin.sessionStorage?.getItem("myrecorderPopupAlias") || "";
+    } catch (error) {
+      console.warn("[MainApp] 無法讀取 popup sessionStorage alias:", error);
+      return "";
+    }
+  }
+
+  setStoredPopupAlias(alias) {
+    if (!alias || !String(alias).startsWith("popup_")) return;
+    try {
+      this.rootWin.sessionStorage?.setItem("myrecorderPopupAlias", alias);
+    } catch (error) {
+      console.warn("[MainApp] 無法寫入 popup sessionStorage alias:", error);
+    }
   }
   // 🌟 貼上這個新方法：專門處理 Background 傳來的跨世界/原生 Popup 事件
   // ==================== myrecorderRestructure/MainApp1.js ====================
@@ -365,6 +391,7 @@ export class MainApp {
           sourceContextId: action.sourceWindow,
           sourceContext: action.sourceContext || null,
           sourceElementInfo: action.getSourceElement(),
+          sourcePosition: action.sourcePosition || null,
           sourcePath: sourcePath // 預先存好解析結果
         });
         return;
@@ -383,6 +410,7 @@ export class MainApp {
           }
         }
         action.setSourceElement(session.sourceElementInfo);
+        action.sourcePosition = session.sourcePosition || action.sourcePosition || null;
         // 將預先解析好的路徑塞入 action，避免後續重複解析失敗
         action.preParsedSourcePath = session.sourcePath;
         this.attachPendingGrapesDrop(action);

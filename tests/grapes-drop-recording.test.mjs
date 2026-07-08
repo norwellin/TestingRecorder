@@ -250,6 +250,32 @@ test("target locator selection updates a multi-line drag dropTarget declaration"
   );
 });
 
+test("source locator selection updates a GrapesJS mouse-drag dragSource declaration", async () => {
+  const source = await readFile(new URL("../test.js", import.meta.url), "utf8");
+  const start = source.indexOf("    function buildLocatorSuffix");
+  const end = source.indexOf("    async function updateLocatorSelection", start);
+  const helpers = source.slice(start, end);
+  const context = {};
+
+  vm.runInNewContext(
+    `${helpers}
+     globalThis.updatedLine = replaceActionLocatorInCodeLine(
+       { type: "dragANDdrop" },
+       "  const dragSource = page.locator(\\"iframe#gjsiframe\\").contentFrame().locator(\\"#old-source\\");",
+       "source",
+       { method: "ByDomPath", data: { csspath: "#new-source", shadowChain: [] } },
+       "ByDomPath",
+       []
+     );`,
+    context
+  );
+
+  assert.equal(
+    context.updatedLine,
+    '  const dragSource = page.locator("iframe#gjsiframe").contentFrame().locator("#new-source");'
+  );
+});
+
 function createGenerator() {
   const generator = new PlaywrightCodeGenerator({}, {}, "page");
   generator._getBestPath = (path) => path;
@@ -355,6 +381,91 @@ test("drag code converts the recorded target ratios using the current target siz
     lines.findIndex(line => line.includes("dropTarget.scrollIntoViewIfNeeded")) <
     lines.findIndex(line => line.includes("const dropSize"))
   );
+});
+
+test("drag source positions record the pointer ratio inside the source element", () => {
+  const source = {
+    getBoundingClientRect: () => ({ left: 10, top: 20, width: 200, height: 100 })
+  };
+
+  for (const Listener of [OuterEventListener, IframeEventListener]) {
+    const listener = Object.create(Listener.prototype);
+    const position = listener.getDragSourcePosition({ clientX: 60, clientY: 70 }, source);
+
+    assert.deepEqual(position, {
+      x: 50,
+      y: 50,
+      xRatio: 0.25,
+      yRatio: 0.5,
+      sourceWidth: 200,
+      sourceHeight: 100
+    });
+  }
+});
+
+test("GrapesJS iframe drags replay with page mouse coordinates instead of dragTo", () => {
+  const generator = createGenerator();
+  const lines = generator.dragAndDropCodeSetter(
+    {
+      sourceContext: {
+        contextId: "ctx_gjs_source",
+        type: "iframe",
+        parentContextId: "ctx_page_0",
+        frameSelector: "iframe#gjsiframe"
+      },
+      targetContext: {
+        contextId: "ctx_gjs_target",
+        type: "iframe",
+        parentContextId: "ctx_page_0",
+        frameSelector: "iframe#gjsiframe"
+      },
+      sourcePosition: { xRatio: 0.2, yRatio: 0.75 },
+      dropPosition: { xRatio: 0.4, yRatio: 0.6 }
+    },
+    { funName: "ByDomPath", obj: {} },
+    { funName: "ByDomPath", obj: {} },
+    "source-context",
+    "target-context"
+  );
+  const code = lines.join("\n");
+
+  assert.match(code, /const dragSource = sourceLocator;/);
+  assert.match(code, /const dropTarget = targetLocator;/);
+  assert.match(code, /sourceBox\.width \* 0\.2/);
+  assert.match(code, /sourceBox\.height \* 0\.75/);
+  assert.match(code, /targetBox\.width \* 0\.4/);
+  assert.match(code, /targetBox\.height \* 0\.6/);
+  assert.match(code, /await page\.mouse\.down\(\)/);
+  assert.match(code, /await page\.mouse\.up\(\)/);
+  assert.doesNotMatch(code, /\.dragTo\(/);
+});
+
+test("GrapesJS metadata alone does not use mouse replay when source or target is outside a GrapesJS iframe", () => {
+  const generator = createGenerator();
+  const code = generator.dragAndDropCodeSetter(
+    {
+      grapesDropDetected: true,
+      sourceContext: {
+        contextId: "ctx_page_0",
+        type: "page"
+      },
+      targetContext: {
+        contextId: "ctx_gjs_target",
+        type: "iframe",
+        parentContextId: "ctx_page_0",
+        frameSelector: "iframe#gjsiframe"
+      },
+      dropPosition: { xRatio: 0.4, yRatio: 0.6 }
+    },
+    { funName: "ByDomPath", obj: {} },
+    { funName: "ByDomPath", obj: {} },
+    "source-context",
+    "target-context"
+  );
+  const text = Array.isArray(code) ? code.join("\n") : code;
+
+  assert.match(text, /\.dragTo\(/);
+  assert.doesNotMatch(text, /\.mouse\.down\(/);
 });
 
 test("absolute drop mode emits recorded coordinates without measuring target size", () => {
@@ -1132,6 +1243,126 @@ test("ion-select click is reserved for the semantic select action", () => {
   }
 });
 
+test("GrapesJS toolbar clicks record the toolbar item instead of the inner icon", () => {
+  const toolbarItem = {
+    nodeType: 1,
+    tagName: "DIV",
+    className: "gjs-toolbar-item",
+    getAttribute: name => name === "class" ? "gjs-toolbar-item" : null,
+    getRootNode: () => ({})
+  };
+  const iconPath = {
+    nodeType: 1,
+    tagName: "path",
+    getAttribute: () => null,
+    closest: selector => selector.includes(".gjs-toolbar-item") ? toolbarItem : null
+  };
+  const listener = Object.create(OuterEventListener.prototype);
+  const dispatched = [];
+  Object.assign(listener, {
+    isRecording: true,
+    suppressClickUntil: 0,
+    activeIonSelect: null,
+    shouldSuppressSyntheticPageEvent: () => false,
+    getComposedEventTarget: () => iconPath,
+    describeDebugElement: element => element === toolbarItem ? "toolbar" : "path",
+    describeDebugRoot: () => "document",
+    dispatchAction: (...args) => dispatched.push(args)
+  });
+
+  listener.clickHandler({
+    isTrusted: true,
+    target: iconPath,
+    composedPath: () => [iconPath, toolbarItem]
+  });
+
+  assert.equal(dispatched.length, 1);
+  assert.equal(dispatched[0][0], "click");
+  assert.equal(dispatched[0][1], toolbarItem);
+});
+
+test("iframe click target resolution promotes GrapesJS toolbar icons to the toolbar item", () => {
+  const toolbarItem = {
+    nodeType: 1,
+    tagName: "DIV",
+    className: "gjs-toolbar-item"
+  };
+  const iconPath = {
+    nodeType: 1,
+    tagName: "path",
+    closest: selector => selector.includes(".gjs-toolbar-item") ? toolbarItem : null
+  };
+  const listener = Object.create(IframeEventListener.prototype);
+  Object.assign(listener, {
+    getComposedEventTarget: () => iconPath,
+    isFileInput: () => false,
+    isRangeInput: () => false,
+    isCheckboxOrCheckboxLabel: () => false,
+    isRadioOrRadioLabel: () => false
+  });
+
+  assert.equal(listener.getClickTarget({ target: iconPath }), toolbarItem);
+});
+
+test("DOM parser creates an index-based GrapesJS toolbar item locator", () => {
+  const doc = {
+    contains: () => true
+  };
+  const service = new DOMParserService({ mainWindow: { document: doc } });
+  const toolbar = {
+    querySelectorAll: selector => selector === ".gjs-toolbar-item" ? [firstItem, secondItem, thirdItem] : []
+  };
+  const firstItem = {
+    ownerDocument: doc,
+    getRootNode: () => doc,
+    closest: selector => selector === ".gjs-toolbar-item" ? firstItem : selector === ".gjs-toolbar" ? toolbar : null
+  };
+  const secondItem = {
+    ownerDocument: doc,
+    getRootNode: () => doc,
+    closest: selector => selector === ".gjs-toolbar-item" ? secondItem : selector === ".gjs-toolbar" ? toolbar : null
+  };
+  const thirdItem = {
+    ownerDocument: doc,
+    getRootNode: () => doc,
+    closest: selector => selector === ".gjs-toolbar-item" ? thirdItem : selector === ".gjs-toolbar" ? toolbar : null
+  };
+
+  const sourcePath = service.getOpenSourcePath(secondItem);
+
+  assert.equal(sourcePath[0].funName, "ByGjsToolbarItem");
+  assert.deepEqual(sourcePath[0].obj, {
+    toolbarSelector: ".gjs-toolbar",
+    itemSelector: ".gjs-toolbar-item",
+    index: 1
+  });
+});
+
+test("GrapesJS toolbar item locators generate nth-based Playwright code", () => {
+  const generator = new PlaywrightCodeGenerator({ priSize: 3 }, {}, "page");
+  generator.updateUserActionDB = () => {};
+
+  const code = generator.clickSetter(
+    {},
+    {
+      0: {
+        funName: "ByGjsToolbarItem",
+        obj: {
+          toolbarSelector: ".gjs-toolbar",
+          itemSelector: ".gjs-toolbar-item",
+          index: 2
+        }
+      }
+    },
+    "page"
+  );
+
+  assert.equal(
+    code,
+    'await page.locator(".gjs-toolbar").locator(".gjs-toolbar-item").nth(2).click();'
+  );
+});
+
 test("iframe clicks record their position relative to the selected click target", () => {
   const target = {
     nodeType: 1,
@@ -1196,6 +1427,49 @@ test("iframe click code includes the recorded element-relative position", () => 
   assert.equal(
     code,
     'await page.locator("iframe#gjsiframe").contentFrame().locator(\'ion-grid\').nth(1).click({ position: { x: 30, y: 50 } });'
+  );
+});
+
+test("right-click actions generate Playwright right button clicks", () => {
+  const generator = new PlaywrightCodeGenerator({ priSize: 2 }, {}, "page");
+  generator._getBestPath = () => ({ funName: "ByDomPath", obj: {} });
+  generator._getContextPrefix = () => "page";
+  generator._buildLocatorString = prefix => `${prefix}.locator('#menu-target')`;
+  generator.updateUserActionDB = () => {};
+
+  const code = generator.clickSetter(
+    { type: "rightClick" },
+    { funName: "ByDomPath", obj: {} },
+    "page"
+  );
+
+  assert.equal(
+    code,
+    'await page.locator(\'#menu-target\').click({ button: "right" });'
+  );
+});
+
+test("iframe right-click actions preserve element-relative position", () => {
+  const generator = new PlaywrightCodeGenerator({ priSize: 2 }, {}, "page");
+  generator._getBestPath = () => ({ funName: "ByDomPath", obj: {} });
+  generator._getContextPrefix = () =>
+    'page.locator("iframe#gjsiframe").contentFrame()';
+  generator._buildLocatorString = prefix =>
+    `${prefix}.locator('ion-grid').nth(1)`;
+  generator.updateUserActionDB = () => {};
+
+  const code = generator.clickSetter(
+    {
+      type: "rightClick",
+      clickPosition: { x: 30, y: 50 }
+    },
+    { funName: "ByDomPath", obj: {} },
+    "iframe_1"
+  );
+
+  assert.equal(
+    code,
+    'await page.locator("iframe#gjsiframe").contentFrame().locator(\'ion-grid\').nth(1).click({ button: "right", position: { x: 30, y: 50 } });'
   );
 });
 

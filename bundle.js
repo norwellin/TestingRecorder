@@ -500,6 +500,7 @@
           sourceContextId: null,
           sourceContext: null,
           sourceElementInfo: null,
+          sourcePosition: null,
           targetContextId: null,
           targetContext: null,
           targetElementInfo: null
@@ -703,12 +704,13 @@
     }
     // ===== Drag session =====
     // 修改 RecorderStore.js
-    startDragSession({ sourceContextId = null, sourceContext = null, sourceElementInfo = null, sourcePath = null } = {}) {
+    startDragSession({ sourceContextId = null, sourceContext = null, sourceElementInfo = null, sourcePath = null, sourcePosition = null } = {}) {
       this.state.dragSession = {
         isDragging: true,
         sourceContextId,
         sourceContext,
         sourceElementInfo,
+        sourcePosition,
         sourcePath,
         // <=== 必須新增這一行，把解析好的路徑存起來！
         targetContextId: null,
@@ -734,6 +736,7 @@
         sourceContextId: null,
         sourceContext: null,
         sourceElementInfo: null,
+        sourcePosition: null,
         targetContextId: null,
         targetContext: null,
         targetElementInfo: null
@@ -6765,8 +6768,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.mainWindow = contexts?.mainWindow || window;
       this.currentDoc = null;
       this.DIALOG_SELECTORS = DIALOG_SELECTORS;
-      this.priSize = 2;
-      this.priority = { 0: "ByPlaywright", 1: "ByDomPath" };
+      this.priSize = 3;
+      this.priority = { 0: "ByGjsToolbarItem", 1: "ByPlaywright", 2: "ByDomPath" };
       this.allAttributeInfo = {
         tagName: null,
         id: null,
@@ -6779,6 +6782,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         role: null
       };
       this.playwrightObj = {
+        ByGjsToolbarItem: { toolbarSelector: null, itemSelector: null, index: null },
         ByPlaywright: { selector: null, selectors: [] },
         ByDomPath: { csspath: null, shadowChain: [], options: [] }
       };
@@ -6803,6 +6807,16 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.cleanInfo();
       this.setInfo(e);
       this.clearPlaywrightObj();
+      const gjsToolbarItem = this.getGjsToolbarItemLocator(e);
+      if (gjsToolbarItem) {
+        this.playwrightObj.ByGjsToolbarItem = gjsToolbarItem;
+        return {
+          0: {
+            funName: "ByGjsToolbarItem",
+            obj: this.playwrightObj.ByGjsToolbarItem
+          }
+        };
+      }
       const generated = this.generateLocatorCandidatesWithPlaywrightInjected(e, realRoot);
       const result = {};
       let resultIndex = 0;
@@ -6843,6 +6857,20 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         finderWithoutId: generated.finderWithoutIdSelector
       });
       return resultIndex ? result : null;
+    }
+    getGjsToolbarItemLocator(el) {
+      const item = el?.closest?.(".gjs-toolbar-item");
+      if (!item) return null;
+      const toolbar = item.closest?.(".gjs-toolbar");
+      if (!toolbar?.querySelectorAll) return null;
+      const items = Array.from(toolbar.querySelectorAll(".gjs-toolbar-item"));
+      const index = items.indexOf(item);
+      if (index < 0) return null;
+      return {
+        toolbarSelector: ".gjs-toolbar",
+        itemSelector: ".gjs-toolbar-item",
+        index
+      };
     }
     getPlaywrightInjectedScript(targetDocument) {
       if (!targetDocument) {
@@ -7209,6 +7237,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     clearPlaywrightObj() {
       this.playwrightObj = {
+        ByGjsToolbarItem: { toolbarSelector: null, itemSelector: null, index: null },
         ByPlaywright: { selector: null, selectors: [] },
         ByDomPath: { csspath: null, shadowChain: [], options: [] }
       };
@@ -7459,7 +7488,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       let generatedCode = null;
       if (action.type === "dragANDdrop") {
         generatedCode = this.dragAndDropCodeSetter(action, targetpath, sourcepath, sourceWindow, targetWindow);
-      } else if (action.type === "click" || action.type === "checkBox") {
+      } else if (action.type === "click" || action.type === "rightClick" || action.type === "checkBox") {
         generatedCode = this.clickSetter(action, sourcepath, sourceWindow);
       } else if (action.type === "dbclick") {
         generatedCode = this.doubleClickSetter(action, sourcepath, sourceWindow);
@@ -7574,6 +7603,19 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
               data: { selector: selector2, locator },
               recommended: selector2 === candidate.obj.selector
             });
+          });
+          continue;
+        }
+        if (candidate.funName === "ByGjsToolbarItem") {
+          options.push({
+            id: "ByGjsToolbarItem-0",
+            method: "ByGjsToolbarItem",
+            data: {
+              toolbarSelector: candidate.obj.toolbarSelector || ".gjs-toolbar",
+              itemSelector: candidate.obj.itemSelector || ".gjs-toolbar-item",
+              index: Math.max(0, Math.floor(Number(candidate.obj.index) || 0))
+            },
+            recommended: best?.funName === "ByGjsToolbarItem"
           });
           continue;
         }
@@ -7855,6 +7897,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           const locator = obj.locator || this._playwrightSelectorToLocator(obj.selector);
           return locator ? `${winPrefix}.${locator}` : `${winPrefix}.locator("unknown")`;
         }
+        case "ByGjsToolbarItem":
+          return this._buildGjsToolbarItemLocator(winPrefix, obj);
         case "ByRole": {
           const hasName = obj.name !== null && obj.name !== void 0 && obj.name !== "";
           const exactOption = obj.exact === false ? "" : ", exact: true";
@@ -7891,6 +7935,12 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       locator += `.locator(${this.quoteForCode(obj.csspath)})`;
       return locator;
+    }
+    _buildGjsToolbarItemLocator(winPrefix, obj) {
+      const toolbarSelector = obj.toolbarSelector || ".gjs-toolbar";
+      const itemSelector = obj.itemSelector || ".gjs-toolbar-item";
+      const index = Math.max(0, Math.floor(Number(obj.index) || 0));
+      return `${winPrefix}.locator(${this.quoteForCode(toolbarSelector)}).locator(${this.quoteForCode(itemSelector)}).nth(${index})`;
     }
     changeSetter(action, sourcepath, selectedValue, sourceWindow) {
       const best = this._getBestPath(sourcepath);
@@ -7989,6 +8039,22 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
         scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
       } : null;
+      if (this._shouldUseMouseDragForGrapesIframe(action)) {
+        return this._buildGrapesIframeMouseDragCode({
+          action,
+          souLocator,
+          tarLocator,
+          sourceWindow,
+          targetWindow,
+          scrollState,
+          useRatio,
+          useAbsolute,
+          xRatio,
+          yRatio,
+          dropX,
+          dropY
+        });
+      }
       if (useRatio || scrollState) {
         const lines = [
           "{",
@@ -8052,6 +8118,134 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       return `await ${souLocator}.dragTo(${tarLocator});`;
     }
+    _shouldUseMouseDragForGrapesIframe(action) {
+      return this._isGrapesIframeContext(action?.sourceContext) && this._isGrapesIframeContext(action?.targetContext);
+    }
+    _isGrapesIframeContext(context) {
+      if (!context || context.type !== "iframe") return false;
+      const mapContext = context.contextId ? this.contextMap.get(context.contextId) : null;
+      const frameElement = context.frameElement || mapContext?.frameElement || null;
+      const values = [
+        context.frameSelector,
+        context.frameId,
+        context.frameName,
+        context.frameTitle,
+        context.frameSrc,
+        context.resolvedFrameSrc,
+        context.url,
+        frameElement?.id,
+        frameElement?.name,
+        frameElement?.title,
+        frameElement?.getAttribute?.("id"),
+        frameElement?.getAttribute?.("name"),
+        frameElement?.getAttribute?.("title"),
+        frameElement?.getAttribute?.("src"),
+        frameElement?.src
+      ];
+      return values.some((value) => /grapes|grapejs|gjs/i.test(String(value || "")));
+    }
+    _getMousePageAliasForAction(action, sourceWindow, targetWindow) {
+      const candidates = [
+        action?.targetContext,
+        action?.sourceContext,
+        this.contextMap.get(targetWindow),
+        this.contextMap.get(sourceWindow)
+      ].filter(Boolean);
+      for (const candidate of candidates) {
+        let context = candidate;
+        while (context?.type === "iframe") {
+          context = this.contextMap.get(context.parentContextId);
+        }
+        if (context?.type === "page") return this._getBaseContextAlias(context);
+      }
+      return this.pageAlias;
+    }
+    _appendDropScrollRestoreLines(lines, scrollState) {
+      if (!scrollState) return;
+      if (scrollState.scope === "ion-content") {
+        lines.push(
+          "  await dropTarget.evaluate(async (element, state) => {",
+          "    const ionContent = element.matches('ion-content') ? element : element.closest('ion-content');",
+          "    if (!ionContent) return;",
+          "    const scroller = await ionContent.getScrollElement();",
+          "    const x = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
+          "    const y = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
+          "    await ionContent.scrollToPoint(x, y, 0);",
+          `  }, ${JSON.stringify(scrollState)});`
+        );
+        return;
+      }
+      if (scrollState.scope === "element") {
+        lines.push(
+          "  await dropTarget.evaluate((element, state) => {",
+          "    let scroller = element;",
+          "    for (let depth = 0; depth < state.ancestorDepth && scroller; depth += 1) scroller = scroller.parentElement;",
+          "    if (!scroller) return;",
+          "    scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
+          "    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
+          `  }, ${JSON.stringify(scrollState)});`
+        );
+        return;
+      }
+      lines.push(
+        "  await dropTarget.evaluate((element, state) => {",
+        "    const doc = element.ownerDocument;",
+        "    const scroller = (state.rootTag && doc.querySelector(state.rootTag)) || doc.scrollingElement || doc.documentElement;",
+        "    scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
+        "    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
+        `  }, ${JSON.stringify(scrollState)});`
+      );
+    }
+    _buildGrapesIframeMouseDragCode({
+      action,
+      souLocator,
+      tarLocator,
+      sourceWindow,
+      targetWindow,
+      scrollState,
+      useRatio,
+      useAbsolute,
+      xRatio,
+      yRatio,
+      dropX,
+      dropY
+    }) {
+      const mousePageAlias = this._getMousePageAliasForAction(action, sourceWindow, targetWindow);
+      const sourceXRatio = Number.isFinite(Number(action?.sourcePosition?.xRatio)) ? Math.max(0, Math.min(1, Number(action.sourcePosition.xRatio))) : 0.5;
+      const sourceYRatio = Number.isFinite(Number(action?.sourcePosition?.yRatio)) ? Math.max(0, Math.min(1, Number(action.sourcePosition.yRatio))) : 0.5;
+      const lines = [
+        "{",
+        `  const dragSource = ${souLocator};`,
+        `  const dropTarget = ${tarLocator};`
+      ];
+      this._appendDropScrollRestoreLines(lines, scrollState);
+      lines.push(
+        "  await dragSource.scrollIntoViewIfNeeded();",
+        "  await dropTarget.scrollIntoViewIfNeeded();",
+        "  await dragSource.waitFor({ state: 'visible' });",
+        "  await dropTarget.waitFor({ state: 'visible' });",
+        "  const sourceBox = await dragSource.boundingBox();",
+        "  const targetBox = await dropTarget.boundingBox();",
+        "  if (!sourceBox || !targetBox) throw new Error('Unable to calculate GrapesJS drag coordinates');",
+        `  const sourcePoint = { x: sourceBox.x + sourceBox.width * ${sourceXRatio}, y: sourceBox.y + sourceBox.height * ${sourceYRatio} };`
+      );
+      if (useRatio) {
+        lines.push(`  const targetPoint = { x: targetBox.x + targetBox.width * ${xRatio}, y: targetBox.y + targetBox.height * ${yRatio} };`);
+      } else if (useAbsolute) {
+        lines.push(`  const targetPoint = { x: targetBox.x + ${dropX}, y: targetBox.y + ${dropY} };`);
+      } else {
+        lines.push("  const targetPoint = { x: targetBox.x + targetBox.width / 2, y: targetBox.y + targetBox.height / 2 };");
+      }
+      lines.push(
+        `  await ${mousePageAlias}.mouse.move(sourcePoint.x, sourcePoint.y);`,
+        `  await ${mousePageAlias}.mouse.down();`,
+        `  await ${mousePageAlias}.mouse.move((sourcePoint.x + targetPoint.x) / 2, (sourcePoint.y + targetPoint.y) / 2, { steps: 10 });`,
+        `  await ${mousePageAlias}.mouse.move(targetPoint.x, targetPoint.y, { steps: 20 });`,
+        `  await ${mousePageAlias}.mouse.up();`,
+        "}"
+      );
+      return lines;
+    }
     _getActionContextPrefix(action, field, fallbackContextId) {
       const context = field === "target" ? action?.targetContext : action?.sourceContext;
       if (context?.contextId) return this._getContextPrefix(context.contextId);
@@ -8065,6 +8259,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
       const clickX = Number(action?.clickPosition?.x);
       const clickY = Number(action?.clickPosition?.y);
+      if (action?.type === "rightClick") {
+        const options = [`button: "right"`];
+        if (Number.isFinite(clickX) && Number.isFinite(clickY)) {
+          options.push(`position: { x: ${clickX}, y: ${clickY} }`);
+        }
+        return `await ${locator}.click({ ${options.join(", ")} });`;
+      }
       if (action?.type === "click" && Number.isFinite(clickX) && Number.isFinite(clickY)) {
         return `await ${locator}.click({ position: { x: ${clickX}, y: ${clickY} } });`;
       }
@@ -8100,6 +8301,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       let data = "";
       if (funName === "ByPlaywright") {
         data = obj.locator || this._playwrightSelectorToLocator(obj.selector);
+      } else if (funName === "ByGjsToolbarItem") {
+        data = `${obj.toolbarSelector || ".gjs-toolbar"} ${obj.itemSelector || ".gjs-toolbar-item"} nth=${Math.max(0, Math.floor(Number(obj.index) || 0))}`;
       } else if (funName === "ByTitle") data = obj.title;
       else if (funName === "ByText") data = obj.text;
       else if (funName === "ByDomPath") data = obj.csspath;
@@ -8441,6 +8644,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         return;
       }
       this.mainDocument.addEventListener("click", this.clickHandler.bind(this), true);
+      this.mainDocument.addEventListener("contextmenu", this.contextMenuHandler.bind(this), true);
       this.mainDocument.addEventListener("mousedown", this.mousedownHandler.bind(this), true);
       this.mainDocument.addEventListener("mousemove", this.mousemoveHandler.bind(this), true);
       this.mainDocument.addEventListener("mouseout", this.mouseoutHandler.bind(this), true);
@@ -8517,6 +8721,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
       if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
       if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
+      if (extraData.sourcePosition) action.sourcePosition = extraData.sourcePosition;
       if (extraData.isDragStart) action.isDragStart = true;
       if (extraData.isDrop) action.isDrop = true;
       if (typeof this.onActionRecorded === "function") {
@@ -8877,7 +9082,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (this.isRangeInput(target)) return;
       if (target.getAttribute("draggable") === "true") {
         this.hideHoverPreview();
-        this.dispatchAction("dragANDdrop", target, null, { isDragStart: true });
+        this.dispatchAction("dragANDdrop", target, null, {
+          isDragStart: true,
+          sourcePosition: this.getDragSourcePosition(e, target)
+        });
       }
     }
     mousedownHandler(e) {
@@ -8908,8 +9116,28 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         this.isDragging = true;
         this.dragStepFlag = 2;
         this.mouseDownFlag = false;
-        this.dispatchAction("dragANDdrop", this.dragSource, null, { isDragStart: true });
+        this.dispatchAction("dragANDdrop", this.dragSource, null, {
+          isDragStart: true,
+          sourcePosition: this.getDragSourcePosition(e, this.dragSource)
+        });
       }
+    }
+    getDragSourcePosition(event, sourceElement) {
+      if (!event || !sourceElement?.getBoundingClientRect) return null;
+      const rect = sourceElement.getBoundingClientRect();
+      if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+      const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+      const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+      return {
+        x: Math.round(x * 100) / 100,
+        y: Math.round(y * 100) / 100,
+        xRatio: Math.round(x / rect.width * 1e4) / 1e4,
+        yRatio: Math.round(y / rect.height * 1e4) / 1e4,
+        sourceWidth: Math.round(rect.width * 100) / 100,
+        sourceHeight: Math.round(rect.height * 100) / 100
+      };
     }
     previewHoveredElement(element) {
       if (!element || element === this.lastPreviewTarget) return;
@@ -8988,6 +9216,9 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       if (funName === "ByText") return `getByText(${quote(obj.text)}, { exact: true })`;
       if (funName === "ByTitle") return `getByTitle(${quote(obj.title)}, { exact: true })`;
+      if (funName === "ByGjsToolbarItem") {
+        return `locator(${quote(obj.toolbarSelector || ".gjs-toolbar")}).locator(${quote(obj.itemSelector || ".gjs-toolbar-item")}).nth(${Math.max(0, Math.floor(Number(obj.index) || 0))})`;
+      }
       if (funName === "ByDomPath") {
         const chain = Array.isArray(obj.shadowChain) ? obj.shadowChain : [];
         return [
@@ -9039,7 +9270,15 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         ".gjs-toolbar-item, [data-command], [data-cmd]"
       );
       if (toolbarItem) {
-        console.log("GJS toolbar clicked:", toolbarItem);
+        this.currentHoveredElement = toolbarItem;
+        console.log("[RecorderDebug][Outer clickHandler] dispatch GJS toolbar click target", {
+          rawTarget: this.describeDebugElement(e.target),
+          composedTarget: this.describeDebugElement(target),
+          toolbarItem: this.describeDebugElement(toolbarItem),
+          toolbarRoot: this.describeDebugRoot(toolbarItem?.getRootNode?.())
+        });
+        this.dispatchAction("click", this.currentHoveredElement);
+        return;
       }
       if (this.isFileInput(target)) return;
       if (this.isRangeInput(target)) return;
@@ -9062,6 +9301,22 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         clickableRoot: this.describeDebugRoot(clickable?.getRootNode?.())
       });
       this.dispatchAction("click", this.currentHoveredElement);
+    }
+    contextMenuHandler(e) {
+      if (!this.isRecording || !e.isTrusted) return;
+      if (this.shouldSuppressSyntheticPageEvent()) return;
+      const target = this.getComposedEventTarget(e);
+      if (!target) return;
+      const toolbarItem = target?.closest?.(
+        ".gjs-toolbar-item, [data-command], [data-cmd]"
+      );
+      if (toolbarItem) {
+        this.currentHoveredElement = toolbarItem;
+      } else {
+        const clickableSelector = this.getClickableSelector();
+        this.currentHoveredElement = target.closest?.(clickableSelector) || target;
+      }
+      this.dispatchAction("rightClick", this.currentHoveredElement);
     }
     isActiveIonSelectOverlayInteraction(e) {
       if (!this.activeIonSelect) return false;
@@ -9432,6 +9687,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         return;
       }
       this.iframeDocument.addEventListener("click", this.clickHandler.bind(this), true);
+      this.iframeDocument.addEventListener("contextmenu", this.contextMenuHandler.bind(this), true);
       this.iframeDocument.addEventListener("mousedown", this.mousedownHandler.bind(this), true);
       this.iframeDocument.addEventListener("mousemove", this.mousemoveHandler.bind(this), true);
       this.iframeDocument.addEventListener("mouseout", this.mouseoutHandler.bind(this), true);
@@ -9508,6 +9764,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
       if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
       if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
+      if (extraData.sourcePosition) action.sourcePosition = extraData.sourcePosition;
       if (extraData.clickPosition) action.clickPosition = extraData.clickPosition;
       if (extraData.isDragStart) action.isDragStart = true;
       if (extraData.isDrop) action.isDrop = true;
@@ -9872,7 +10129,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (this.isRangeInput(target)) return;
       if (target.getAttribute("draggable") === "true") {
         this.hideHoverPreview();
-        this.dispatchAction("dragANDdrop", target, null, { isDragStart: true });
+        this.dispatchAction("dragANDdrop", target, null, {
+          isDragStart: true,
+          sourcePosition: this.getDragSourcePosition(e, target)
+        });
       }
     }
     mousedownHandler(e) {
@@ -9903,8 +10163,28 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         this.isDragging = true;
         this.dragStepFlag = 2;
         this.mouseDownFlag = false;
-        this.dispatchAction("dragANDdrop", this.dragSource, null, { isDragStart: true });
+        this.dispatchAction("dragANDdrop", this.dragSource, null, {
+          isDragStart: true,
+          sourcePosition: this.getDragSourcePosition(e, this.dragSource)
+        });
       }
+    }
+    getDragSourcePosition(event, sourceElement) {
+      if (!event || !sourceElement?.getBoundingClientRect) return null;
+      const rect = sourceElement.getBoundingClientRect();
+      if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+      const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+      const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+      return {
+        x: Math.round(x * 100) / 100,
+        y: Math.round(y * 100) / 100,
+        xRatio: Math.round(x / rect.width * 1e4) / 1e4,
+        yRatio: Math.round(y / rect.height * 1e4) / 1e4,
+        sourceWidth: Math.round(rect.width * 100) / 100,
+        sourceHeight: Math.round(rect.height * 100) / 100
+      };
     }
     previewHoveredElement(element) {
       if (!element || element === this.lastPreviewTarget) return;
@@ -9983,6 +10263,9 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       if (funName === "ByText") return `getByText(${quote(obj.text)}, { exact: true })`;
       if (funName === "ByTitle") return `getByTitle(${quote(obj.title)}, { exact: true })`;
+      if (funName === "ByGjsToolbarItem") {
+        return `locator(${quote(obj.toolbarSelector || ".gjs-toolbar")}).locator(${quote(obj.itemSelector || ".gjs-toolbar-item")}).nth(${Math.max(0, Math.floor(Number(obj.index) || 0))})`;
+      }
       if (funName === "ByDomPath") return `locator(${quote(obj.csspath)})`;
       return funName;
     }
@@ -10036,6 +10319,16 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         clickPosition: this.getClickPosition(e, this.currentHoveredElement)
       });
     }
+    contextMenuHandler(e) {
+      if (!this.isRecording || !e.isTrusted) return;
+      if (this.shouldSuppressSyntheticPageEvent()) return;
+      const target = this.getClickTarget(e);
+      if (!target) return;
+      this.currentHoveredElement = target;
+      this.dispatchAction("rightClick", this.currentHoveredElement, null, {
+        clickPosition: this.getClickPosition(e, this.currentHoveredElement)
+      });
+    }
     isActiveIonSelectOverlayInteraction(e) {
       if (!this.activeIonSelect) return false;
       const interactionAt = Number(this.pendingIonSelectInteractions.get(this.activeIonSelect));
@@ -10058,6 +10351,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (this.isCheckboxOrCheckboxLabel(target)) return null;
       if (target.tagName === "LABEL" && !this.isRadioOrRadioLabel(target)) return null;
       if (target.tagName === "SELECT") return null;
+      const toolbarItem = target.closest?.(".gjs-toolbar-item, [data-command], [data-cmd]");
+      if (toolbarItem) return toolbarItem;
       const clickableSelector = this.getClickableSelector();
       if (target.tagName === "INPUT") {
         const label = target.parentElement?.querySelector(`label[for="${target.id}"]`);
@@ -10496,21 +10791,42 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       });
       this.safeChromeStorageGet(["latestPopupAlias", "recorderStatus", "dropPositionMode"], (result) => {
         this.setDropPositionMode(result.dropPositionMode);
-        if (window.opener && result.latestPopupAlias) {
-          this.pageAlias = result.latestPopupAlias;
+        const savedPopupAlias = this.getStoredPopupAlias();
+        const popupAlias = result.latestPopupAlias || savedPopupAlias;
+        if (this.rootWin.opener && popupAlias) {
+          this.pageAlias = popupAlias;
           this.codeGenerator.pageAlias = this.pageAlias;
-          console.log(`\u{1F194} [MainApp] \u8A8D\u9818\u8EAB\u5206\u6210\u529F\uFF01\u6211\u7684 Playwright \u8B8A\u6578\u540D\u7A31\u662F: ${this.pageAlias}`);
+          this.setStoredPopupAlias(this.pageAlias);
+          console.log(`\u{1F194} [MainApp] ${result.latestPopupAlias ? "\u8A8D\u9818" : "\u6062\u5FA9"}\u8EAB\u5206\u6210\u529F\uFF01\u6211\u7684 Playwright \u8B8A\u6578\u540D\u7A31\u662F: ${this.pageAlias}`);
           this.safeChromeSendMessage({
             type: "POPUP_VIEWPORT_DETECTED",
             popupId: this.pageAlias,
             viewport: this.getRecordingViewport()
           });
-          this.safeChromeStorageRemove("latestPopupAlias");
+          if (result.latestPopupAlias) {
+            this.safeChromeStorageRemove("latestPopupAlias");
+          }
         }
         if (result.recorderStatus === "recording") {
           this.autoStart();
         }
       });
+    }
+    getStoredPopupAlias() {
+      try {
+        return this.rootWin.sessionStorage?.getItem("myrecorderPopupAlias") || "";
+      } catch (error) {
+        console.warn("[MainApp] \u7121\u6CD5\u8B80\u53D6 popup sessionStorage alias:", error);
+        return "";
+      }
+    }
+    setStoredPopupAlias(alias) {
+      if (!alias || !String(alias).startsWith("popup_")) return;
+      try {
+        this.rootWin.sessionStorage?.setItem("myrecorderPopupAlias", alias);
+      } catch (error) {
+        console.warn("[MainApp] \u7121\u6CD5\u5BEB\u5165 popup sessionStorage alias:", error);
+      }
     }
     // 🌟 貼上這個新方法：專門處理 Background 傳來的跨世界/原生 Popup 事件
     // ==================== myrecorderRestructure/MainApp1.js ====================
@@ -10732,6 +11048,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
             sourceContextId: action.sourceWindow,
             sourceContext: action.sourceContext || null,
             sourceElementInfo: action.getSourceElement(),
+            sourcePosition: action.sourcePosition || null,
             sourcePath
             // 預先存好解析結果
           });
@@ -10749,6 +11066,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
             }
           }
           action.setSourceElement(session.sourceElementInfo);
+          action.sourcePosition = session.sourcePosition || action.sourcePosition || null;
           action.preParsedSourcePath = session.sourcePath;
           this.attachPendingGrapesDrop(action);
           this.store.endDragSession();

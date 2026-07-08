@@ -462,6 +462,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 
     function getLocatorOptionValue(method, data = {}) {
         if (method === "ByPlaywright") return data.locator || data.selector || data.value || "";
+        if (method === "ByGjsToolbarItem") {
+            const toolbar = data.toolbarSelector || ".gjs-toolbar";
+            const item = data.itemSelector || ".gjs-toolbar-item";
+            const index = Number.isInteger(Number(data.index)) ? Number(data.index) : 0;
+            return `${toolbar} ${item} nth=${index}`;
+        }
         if (method === "ByRole") {
             const parts = [`role: ${data.role || ""}`];
             if (data.name !== null && data.name !== undefined && data.name !== "") {
@@ -543,6 +549,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 
         if (candidate.method === "ByPlaywright") {
             return `Playwright${recommended} — ${data.locator || data.selector || candidate.currentValue || ""}`;
+        }
+        if (candidate.method === "ByGjsToolbarItem") {
+            const toolbar = data.toolbarSelector || ".gjs-toolbar";
+            const item = data.itemSelector || ".gjs-toolbar-item";
+            const index = Number.isInteger(Number(data.index)) ? Number(data.index) : 0;
+            return `GJS Toolbar${recommended} — ${toolbar} > ${item}.nth(${index})`;
         }
         if (candidate.method === "ByRole") {
             const name = data.name ? ` "${data.name}"` : "";
@@ -715,6 +727,12 @@ document.addEventListener("DOMContentLoaded", async function () {
         const data = option?.data || {};
 
         if (method === "ByPlaywright") return data.locator || data.selector || "";
+        if (method === "ByGjsToolbarItem") {
+            const toolbar = data.toolbarSelector || ".gjs-toolbar";
+            const item = data.itemSelector || ".gjs-toolbar-item";
+            const index = Math.max(0, Math.floor(Number(data.index) || 0));
+            return `locator(${JSON.stringify(toolbar)}).locator(${JSON.stringify(item)}).nth(${index})`;
+        }
         if (method === "ByDomPath") {
             return formatDomPathCandidate(data.csspath || data.path, data.shadowChain || []);
         }
@@ -974,7 +992,12 @@ document.addEventListener("DOMContentLoaded", async function () {
         const text = String(line || "");
         if (!action) return false;
         if (action.type === "navigate") return text.includes(".goto(");
-        if (action.type === "dragANDdrop") return text.includes(".dragTo(");
+        if (action.type === "dragANDdrop") {
+            return text.includes(".dragTo(")
+                || /^\s*const\s+(?:dragSource|dropTarget)\s*=/.test(text)
+                || text.includes(".mouse.down(")
+                || text.includes(".mouse.up(");
+        }
         if (action.type === "input") return text.includes(".fill(");
         if (action.type === "change") return text.includes(".selectOption(");
         if (action.type === "ionSelect") {
@@ -984,7 +1007,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         if (action.type === "dbclick") return text.includes(".dblclick(");
         if (action.type === "keyboard") return text.includes(".press(") || text.includes(".keyboard.press(");
         if (action.type === "popup") return text.includes("waitForEvent('popup')");
-        if (action.type === "click" || action.type === "checkBox") return text.includes(".click(");
+        if (action.type === "click" || action.type === "rightClick" || action.type === "checkBox") return text.includes(".click(");
         return text.trim().startsWith("await ");
     }
 
@@ -1009,6 +1032,10 @@ document.addEventListener("DOMContentLoaded", async function () {
         if (method === "ByPlaceholder") return text.includes(".getByPlaceholder(");
         if (method === "ByAltText") return text.includes(".getByAltText(");
         if (method === "ByLabel") return text.includes(".getByLabel(");
+        if (method === "ByGjsToolbarItem") {
+            return text.includes(".locator(\".gjs-toolbar\")")
+                || text.includes(".locator('.gjs-toolbar')");
+        }
         if (method === "ByDomPath") {
             return text.includes(".locator(")
                 && !/\.getBy(?:Role|Title|Text|Placeholder|AltText|Label)\(/.test(text);
@@ -1129,6 +1156,12 @@ document.addEventListener("DOMContentLoaded", async function () {
             const locator = data.locator || "";
             return locator ? `.${locator.replace(/^\./, "")}` : "";
         }
+        if (candidate?.method === "ByGjsToolbarItem") {
+            const toolbar = data.toolbarSelector || ".gjs-toolbar";
+            const item = data.itemSelector || ".gjs-toolbar-item";
+            const index = Math.max(0, Math.floor(Number(data.index) || 0));
+            return `.locator(${JSON.stringify(toolbar)}).locator(${JSON.stringify(item)}).nth(${index})`;
+        }
         if (candidate?.method === "ByRole") {
             const hasName = data.name !== null && data.name !== undefined && data.name !== "";
             const exact = data.exact === false ? "" : ", exact: true";
@@ -1164,6 +1197,13 @@ document.addEventListener("DOMContentLoaded", async function () {
             const match = /\.(?:getBy[A-Z]\w*|locator)\(/g;
             match.lastIndex = searchFrom;
             return match.exec(expression)?.index ?? -1;
+        }
+
+        if (method === "ByGjsToolbarItem") {
+            const marker = ".locator(\".gjs-toolbar\")";
+            const doubleIndex = expression.lastIndexOf(marker);
+            if (doubleIndex >= 0) return doubleIndex;
+            return expression.lastIndexOf(".locator('.gjs-toolbar')");
         }
 
         const methodNames = {
@@ -1238,8 +1278,9 @@ document.addEventListener("DOMContentLoaded", async function () {
     function replaceActionLocatorInCodeLine(action, line, field, candidate, oldMethod, oldChain) {
         const text = String(line || "");
 
-        if (action?.type === "dragANDdrop" && field === "target") {
-            const declaration = text.match(/^(\s*const\s+dropTarget\s*=\s*)(.*?)(;\s*)$/);
+        if (action?.type === "dragANDdrop") {
+            const declarationName = field === "target" ? "dropTarget" : "dragSource";
+            const declaration = text.match(new RegExp(`^(\\s*const\\s+${declarationName}\\s*=\\s*)(.*?)(;\\s*)$`));
             if (declaration) {
                 const nextExpression = replaceLocatorExpression(
                     declaration[2],
@@ -1303,11 +1344,10 @@ document.addEventListener("DOMContentLoaded", async function () {
         const codeIndex = findCodeBodyIndexForAction(codeBody, actionIndex, oldValue, field);
         const actionLines = getActionGeneratedLines(action);
         const nextLines = actionLines.map(line => {
-            const isDropTargetDeclaration =
+            const isDragLocatorDeclaration =
                 action.type === "dragANDdrop" &&
-                field === "target" &&
-                /^\s*const\s+dropTarget\s*=/.test(String(line || ""));
-            return matchesActionCodeLine(action, line) || isDropTargetDeclaration
+                new RegExp(`^\\s*const\\s+${field === "target" ? "dropTarget" : "dragSource"}\\s*=`).test(String(line || ""));
+            return matchesActionCodeLine(action, line) || isDragLocatorDeclaration
                 ? replaceActionLocatorInCodeLine(action, line, field, candidate, oldMethod, oldChain)
                 : line;
         });

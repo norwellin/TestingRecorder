@@ -52,6 +52,7 @@ export class OuterEventListener {
     }
     
     this.mainDocument.addEventListener("click", this.clickHandler.bind(this), true);
+    this.mainDocument.addEventListener("contextmenu", this.contextMenuHandler.bind(this), true);
     this.mainDocument.addEventListener("mousedown", this.mousedownHandler.bind(this), true);
     this.mainDocument.addEventListener("mousemove", this.mousemoveHandler.bind(this), true);
     this.mainDocument.addEventListener("mouseout", this.mouseoutHandler.bind(this), true);
@@ -137,6 +138,7 @@ export class OuterEventListener {
     if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
     if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
     if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
+    if (extraData.sourcePosition) action.sourcePosition = extraData.sourcePosition;
 
     // 【請補上這兩行】將拖拉標記附加到 action 上，否則 MainApp1 會認不出來！
     if (extraData.isDragStart) action.isDragStart = true;
@@ -569,7 +571,10 @@ export class OuterEventListener {
     if (target.getAttribute("draggable") === "true") {
       this.hideHoverPreview();
       // 僅向上通報拖拉起始事件，廣播工作交由 MainApp 負責
-      this.dispatchAction("dragANDdrop", target, null, { isDragStart: true });
+      this.dispatchAction("dragANDdrop", target, null, {
+        isDragStart: true,
+        sourcePosition: this.getDragSourcePosition(e, target)
+      });
     }
   }
 
@@ -606,8 +611,30 @@ export class OuterEventListener {
       this.dragStepFlag = 2;
       this.mouseDownFlag = false;
 
-      this.dispatchAction("dragANDdrop", this.dragSource, null, { isDragStart: true });
+      this.dispatchAction("dragANDdrop", this.dragSource, null, {
+        isDragStart: true,
+        sourcePosition: this.getDragSourcePosition(e, this.dragSource)
+      });
     }
+  }
+
+  getDragSourcePosition(event, sourceElement) {
+    if (!event || !sourceElement?.getBoundingClientRect) return null;
+    const rect = sourceElement.getBoundingClientRect();
+    if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+
+    const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+    const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+    return {
+      x: Math.round(x * 100) / 100,
+      y: Math.round(y * 100) / 100,
+      xRatio: Math.round((x / rect.width) * 10000) / 10000,
+      yRatio: Math.round((y / rect.height) * 10000) / 10000,
+      sourceWidth: Math.round(rect.width * 100) / 100,
+      sourceHeight: Math.round(rect.height * 100) / 100
+    };
   }
 
   previewHoveredElement(element) {
@@ -700,6 +727,9 @@ export class OuterEventListener {
 
     if (funName === "ByText") return `getByText(${quote(obj.text)}, { exact: true })`;
     if (funName === "ByTitle") return `getByTitle(${quote(obj.title)}, { exact: true })`;
+    if (funName === "ByGjsToolbarItem") {
+      return `locator(${quote(obj.toolbarSelector || ".gjs-toolbar")}).locator(${quote(obj.itemSelector || ".gjs-toolbar-item")}).nth(${Math.max(0, Math.floor(Number(obj.index) || 0))})`;
+    }
     if (funName === "ByDomPath") {
       const chain = Array.isArray(obj.shadowChain) ? obj.shadowChain : [];
       return [
@@ -757,7 +787,15 @@ export class OuterEventListener {
       ".gjs-toolbar-item, [data-command], [data-cmd]"
     );
     if (toolbarItem) {
-      console.log("GJS toolbar clicked:", toolbarItem);
+      this.currentHoveredElement = toolbarItem;
+      console.log("[RecorderDebug][Outer clickHandler] dispatch GJS toolbar click target", {
+        rawTarget: this.describeDebugElement(e.target),
+        composedTarget: this.describeDebugElement(target),
+        toolbarItem: this.describeDebugElement(toolbarItem),
+        toolbarRoot: this.describeDebugRoot(toolbarItem?.getRootNode?.())
+      });
+      this.dispatchAction("click", this.currentHoveredElement);
+      return;
     }
     if (this.isFileInput(target)) return;
     if (this.isRangeInput(target)) return;
@@ -782,6 +820,25 @@ export class OuterEventListener {
       clickableRoot: this.describeDebugRoot(clickable?.getRootNode?.())
     });
     this.dispatchAction("click", this.currentHoveredElement);
+  }
+
+  contextMenuHandler(e) {
+    if (!this.isRecording || !e.isTrusted) return;
+    if (this.shouldSuppressSyntheticPageEvent()) return;
+    const target = this.getComposedEventTarget(e);
+    if (!target) return;
+
+    const toolbarItem = target?.closest?.(
+      ".gjs-toolbar-item, [data-command], [data-cmd]"
+    );
+    if (toolbarItem) {
+      this.currentHoveredElement = toolbarItem;
+    } else {
+      const clickableSelector = this.getClickableSelector();
+      this.currentHoveredElement = target.closest?.(clickableSelector) || target;
+    }
+
+    this.dispatchAction("rightClick", this.currentHoveredElement);
   }
 
   isActiveIonSelectOverlayInteraction(e) {

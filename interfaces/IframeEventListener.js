@@ -47,6 +47,7 @@ export class IframeEventListener {
     }
 
     this.iframeDocument.addEventListener("click", this.clickHandler.bind(this), true);
+    this.iframeDocument.addEventListener("contextmenu", this.contextMenuHandler.bind(this), true);
     this.iframeDocument.addEventListener("mousedown", this.mousedownHandler.bind(this), true);
     this.iframeDocument.addEventListener("mousemove", this.mousemoveHandler.bind(this), true);
     this.iframeDocument.addEventListener("mouseout", this.mouseoutHandler.bind(this), true);
@@ -128,6 +129,7 @@ export class IframeEventListener {
     if (extraData.preParsedSourcePath) action.preParsedSourcePath = extraData.preParsedSourcePath;
     if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
     if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
+    if (extraData.sourcePosition) action.sourcePosition = extraData.sourcePosition;
     if (extraData.clickPosition) action.clickPosition = extraData.clickPosition;
 
     if (extraData.isDragStart) action.isDragStart = true;
@@ -560,7 +562,10 @@ export class IframeEventListener {
 
     if (target.getAttribute("draggable") === "true") {
       this.hideHoverPreview();
-      this.dispatchAction("dragANDdrop", target, null, { isDragStart: true });
+      this.dispatchAction("dragANDdrop", target, null, {
+        isDragStart: true,
+        sourcePosition: this.getDragSourcePosition(e, target)
+      });
     }
   }
 
@@ -597,8 +602,30 @@ export class IframeEventListener {
       this.isDragging = true;
       this.dragStepFlag = 2;
       this.mouseDownFlag = false;
-      this.dispatchAction("dragANDdrop", this.dragSource, null, { isDragStart: true });
+      this.dispatchAction("dragANDdrop", this.dragSource, null, {
+        isDragStart: true,
+        sourcePosition: this.getDragSourcePosition(e, this.dragSource)
+      });
     }
+  }
+
+  getDragSourcePosition(event, sourceElement) {
+    if (!event || !sourceElement?.getBoundingClientRect) return null;
+    const rect = sourceElement.getBoundingClientRect();
+    if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+
+    const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+    const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+    return {
+      x: Math.round(x * 100) / 100,
+      y: Math.round(y * 100) / 100,
+      xRatio: Math.round((x / rect.width) * 10000) / 10000,
+      yRatio: Math.round((y / rect.height) * 10000) / 10000,
+      sourceWidth: Math.round(rect.width * 100) / 100,
+      sourceHeight: Math.round(rect.height * 100) / 100
+    };
   }
 
   previewHoveredElement(element) {
@@ -691,6 +718,9 @@ export class IframeEventListener {
 
     if (funName === "ByText") return `getByText(${quote(obj.text)}, { exact: true })`;
     if (funName === "ByTitle") return `getByTitle(${quote(obj.title)}, { exact: true })`;
+    if (funName === "ByGjsToolbarItem") {
+      return `locator(${quote(obj.toolbarSelector || ".gjs-toolbar")}).locator(${quote(obj.itemSelector || ".gjs-toolbar-item")}).nth(${Math.max(0, Math.floor(Number(obj.index) || 0))})`;
+    }
     if (funName === "ByDomPath") return `locator(${quote(obj.csspath)})`;
 
     return funName;
@@ -752,6 +782,17 @@ export class IframeEventListener {
     });
   }
 
+  contextMenuHandler(e) {
+    if (!this.isRecording || !e.isTrusted) return;
+    if (this.shouldSuppressSyntheticPageEvent()) return;
+    const target = this.getClickTarget(e);
+    if (!target) return;
+    this.currentHoveredElement = target;
+    this.dispatchAction("rightClick", this.currentHoveredElement, null, {
+      clickPosition: this.getClickPosition(e, this.currentHoveredElement)
+    });
+  }
+
   isActiveIonSelectOverlayInteraction(e) {
     if (!this.activeIonSelect) return false;
     const interactionAt = Number(this.pendingIonSelectInteractions.get(this.activeIonSelect));
@@ -775,6 +816,9 @@ export class IframeEventListener {
     if (this.isCheckboxOrCheckboxLabel(target)) return null;
     if (target.tagName === "LABEL" && !this.isRadioOrRadioLabel(target)) return null;
     if (target.tagName === "SELECT") return null;
+
+    const toolbarItem = target.closest?.(".gjs-toolbar-item, [data-command], [data-cmd]");
+    if (toolbarItem) return toolbarItem;
 
     const clickableSelector = this.getClickableSelector();
     if (target.tagName === "INPUT") {
