@@ -226,6 +226,8 @@ export class PlaywrightCodeGenerator {
       if (!item) return;
       summary[key] = {
         funName: item.funName,
+        selector: item.obj?.selector || null,
+        locator: item.obj?.locator || null,
         csspath: item.obj?.csspath || null,
         shadowChain: item.obj?.shadowChain || [],
         options: Array.isArray(item.obj?.options)
@@ -315,7 +317,11 @@ export class PlaywrightCodeGenerator {
           options.push({
             id: `ByPlaywright-${selectorIndex}`,
             method: "ByPlaywright",
-            data: { selector, locator },
+            data: {
+              selector,
+              locator,
+              shadowChain: candidate.obj.shadowChain || []
+            },
             recommended: selector === candidate.obj.selector
           });
         });
@@ -683,7 +689,9 @@ declareContexts(contexts, rootAlias) {
     switch (funName) {
       case "ByPlaywright": {
         const locator = obj.locator || this._playwrightSelectorToLocator(obj.selector);
-        return locator ? `${winPrefix}.${locator}` : `${winPrefix}.locator("unknown")`;
+        return locator
+          ? `${this._buildShadowHostLocatorPrefix(winPrefix, obj)}.${locator}`
+          : `${winPrefix}.locator("unknown")`;
       }
       case "ByGjsToolbarItem":
         return this._buildGjsToolbarItemLocator(winPrefix, obj);
@@ -720,12 +728,16 @@ declareContexts(contexts, rootAlias) {
     }
   }
 
-  _buildDomPathLocator(winPrefix, obj) {
+  _buildShadowHostLocatorPrefix(winPrefix, obj = {}) {
     let locator = winPrefix;
-
     for (const step of obj.shadowChain || []) {
       locator += `.locator(${this.quoteForCode(step.hostSelector)})`;
     }
+    return locator;
+  }
+
+  _buildDomPathLocator(winPrefix, obj) {
+    let locator = this._buildShadowHostLocatorPrefix(winPrefix, obj);
 
     locator += `.locator(${this.quoteForCode(obj.csspath)})`;
     return locator;
@@ -1209,8 +1221,10 @@ declareContexts(contexts, rootAlias) {
       action.setTargetMethod(funName);
       action.setTargetData(data);
       action.targetLocatorOptions = this._buildLocatorOptions(locatorCandidates);
-      if (funName === "ByDomPath") {
+      if (funName === "ByDomPath" || funName === "ByPlaywright") {
         action.targetDomPathChain = obj.shadowChain || [];
+      }
+      if (funName === "ByDomPath") {
         action.targetDomPathOptions = Array.isArray(obj.options)
           ? obj.options.filter(option => !this._isBlockedSelectorCandidate(option?.path))
           : [];
@@ -1227,8 +1241,10 @@ declareContexts(contexts, rootAlias) {
       action.setSourceMethod(funName);
       action.setSourceData(data);
       action.sourceLocatorOptions = this._buildLocatorOptions(locatorCandidates);
-      if (funName === "ByDomPath") {
+      if (funName === "ByDomPath" || funName === "ByPlaywright") {
         action.sourceDomPathChain = obj.shadowChain || [];
+      }
+      if (funName === "ByDomPath") {
         action.sourceDomPathOptions = Array.isArray(obj.options)
           ? obj.options.filter(option => !this._isBlockedSelectorCandidate(option?.path))
           : [];

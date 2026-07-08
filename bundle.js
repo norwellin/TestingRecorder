@@ -6783,7 +6783,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       };
       this.playwrightObj = {
         ByGjsToolbarItem: { toolbarSelector: null, itemSelector: null, index: null },
-        ByPlaywright: { selector: null, selectors: [] },
+        ByPlaywright: { selector: null, selectors: [], shadowChain: [] },
         ByDomPath: { csspath: null, shadowChain: [], options: [] }
       };
       this.weight = { WL: 0.4, Wc: 0.6, Wa: 1, Wcl: 1, Wt: 1, Wn: 3 };
@@ -6820,10 +6820,12 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const generated = this.generateLocatorCandidatesWithPlaywrightInjected(e, realRoot);
       const result = {};
       let resultIndex = 0;
+      const shadowChain = this.getShadowChain(e);
       if (generated.playwrightSelector) {
         this.playwrightObj.ByPlaywright = {
           selector: generated.playwrightSelector,
-          selectors: generated.playwrightSelectors
+          selectors: generated.playwrightSelectors,
+          shadowChain
         };
         result[resultIndex++] = {
           funName: "ByPlaywright",
@@ -6831,7 +6833,6 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         };
       }
       if (generated.finderWithoutIdSelector) {
-        const shadowChain = this.getShadowChain(e);
         const finderCheck = this.inspectSelectorUniqueness(
           generated.finderWithoutIdSelector,
           shadowChain,
@@ -7238,7 +7239,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     clearPlaywrightObj() {
       this.playwrightObj = {
         ByGjsToolbarItem: { toolbarSelector: null, itemSelector: null, index: null },
-        ByPlaywright: { selector: null, selectors: [] },
+        ByPlaywright: { selector: null, selectors: [], shadowChain: [] },
         ByDomPath: { csspath: null, shadowChain: [], options: [] }
       };
     }
@@ -7529,6 +7530,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         if (!item) return;
         summary[key] = {
           funName: item.funName,
+          selector: item.obj?.selector || null,
+          locator: item.obj?.locator || null,
           csspath: item.obj?.csspath || null,
           shadowChain: item.obj?.shadowChain || [],
           options: Array.isArray(item.obj?.options) ? item.obj.options.map((option) => ({
@@ -7600,7 +7603,11 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
             options.push({
               id: `ByPlaywright-${selectorIndex}`,
               method: "ByPlaywright",
-              data: { selector: selector2, locator },
+              data: {
+                selector: selector2,
+                locator,
+                shadowChain: candidate.obj.shadowChain || []
+              },
               recommended: selector2 === candidate.obj.selector
             });
           });
@@ -7895,7 +7902,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       switch (funName) {
         case "ByPlaywright": {
           const locator = obj.locator || this._playwrightSelectorToLocator(obj.selector);
-          return locator ? `${winPrefix}.${locator}` : `${winPrefix}.locator("unknown")`;
+          return locator ? `${this._buildShadowHostLocatorPrefix(winPrefix, obj)}.${locator}` : `${winPrefix}.locator("unknown")`;
         }
         case "ByGjsToolbarItem":
           return this._buildGjsToolbarItemLocator(winPrefix, obj);
@@ -7928,11 +7935,15 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         return "";
       }
     }
-    _buildDomPathLocator(winPrefix, obj) {
+    _buildShadowHostLocatorPrefix(winPrefix, obj = {}) {
       let locator = winPrefix;
       for (const step of obj.shadowChain || []) {
         locator += `.locator(${this.quoteForCode(step.hostSelector)})`;
       }
+      return locator;
+    }
+    _buildDomPathLocator(winPrefix, obj) {
+      let locator = this._buildShadowHostLocatorPrefix(winPrefix, obj);
       locator += `.locator(${this.quoteForCode(obj.csspath)})`;
       return locator;
     }
@@ -8320,8 +8331,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         action.setTargetMethod(funName);
         action.setTargetData(data);
         action.targetLocatorOptions = this._buildLocatorOptions(locatorCandidates);
-        if (funName === "ByDomPath") {
+        if (funName === "ByDomPath" || funName === "ByPlaywright") {
           action.targetDomPathChain = obj.shadowChain || [];
+        }
+        if (funName === "ByDomPath") {
           action.targetDomPathOptions = Array.isArray(obj.options) ? obj.options.filter((option) => !this._isBlockedSelectorCandidate(option?.path)) : [];
         }
         console.log("[RecorderDebug][CodeGenerator updateUserActionDB] target stored", {
@@ -8336,8 +8349,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         action.setSourceMethod(funName);
         action.setSourceData(data);
         action.sourceLocatorOptions = this._buildLocatorOptions(locatorCandidates);
-        if (funName === "ByDomPath") {
+        if (funName === "ByDomPath" || funName === "ByPlaywright") {
           action.sourceDomPathChain = obj.shadowChain || [];
+        }
+        if (funName === "ByDomPath") {
           action.sourceDomPathOptions = Array.isArray(obj.options) ? obj.options.filter((option) => !this._isBlockedSelectorCandidate(option?.path)) : [];
         }
         console.log("[RecorderDebug][CodeGenerator updateUserActionDB] source stored", {
@@ -9216,6 +9231,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       if (funName === "ByText") return `getByText(${quote(obj.text)}, { exact: true })`;
       if (funName === "ByTitle") return `getByTitle(${quote(obj.title)}, { exact: true })`;
+      if (funName === "ByPlaywright") {
+        const chain = Array.isArray(obj.shadowChain) ? obj.shadowChain : [];
+        return [
+          ...chain.map((step) => `locator(${quote(step.hostSelector)})`),
+          obj.locator || obj.selector || "playwright"
+        ].join(".");
+      }
       if (funName === "ByGjsToolbarItem") {
         return `locator(${quote(obj.toolbarSelector || ".gjs-toolbar")}).locator(${quote(obj.itemSelector || ".gjs-toolbar-item")}).nth(${Math.max(0, Math.floor(Number(obj.index) || 0))})`;
       }
@@ -10263,6 +10285,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       if (funName === "ByText") return `getByText(${quote(obj.text)}, { exact: true })`;
       if (funName === "ByTitle") return `getByTitle(${quote(obj.title)}, { exact: true })`;
+      if (funName === "ByPlaywright") {
+        const chain = Array.isArray(obj.shadowChain) ? obj.shadowChain : [];
+        return [
+          ...chain.map((step) => `locator(${quote(step.hostSelector)})`),
+          obj.locator || obj.selector || "playwright"
+        ].join(".");
+      }
       if (funName === "ByGjsToolbarItem") {
         return `locator(${quote(obj.toolbarSelector || ".gjs-toolbar")}).locator(${quote(obj.itemSelector || ".gjs-toolbar-item")}).nth(${Math.max(0, Math.floor(Number(obj.index) || 0))})`;
       }

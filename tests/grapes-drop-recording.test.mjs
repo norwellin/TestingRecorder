@@ -928,6 +928,36 @@ test("playwright-injected selectors are converted to semantic locator code", () 
   );
 });
 
+test("playwright-injected selectors inside shadow roots keep their host chain", () => {
+  const generator = new PlaywrightCodeGenerator({ priSize: 2 }, {}, "page");
+  const shadowChain = [{ hostSelector: "input-toggle.signup_pass" }];
+  const candidates = {
+    0: {
+      funName: "ByPlaywright",
+      obj: {
+        selector: 'internal:role=button[name="toggle mask"i]',
+        selectors: ['internal:role=button[name="toggle mask"i]'],
+        shadowChain
+      }
+    },
+    1: {
+      funName: "ByDomPath",
+      obj: {
+        csspath: "button.toggle-eye",
+        shadowChain,
+        options: [{ path: "button.toggle-eye", shadowChain }]
+      }
+    }
+  };
+
+  const options = generator._buildLocatorOptions(candidates);
+  assert.deepEqual(options[0].data.shadowChain, shadowChain);
+  assert.equal(
+    generator._buildLocatorString("page", candidates[0]),
+    'page.locator("input-toggle.signup_pass").getByRole(\'button\', { name: \'toggle mask\' })'
+  );
+});
+
 test("playwright-injected selectors using dynamic IDs are moved to the end", () => {
   const service = new DOMParserService({ mainWindow: {} });
   const ownerDocument = {

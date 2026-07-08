@@ -727,6 +727,13 @@ export class OuterEventListener {
 
     if (funName === "ByText") return `getByText(${quote(obj.text)}, { exact: true })`;
     if (funName === "ByTitle") return `getByTitle(${quote(obj.title)}, { exact: true })`;
+    if (funName === "ByPlaywright") {
+      const chain = Array.isArray(obj.shadowChain) ? obj.shadowChain : [];
+      return [
+        ...chain.map(step => `locator(${quote(step.hostSelector)})`),
+        obj.locator || obj.selector || "playwright"
+      ].join(".");
+    }
     if (funName === "ByGjsToolbarItem") {
       return `locator(${quote(obj.toolbarSelector || ".gjs-toolbar")}).locator(${quote(obj.itemSelector || ".gjs-toolbar-item")}).nth(${Math.max(0, Math.floor(Number(obj.index) || 0))})`;
     }

@@ -515,7 +515,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 data: method === "ByDomPath"
                     ? { csspath: value, shadowChain: chain || [] }
                     : method === "ByPlaywright"
-                        ? { locator: value }
+                        ? { locator: value, shadowChain: chain || [] }
                     : { value },
                 currentValue: value,
                 recommended: true
@@ -548,7 +548,9 @@ document.addEventListener("DOMContentLoaded", async function () {
         const recommended = candidate?.recommended ? "（推薦）" : "";
 
         if (candidate.method === "ByPlaywright") {
-            return `Playwright${recommended} — ${data.locator || data.selector || candidate.currentValue || ""}`;
+            const hostPrefix = formatDomPathParts("", data.shadowChain || []).replace(/\s*>>\s*$/, "");
+            const selector = data.locator || data.selector || candidate.currentValue || "";
+            return `Playwright${recommended} — ${[hostPrefix, selector].filter(Boolean).join(" >> ")}`;
         }
         if (candidate.method === "ByGjsToolbarItem") {
             const toolbar = data.toolbarSelector || ".gjs-toolbar";
@@ -574,6 +576,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 
     function isSelectedLocatorOption(candidate, method, value, chain) {
         if (candidate.method !== method) return false;
+        if (method === "ByPlaywright") {
+            return (
+                getLocatorOptionValue(method, candidate.data) === value ||
+                candidate.currentValue === value
+            ) && sameDomPathChain(candidate.data?.shadowChain || [], chain);
+        }
         if (method !== "ByDomPath") {
             return getLocatorOptionValue(method, candidate.data) === value
                 || candidate.currentValue === value;
@@ -1154,7 +1162,12 @@ document.addEventListener("DOMContentLoaded", async function () {
         const data = candidate?.data || {};
         if (candidate?.method === "ByPlaywright") {
             const locator = data.locator || "";
-            return locator ? `.${locator.replace(/^\./, "")}` : "";
+            const hostLocators = (data.shadowChain || [])
+                .map(step => step?.hostSelector)
+                .filter(Boolean)
+                .map(selector => `.locator(${JSON.stringify(String(selector))})`)
+                .join("");
+            return locator ? `${hostLocators}.${locator.replace(/^\./, "")}` : hostLocators;
         }
         if (candidate?.method === "ByGjsToolbarItem") {
             const toolbar = data.toolbarSelector || ".gjs-toolbar";
@@ -1194,6 +1207,15 @@ document.addEventListener("DOMContentLoaded", async function () {
             const searchFrom = frameBoundary >= 0
                 ? frameBoundary + ".contentFrame()".length
                 : 0;
+            if (Array.isArray(chain) && chain.length) {
+                const positions = [];
+                const pattern = /\.(?:getBy[A-Z]\w*|locator)\(/g;
+                let locatorMatch = null;
+                pattern.lastIndex = searchFrom;
+                while ((locatorMatch = pattern.exec(expression)) !== null) positions.push(locatorMatch.index);
+                const locatorCount = Math.max(1, chain.length + 1);
+                return positions[Math.max(0, positions.length - locatorCount)] ?? -1;
+            }
             const match = /\.(?:getBy[A-Z]\w*|locator)\(/g;
             match.lastIndex = searchFrom;
             return match.exec(expression)?.index ?? -1;
@@ -1334,7 +1356,9 @@ document.addEventListener("DOMContentLoaded", async function () {
         const oldValue = action[dataKey];
         const oldChain = action[chainKey] || [];
         const nextValue = candidate.currentValue || getLocatorOptionValue(candidate.method, candidate.data);
-        const nextChain = candidate.method === "ByDomPath" ? candidate.data?.shadowChain || [] : [];
+        const nextChain = candidate.method === "ByDomPath" || candidate.method === "ByPlaywright"
+            ? candidate.data?.shadowChain || []
+            : [];
 
         const storage = await chrome.storage.local.get(["generatedCodeBody", "generatedAction"]);
         const codeBody = Array.isArray(storage.generatedCodeBody) ? [...storage.generatedCodeBody] : [];

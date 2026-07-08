@@ -20,7 +20,7 @@ export class DOMParserService {
     };
     this.playwrightObj = {
       ByGjsToolbarItem: { toolbarSelector: null, itemSelector: null, index: null },
-      ByPlaywright: { selector: null, selectors: [] },
+      ByPlaywright: { selector: null, selectors: [], shadowChain: [] },
       ByDomPath: { csspath: null, shadowChain: [], options: [] }
     };
 
@@ -66,10 +66,13 @@ export class DOMParserService {
     const result = {};
     let resultIndex = 0;
 
+    const shadowChain = this.getShadowChain(e);
+
     if (generated.playwrightSelector) {
       this.playwrightObj.ByPlaywright = {
         selector: generated.playwrightSelector,
-        selectors: generated.playwrightSelectors
+        selectors: generated.playwrightSelectors,
+        shadowChain
       };
       result[resultIndex++] = {
         funName: "ByPlaywright",
@@ -78,7 +81,6 @@ export class DOMParserService {
     }
 
     if (generated.finderWithoutIdSelector) {
-      const shadowChain = this.getShadowChain(e);
       const finderCheck = this.inspectSelectorUniqueness(
         generated.finderWithoutIdSelector,
         shadowChain,
@@ -586,7 +588,7 @@ export class DOMParserService {
   clearPlaywrightObj() {
     this.playwrightObj = {
       ByGjsToolbarItem: { toolbarSelector: null, itemSelector: null, index: null },
-      ByPlaywright: { selector: null, selectors: [] },
+      ByPlaywright: { selector: null, selectors: [], shadowChain: [] },
       ByDomPath: { csspath: null, shadowChain: [], options: [] }
     };
   }
