@@ -7385,7 +7385,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         return gotoLine;
       }
       if (action.type === "dialog") {
-        const winPrefix = this._getContextPrefix(action.sourceWindow);
+        const winPrefix = this._getDialogPagePrefix(action.sourceWindow);
         let dialogAction = "await dialog.dismiss();";
         if (action.dialogType === "alert") {
           dialogAction = "await dialog.accept();";
@@ -7495,6 +7495,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         generatedCode = this.doubleClickSetter(action, sourcepath, sourceWindow);
       } else if (action.type === "input" || action.type === "color") {
         generatedCode = this.inputSetter(action, sourcepath, sourceWindow, inputText);
+      } else if (action.type === "canvasInput") {
+        generatedCode = this.canvasInputSetter(action, sourcepath, sourceWindow, inputText);
+      } else if (action.type === "canvasWheel") {
+        generatedCode = this.canvasWheelSetter(action, sourcepath, sourceWindow);
       } else if (action.type === "range") {
         generatedCode = this.rangeSetter(action, sourcepath, sourceWindow, inputText);
       } else if (action.type === "keyboard") {
@@ -7587,6 +7591,29 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       return candidates.find(
         (candidate) => candidate?.funName === "ByDomPath" && candidate?.obj?.csspath && !this._isBlockedPathCandidate(candidate)
       ) || best;
+    }
+    _getBestIonSelectPath(paths) {
+      const best = this._getBestPath(paths);
+      if (!best) return null;
+      const locatorText = best.funName === "ByPlaywright" ? String(best.obj?.locator || this._playwrightSelectorToLocator(best.obj?.selector) || "") : "";
+      const labelLocatorMatch = locatorText.match(/^(getByLabel\((?:"[^"]*"|'[^']*')(?:,\s*\{[^}]*\})?\))(?:\..*)?$/);
+      if (labelLocatorMatch) {
+        return {
+          ...best,
+          obj: {
+            ...best.obj,
+            locator: labelLocatorMatch[1]
+          }
+        };
+      }
+      const textTargetedSelect = best.funName === "ByText" || /\.getByText\(/.test(locatorText) || /^getByText\(/.test(locatorText);
+      if (!textTargetedSelect) return best;
+      const candidates = Array.isArray(paths) ? paths : Object.values(paths || {});
+      return candidates.find((candidate) => {
+        if (candidate?.funName !== "ByPlaywright") return false;
+        const candidateLocator = String(candidate.obj?.locator || this._playwrightSelectorToLocator(candidate.obj?.selector) || "");
+        return candidateLocator && !/getByText\(/.test(candidateLocator);
+      }) || best;
     }
     _buildLocatorOptions(paths) {
       if (!paths) return [];
@@ -7713,6 +7740,17 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
     // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
     // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+    _getDialogPagePrefix(sourceWindow) {
+      const context = this.contextMap.get(sourceWindow);
+      if (!context) return this._getContextPrefix(sourceWindow);
+      let current = context;
+      while (current?.parentContextId) {
+        const parent = this.contextMap.get(current.parentContextId);
+        if (!parent) break;
+        current = parent;
+      }
+      return this._getBaseContextAlias(current);
+    }
     setContexts(contexts = [], rootAlias = this.pageAlias) {
       if (!Array.isArray(contexts)) return;
       const baseAlias = rootAlias || this.pageAlias;
@@ -7962,7 +8000,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       return code;
     }
     ionSelectSetter(action, sourcepath, sourceWindow) {
-      const best = this._getBestPath(sourcepath);
+      const best = this._getBestIonSelectPath(sourcepath);
       if (!best) return null;
       const winPrefix = this._getContextPrefix(sourceWindow);
       const selectLocator = this._buildLocatorString(winPrefix, best);
@@ -8012,8 +8050,127 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const pagePrefix = this._getKeyboardPagePrefix(sourceWindow);
       return `await ${pagePrefix}.keyboard.press(${this.quoteForCode(inputKey)});`;
     }
+    canvasInputSetter(action, sourcepath, sourceWindow, inputText) {
+      const best = this._getBestPath(sourcepath);
+      if (!best) return null;
+      this.mergeActionContextSnapshots(action);
+      const winPrefix = this._getContextPrefix(sourceWindow);
+      const locator = this._buildLocatorString(winPrefix, best);
+      const pagePrefix = this._getMousePageAliasForAction(action, sourceWindow, sourceWindow);
+      const position = this._normalizeCanvasPoint(action?.canvasInputPosition);
+      this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
+      const lines = [
+        "{",
+        `  const canvas = ${locator};`,
+        "  await canvas.scrollIntoViewIfNeeded();"
+      ];
+      if (position) {
+        lines.push(
+          "  const box = await canvas.boundingBox();",
+          "  if (!box) throw new Error('Unable to calculate canvas input coordinates');",
+          `  const point = ${JSON.stringify(position)};`,
+          "  await canvas.click({ position: { x: box.width * point.xRatio, y: box.height * point.yRatio } });"
+        );
+      } else {
+        lines.push("  await canvas.click();");
+      }
+      lines.push(
+        `  await ${pagePrefix}.keyboard.type(${this.quoteForCode(inputText)});`,
+        "}"
+      );
+      return lines;
+    }
+    canvasWheelSetter(action, sourcepath, sourceWindow) {
+      const best = this._getBestPath(sourcepath);
+      if (!best) return null;
+      this.mergeActionContextSnapshots(action);
+      const winPrefix = this._getContextPrefix(sourceWindow);
+      const locator = this._buildLocatorString(winPrefix, best);
+      const pagePrefix = this._getMousePageAliasForAction(action, sourceWindow, sourceWindow);
+      const position = this._normalizeCanvasPoint(action?.canvasWheel?.position);
+      const deltaX = Number(action?.canvasWheel?.deltaX);
+      const deltaY = Number(action?.canvasWheel?.deltaY);
+      if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) return null;
+      this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
+      const lines = [
+        "{",
+        `  const canvas = ${locator};`,
+        "  await canvas.scrollIntoViewIfNeeded();"
+      ];
+      if (position) {
+        lines.push(
+          `  const wheelPoint = ${JSON.stringify(position)};`,
+          "  const wheelBox = await canvas.boundingBox();",
+          "  if (!wheelBox) throw new Error('Unable to calculate canvas wheel coordinates');",
+          "  await canvas.hover({ position: { x: wheelBox.width * wheelPoint.xRatio, y: wheelBox.height * wheelPoint.yRatio } });"
+        );
+      } else {
+        lines.push("  await canvas.hover();");
+      }
+      lines.push(
+        `  await ${pagePrefix}.mouse.wheel(${Math.round(deltaX * 100) / 100}, ${Math.round(deltaY * 100) / 100});`,
+        "}"
+      );
+      return lines;
+    }
+    canvasDragSetter(action, sourcepath, sourceWindow, targetWindow) {
+      const best = this._getBestPath(sourcepath);
+      if (!best) return null;
+      this.mergeActionContextSnapshots(action);
+      const winPrefix = this._getContextPrefix(sourceWindow);
+      const locator = this._buildLocatorString(winPrefix, best);
+      const mousePageAlias = this._getMousePageAliasForAction(action, sourceWindow, targetWindow || sourceWindow);
+      const path = action.canvasDragPath.map((point) => this._normalizeCanvasPoint(point)).filter(Boolean);
+      if (path.length < 2) return null;
+      this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
+      this.updateUserActionDB(action, best.funName, best.obj, "target", sourcepath);
+      return [
+        "{",
+        `  const canvas = ${locator};`,
+        "  await canvas.scrollIntoViewIfNeeded();",
+        "  const box = await canvas.boundingBox();",
+        "  if (!box) throw new Error('Unable to calculate canvas drag coordinates');",
+        `  const path = ${JSON.stringify(path)};`,
+        "  const toPagePoint = point => ({",
+        "    x: box.x + box.width * point.xRatio,",
+        "    y: box.y + box.height * point.yRatio",
+        "  });",
+        "  const start = toPagePoint(path[0]);",
+        `  await ${mousePageAlias}.mouse.move(start.x, start.y);`,
+        `  await ${mousePageAlias}.mouse.down();`,
+        "  for (const point of path.slice(1)) {",
+        "    const pagePoint = toPagePoint(point);",
+        `    await ${mousePageAlias}.mouse.move(pagePoint.x, pagePoint.y);`,
+        "  }",
+        `  await ${mousePageAlias}.mouse.up();`,
+        "}"
+      ];
+    }
+    _normalizeCanvasPoint(point) {
+      if (!point) return null;
+      let xRatio = Number(point.xRatio);
+      let yRatio = Number(point.yRatio);
+      const width = Number(point.width || point.sourceWidth || point.targetWidth);
+      const height = Number(point.height || point.sourceHeight || point.targetHeight);
+      const x = Number(point.x);
+      const y = Number(point.y);
+      if (!Number.isFinite(xRatio) && Number.isFinite(x) && Number.isFinite(width) && width > 0) {
+        xRatio = x / width;
+      }
+      if (!Number.isFinite(yRatio) && Number.isFinite(y) && Number.isFinite(height) && height > 0) {
+        yRatio = y / height;
+      }
+      if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)) return null;
+      return {
+        xRatio: Math.max(0, Math.min(1, Math.round(xRatio * 1e4) / 1e4)),
+        yRatio: Math.max(0, Math.min(1, Math.round(yRatio * 1e4) / 1e4))
+      };
+    }
     dragAndDropCodeSetter(action, targetpath, sourcepath, sourceWindow, targetWindow) {
       const bestSou = this._getBestPath(sourcepath);
+      if (Array.isArray(action?.canvasDragPath) && action.canvasDragPath.length >= 2) {
+        return this.canvasDragSetter(action, sourcepath, sourceWindow, targetWindow);
+      }
       const bestTar = this._getBestDragTargetPath(targetpath);
       if (!bestSou || !bestTar) return null;
       this.mergeActionContextSnapshots(action);
@@ -8105,8 +8262,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           }
         }
         lines.push(
-          `  await ${souLocator}.scrollIntoViewIfNeeded();`,
-          "  await dropTarget.scrollIntoViewIfNeeded();",
+          `  await safeScrollIntoViewIfNeeded(${souLocator});`,
+          "  await safeScrollIntoViewIfNeeded(dropTarget);",
           "  await dropTarget.waitFor({ state: 'visible' });"
         );
         if (useRatio) {
@@ -8231,8 +8388,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       ];
       this._appendDropScrollRestoreLines(lines, scrollState);
       lines.push(
-        "  await dragSource.scrollIntoViewIfNeeded();",
-        "  await dropTarget.scrollIntoViewIfNeeded();",
+        "  await safeScrollIntoViewIfNeeded(dragSource);",
+        "  await safeScrollIntoViewIfNeeded(dropTarget);",
         "  await dragSource.waitFor({ state: 'visible' });",
         "  await dropTarget.waitFor({ state: 'visible' });",
         "  const sourceBox = await dragSource.boundingBox();",
@@ -8288,6 +8445,11 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const winPrefix = this._getContextPrefix(sourceWindow);
       const locator = this._buildLocatorString(winPrefix, best);
       this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
+      const clickX = Number(action?.clickPosition?.x);
+      const clickY = Number(action?.clickPosition?.y);
+      if (Number.isFinite(clickX) && Number.isFinite(clickY)) {
+        return `await ${locator}.dblclick({ position: { x: ${clickX}, y: ${clickY} } });`;
+      }
       return `await ${locator}.dblclick();`;
     }
     inputSetter(action, sourcepath, sourceWindow, inputText) {
@@ -8644,6 +8806,9 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.isDragging = false;
       this.DRAG_THRESHOLD = 5;
       this.dragSource = null;
+      this.canvasDragPath = [];
+      this.lastCanvasPointerPosition = /* @__PURE__ */ new WeakMap();
+      this.canvasWheelRecords = /* @__PURE__ */ new WeakMap();
       this.mouseDownFlag = false;
       this.dragStepFlag = 0;
       this.suppressClickUntil = 0;
@@ -8665,6 +8830,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.mainDocument.addEventListener("mouseout", this.mouseoutHandler.bind(this), true);
       this.mainDocument.addEventListener("mouseleave", this.hideHoverPreview.bind(this), true);
       this.mainDocument.addEventListener("mouseup", this.mouseupHandler.bind(this), true);
+      this.mainDocument.addEventListener("wheel", this.wheelHandler.bind(this), true);
       this.mainWindow.addEventListener("dragstart", this.dragStartHandler.bind(this));
       this.mainDocument.addEventListener("dblclick", this.dblClickHandler.bind(this), true);
       this.mainDocument.addEventListener("keydown", this.keydownHandler.bind(this));
@@ -8737,6 +8903,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
       if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
       if (extraData.sourcePosition) action.sourcePosition = extraData.sourcePosition;
+      if (extraData.clickPosition) action.clickPosition = extraData.clickPosition;
+      if (extraData.canvasDragPath) action.canvasDragPath = extraData.canvasDragPath;
+      if (extraData.canvasInputPosition) action.canvasInputPosition = extraData.canvasInputPosition;
+      if (extraData.canvasWheel) action.canvasWheel = extraData.canvasWheel;
       if (extraData.isDragStart) action.isDragStart = true;
       if (extraData.isDrop) action.isDrop = true;
       if (typeof this.onActionRecorded === "function") {
@@ -9027,6 +9197,15 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     keydownHandler(e) {
       if (!this.isRecording || !e.isTrusted || e.repeat) return;
       const target = this.getTextInputEventTarget(e);
+      const canvasTarget = this.getCanvasEventTarget(e);
+      if (!target && canvasTarget && this.isCanvasTextKey(e)) {
+        this.currentHoveredElement = canvasTarget;
+        this.dispatchAction("canvasInput", canvasTarget, null, {
+          inputText: e.key,
+          canvasInputPosition: this.lastCanvasPointerPosition.get(canvasTarget) || null
+        });
+        return;
+      }
       if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
         if (target) this.flushPendingTextInputRecord(target);
         this.currentHoveredElement = target || e.target || this.mainDocument.activeElement;
@@ -9085,10 +9264,49 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }).filter(Boolean);
     }
     dblClickHandler(e) {
-      if (!this.isRecording) return;
+      if (!this.isRecording || !e.isTrusted) return;
       if (this.shouldSuppressSyntheticPageEvent()) return;
+      const target = this.getComposedEventTarget(e);
+      if (this.isCanvasElement(target)) {
+        const clickPosition = this.getElementPosition(e, target);
+        if (clickPosition) this.lastCanvasPointerPosition.set(target, clickPosition);
+        this.currentHoveredElement = target;
+        this.dispatchAction("dbclick", this.currentHoveredElement, null, { clickPosition });
+        return;
+      }
       this.currentHoveredElement = e.target;
       this.dispatchAction("dbclick", this.currentHoveredElement);
+    }
+    wheelHandler(e) {
+      if (!this.isRecording || !e.isTrusted) return;
+      if (this.shouldSuppressSyntheticPageEvent()) return;
+      const target = this.getCanvasEventTarget(e);
+      if (!target) return;
+      const position = this.getElementPosition(e, target);
+      if (position) this.lastCanvasPointerPosition.set(target, position);
+      const delta = this.getWheelDelta(e);
+      if (!delta) return;
+      const existing = this.canvasWheelRecords.get(target);
+      if (existing?.timer) clearTimeout(existing.timer);
+      const next = {
+        deltaX: (existing?.deltaX || 0) + delta.deltaX,
+        deltaY: (existing?.deltaY || 0) + delta.deltaY,
+        position: position || existing?.position || null,
+        timer: null
+      };
+      next.timer = setTimeout(() => {
+        this.canvasWheelRecords.delete(target);
+        if (!this.isRecording) return;
+        this.currentHoveredElement = target;
+        this.dispatchAction("canvasWheel", target, null, {
+          canvasWheel: {
+            deltaX: Math.round(next.deltaX * 100) / 100,
+            deltaY: Math.round(next.deltaY * 100) / 100,
+            position: next.position
+          }
+        });
+      }, 150);
+      this.canvasWheelRecords.set(target, next);
     }
     dragStartHandler(e) {
       if (!this.isRecording) return;
@@ -9110,6 +9328,14 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.dragStart = { x: e.clientX, y: e.clientY };
       this.isDragging = false;
       this.dragSource = this.getDragSourceElement(e.target);
+      this.canvasDragPath = [];
+      if (this.isCanvasElement(this.dragSource)) {
+        const startPoint = this.getElementPosition(e, this.dragSource);
+        if (startPoint) {
+          this.canvasDragPath = [startPoint];
+          this.lastCanvasPointerPosition.set(this.dragSource, startPoint);
+        }
+      }
       this.mouseDownFlag = true;
       this.dragStepFlag = 1;
       this.hideHoverPreview();
@@ -9123,6 +9349,14 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       } else {
         this.hideHoverPreview();
       }
+      if (this.isDragging && this.isCanvasElement(this.dragSource)) {
+        const point = this.getElementPosition(e, this.dragSource);
+        if (point) {
+          this.canvasDragPath.push(point);
+          this.lastCanvasPointerPosition.set(this.dragSource, point);
+        }
+        return;
+      }
       if (!this.dragStart || this.dragStepFlag !== 1) return;
       const dx = e.clientX - this.dragStart.x;
       const dy = e.clientY - this.dragStart.y;
@@ -9131,6 +9365,14 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         this.isDragging = true;
         this.dragStepFlag = 2;
         this.mouseDownFlag = false;
+        if (this.isCanvasElement(this.dragSource)) {
+          const point = this.getElementPosition(e, this.dragSource);
+          if (point) {
+            this.canvasDragPath.push(point);
+            this.lastCanvasPointerPosition.set(this.dragSource, point);
+          }
+          return;
+        }
         this.dispatchAction("dragANDdrop", this.dragSource, null, {
           isDragStart: true,
           sourcePosition: this.getDragSourcePosition(e, this.dragSource)
@@ -9264,6 +9506,25 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (this.isDragging) {
         this.isDragging = false;
         this.dragStart = { x: 0, y: 0 };
+        if (this.isCanvasElement(this.dragSource)) {
+          const canvas = this.dragSource;
+          const endPoint = this.getElementPosition(e, canvas);
+          if (endPoint) {
+            this.canvasDragPath.push(endPoint);
+            this.lastCanvasPointerPosition.set(canvas, endPoint);
+          }
+          this.currentHoveredElement = canvas;
+          this.mouseDownFlag = false;
+          this.dragStepFlag = 0;
+          this.suppressClickUntil = Date.now() + 300;
+          this.dispatchAction("dragANDdrop", canvas, canvas, {
+            sourcePosition: this.canvasDragPath[0] || null,
+            dropPosition: endPoint,
+            canvasDragPath: this.canvasDragPath.filter(Boolean)
+          });
+          this.canvasDragPath = [];
+          return;
+        }
         this.currentHoveredElement = this.getDropTargetElement(e);
         this.mouseDownFlag = false;
         this.dragStepFlag = 0;
@@ -9282,6 +9543,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (Date.now() < this.suppressClickUntil) return;
       if (this.shouldSuppressSyntheticPageEvent()) return;
       const target = this.getComposedEventTarget(e);
+      if (this.isCanvasElement(target)) {
+        const clickPosition = this.getElementPosition(e, target);
+        if (clickPosition) this.lastCanvasPointerPosition.set(target, clickPosition);
+        this.currentHoveredElement = target;
+        this.dispatchAction("click", this.currentHoveredElement, null, { clickPosition });
+        return;
+      }
       if (target?.tagName === "ION-SELECT") {
         this.pendingIonSelectInteractions.set(target, Date.now());
         this.activeIonSelect = target;
@@ -9329,6 +9597,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (this.shouldSuppressSyntheticPageEvent()) return;
       const target = this.getComposedEventTarget(e);
       if (!target) return;
+      if (this.isCanvasElement(target)) {
+        const clickPosition = this.getElementPosition(e, target);
+        if (clickPosition) this.lastCanvasPointerPosition.set(target, clickPosition);
+        this.currentHoveredElement = target;
+        this.dispatchAction("rightClick", this.currentHoveredElement, null, { clickPosition });
+        return;
+      }
       const toolbarItem = target?.closest?.(
         ".gjs-toolbar-item, [data-command], [data-cmd]"
       );
@@ -9362,6 +9637,43 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     isFileInput(element) {
       return element?.tagName === "INPUT" && element.getAttribute("type") === "file";
+    }
+    isCanvasElement(element) {
+      return element?.tagName === "CANVAS";
+    }
+    getCanvasEventTarget(e) {
+      const target = this.getComposedEventTarget(e);
+      return this.isCanvasElement(target) ? target : null;
+    }
+    isCanvasTextKey(e) {
+      return !e.isComposing && !e.ctrlKey && !e.metaKey && !e.altKey && e.key?.length === 1;
+    }
+    getElementPosition(event, element) {
+      if (!event || !element?.getBoundingClientRect) return null;
+      const rect = element.getBoundingClientRect();
+      if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+      const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+      const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+      const round = (value) => Math.round(value * 100) / 100;
+      return {
+        x: round(x),
+        y: round(y),
+        xRatio: Math.round(x / rect.width * 1e4) / 1e4,
+        yRatio: Math.round(y / rect.height * 1e4) / 1e4,
+        width: round(rect.width),
+        height: round(rect.height)
+      };
+    }
+    getWheelDelta(event) {
+      if (!event) return null;
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? this.mainWindow?.innerHeight || 800 : 1;
+      const deltaX = Number(event.deltaX) * unit;
+      const deltaY = Number(event.deltaY) * unit;
+      if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) return null;
+      if (deltaX === 0 && deltaY === 0) return null;
+      return { deltaX, deltaY };
     }
     recordColorInput(element) {
       const value = element?.value;
@@ -9440,7 +9752,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       };
     }
     isMouseDragCandidate(element) {
-      return !!element?.closest?.(".gjs-layer-move, [data-toggle-move]");
+      return this.isCanvasElement(element) || !!element?.closest?.(".gjs-layer-move, [data-toggle-move]");
     }
     getDragTargetElement(element) {
       return element?.closest?.(".gjs-layer, .gjs-layer-item, [data-layer-id], [data-gjs-type]") || element;
@@ -9462,6 +9774,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.isDragging = false;
       this.dragStart = { x: 0, y: 0 };
       this.dragSource = null;
+      this.canvasDragPath = [];
       this.mouseDownFlag = false;
       this.dragStepFlag = 0;
     }
@@ -9694,6 +10007,9 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.isDragging = false;
       this.DRAG_THRESHOLD = 5;
       this.dragSource = null;
+      this.canvasDragPath = [];
+      this.lastCanvasPointerPosition = /* @__PURE__ */ new WeakMap();
+      this.canvasWheelRecords = /* @__PURE__ */ new WeakMap();
       this.mouseDownFlag = false;
       this.dragStepFlag = 0;
       this.suppressClickUntil = 0;
@@ -9715,6 +10031,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.iframeDocument.addEventListener("mouseout", this.mouseoutHandler.bind(this), true);
       this.iframeDocument.addEventListener("mouseleave", this.hideHoverPreview.bind(this), true);
       this.iframeDocument.addEventListener("mouseup", this.mouseupHandler.bind(this), true);
+      this.iframeDocument.addEventListener("wheel", this.wheelHandler.bind(this), true);
       this.iframeWindow.addEventListener("dragstart", this.dragStartHandler.bind(this));
       this.iframeDocument.addEventListener("dblclick", this.dblClickHandler.bind(this), true);
       this.iframeDocument.addEventListener("keydown", this.keydownHandler.bind(this));
@@ -9788,6 +10105,9 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
       if (extraData.sourcePosition) action.sourcePosition = extraData.sourcePosition;
       if (extraData.clickPosition) action.clickPosition = extraData.clickPosition;
+      if (extraData.canvasDragPath) action.canvasDragPath = extraData.canvasDragPath;
+      if (extraData.canvasInputPosition) action.canvasInputPosition = extraData.canvasInputPosition;
+      if (extraData.canvasWheel) action.canvasWheel = extraData.canvasWheel;
       if (extraData.isDragStart) action.isDragStart = true;
       if (extraData.isDrop) action.isDrop = true;
       if (typeof this.onActionRecorded === "function") {
@@ -10079,6 +10399,15 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     keydownHandler(e) {
       if (!this.isRecording || !e.isTrusted || e.repeat) return;
       const target = this.getTextInputEventTarget(e);
+      const canvasTarget = this.getCanvasEventTarget(e);
+      if (!target && canvasTarget && this.isCanvasTextKey(e)) {
+        this.currentHoveredElement = canvasTarget;
+        this.dispatchAction("canvasInput", canvasTarget, null, {
+          inputText: e.key,
+          canvasInputPosition: this.lastCanvasPointerPosition.get(canvasTarget) || null
+        });
+        return;
+      }
       if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
         if (target) this.flushPendingTextInputRecord(target);
         this.currentHoveredElement = target || e.target || this.iframeDocument.activeElement;
@@ -10141,8 +10470,46 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (this.shouldSuppressSyntheticPageEvent()) return;
       const target = this.getClickTarget(e);
       if (!target) return;
+      if (this.isCanvasElement(target)) {
+        const clickPosition = this.getElementPosition(e, target);
+        if (clickPosition) this.lastCanvasPointerPosition.set(target, clickPosition);
+        this.currentHoveredElement = target;
+        this.dispatchAction("dbclick", this.currentHoveredElement, null, { clickPosition });
+        return;
+      }
       this.currentHoveredElement = target;
       this.dispatchAction("dbclick", this.currentHoveredElement);
+    }
+    wheelHandler(e) {
+      if (!this.isRecording || !e.isTrusted) return;
+      if (this.shouldSuppressSyntheticPageEvent()) return;
+      const target = this.getCanvasEventTarget(e);
+      if (!target) return;
+      const position = this.getElementPosition(e, target);
+      if (position) this.lastCanvasPointerPosition.set(target, position);
+      const delta = this.getWheelDelta(e);
+      if (!delta) return;
+      const existing = this.canvasWheelRecords.get(target);
+      if (existing?.timer) clearTimeout(existing.timer);
+      const next = {
+        deltaX: (existing?.deltaX || 0) + delta.deltaX,
+        deltaY: (existing?.deltaY || 0) + delta.deltaY,
+        position: position || existing?.position || null,
+        timer: null
+      };
+      next.timer = setTimeout(() => {
+        this.canvasWheelRecords.delete(target);
+        if (!this.isRecording) return;
+        this.currentHoveredElement = target;
+        this.dispatchAction("canvasWheel", target, null, {
+          canvasWheel: {
+            deltaX: Math.round(next.deltaX * 100) / 100,
+            deltaY: Math.round(next.deltaY * 100) / 100,
+            position: next.position
+          }
+        });
+      }, 150);
+      this.canvasWheelRecords.set(target, next);
     }
     dragStartHandler(e) {
       if (!this.isRecording) return;
@@ -10164,6 +10531,14 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.dragStart = { x: e.clientX, y: e.clientY };
       this.isDragging = false;
       this.dragSource = this.getDragSourceElement(e.target);
+      this.canvasDragPath = [];
+      if (this.isCanvasElement(this.dragSource)) {
+        const startPoint = this.getElementPosition(e, this.dragSource);
+        if (startPoint) {
+          this.canvasDragPath = [startPoint];
+          this.lastCanvasPointerPosition.set(this.dragSource, startPoint);
+        }
+      }
       this.mouseDownFlag = true;
       this.dragStepFlag = 1;
       this.hideHoverPreview();
@@ -10177,6 +10552,14 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       } else {
         this.hideHoverPreview();
       }
+      if (this.isDragging && this.isCanvasElement(this.dragSource)) {
+        const point = this.getElementPosition(e, this.dragSource);
+        if (point) {
+          this.canvasDragPath.push(point);
+          this.lastCanvasPointerPosition.set(this.dragSource, point);
+        }
+        return;
+      }
       if (!this.dragStart || this.dragStepFlag !== 1) return;
       const dx = e.clientX - this.dragStart.x;
       const dy = e.clientY - this.dragStart.y;
@@ -10185,6 +10568,14 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         this.isDragging = true;
         this.dragStepFlag = 2;
         this.mouseDownFlag = false;
+        if (this.isCanvasElement(this.dragSource)) {
+          const point = this.getElementPosition(e, this.dragSource);
+          if (point) {
+            this.canvasDragPath.push(point);
+            this.lastCanvasPointerPosition.set(this.dragSource, point);
+          }
+          return;
+        }
         this.dispatchAction("dragANDdrop", this.dragSource, null, {
           isDragStart: true,
           sourcePosition: this.getDragSourcePosition(e, this.dragSource)
@@ -10312,6 +10703,25 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (this.isDragging) {
         this.isDragging = false;
         this.dragStart = { x: 0, y: 0 };
+        if (this.isCanvasElement(this.dragSource)) {
+          const canvas = this.dragSource;
+          const endPoint = this.getElementPosition(e, canvas);
+          if (endPoint) {
+            this.canvasDragPath.push(endPoint);
+            this.lastCanvasPointerPosition.set(canvas, endPoint);
+          }
+          this.currentHoveredElement = canvas;
+          this.mouseDownFlag = false;
+          this.dragStepFlag = 0;
+          this.suppressClickUntil = Date.now() + 300;
+          this.dispatchAction("dragANDdrop", canvas, canvas, {
+            sourcePosition: this.canvasDragPath[0] || null,
+            dropPosition: endPoint,
+            canvasDragPath: this.canvasDragPath.filter(Boolean)
+          });
+          this.canvasDragPath = [];
+          return;
+        }
         this.currentHoveredElement = this.getDropTargetElement(e);
         this.mouseDownFlag = false;
         this.dragStepFlag = 0;
@@ -10331,6 +10741,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (this.shouldSuppressSyntheticPageEvent()) return;
       const target = this.getClickTarget(e);
       if (!target) return;
+      if (this.isCanvasElement(target)) {
+        const clickPosition = this.getElementPosition(e, target);
+        if (clickPosition) this.lastCanvasPointerPosition.set(target, clickPosition);
+        this.currentHoveredElement = target;
+        this.dispatchAction("click", this.currentHoveredElement, null, { clickPosition });
+        return;
+      }
       if (target.tagName === "ION-SELECT") {
         this.pendingIonSelectInteractions.set(target, Date.now());
         this.activeIonSelect = target;
@@ -10353,6 +10770,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (this.shouldSuppressSyntheticPageEvent()) return;
       const target = this.getClickTarget(e);
       if (!target) return;
+      if (this.isCanvasElement(target)) {
+        const clickPosition = this.getElementPosition(e, target);
+        if (clickPosition) this.lastCanvasPointerPosition.set(target, clickPosition);
+        this.currentHoveredElement = target;
+        this.dispatchAction("rightClick", this.currentHoveredElement, null, { clickPosition });
+        return;
+      }
       this.currentHoveredElement = target;
       this.dispatchAction("rightClick", this.currentHoveredElement, null, {
         clickPosition: this.getClickPosition(e, this.currentHoveredElement)
@@ -10418,6 +10842,43 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     isFileInput(element) {
       return element?.tagName === "INPUT" && element.getAttribute("type") === "file";
+    }
+    isCanvasElement(element) {
+      return element?.tagName === "CANVAS";
+    }
+    getCanvasEventTarget(e) {
+      const target = this.getComposedEventTarget(e);
+      return this.isCanvasElement(target) ? target : null;
+    }
+    isCanvasTextKey(e) {
+      return !e.isComposing && !e.ctrlKey && !e.metaKey && !e.altKey && e.key?.length === 1;
+    }
+    getElementPosition(event, element) {
+      if (!event || !element?.getBoundingClientRect) return null;
+      const rect = element.getBoundingClientRect();
+      if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+      const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+      const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+      const round = (value) => Math.round(value * 100) / 100;
+      return {
+        x: round(x),
+        y: round(y),
+        xRatio: Math.round(x / rect.width * 1e4) / 1e4,
+        yRatio: Math.round(y / rect.height * 1e4) / 1e4,
+        width: round(rect.width),
+        height: round(rect.height)
+      };
+    }
+    getWheelDelta(event) {
+      if (!event) return null;
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? this.iframeWindow?.innerHeight || 800 : 1;
+      const deltaX = Number(event.deltaX) * unit;
+      const deltaY = Number(event.deltaY) * unit;
+      if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) return null;
+      if (deltaX === 0 && deltaY === 0) return null;
+      return { deltaX, deltaY };
     }
     recordColorInput(element) {
       const value = element?.value;
@@ -10506,7 +10967,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       };
     }
     isMouseDragCandidate(element) {
-      return !!element?.closest?.(this.getMouseDragCandidateSelector());
+      return this.isCanvasElement(element) || !!element?.closest?.(this.getMouseDragCandidateSelector());
     }
     getDragTargetElement(element) {
       return element?.closest?.(".gjs-layer, .gjs-layer-item, [data-layer-id], [data-gjs-type]") || element;
@@ -10528,6 +10989,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.isDragging = false;
       this.dragStart = { x: 0, y: 0 };
       this.dragSource = null;
+      this.canvasDragPath = [];
       this.mouseDownFlag = false;
       this.dragStepFlag = 0;
     }
@@ -10890,7 +11352,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         if (msg?.source !== "RECORDER_PAGE_HOOK") return;
         if (msg.type !== "RECORDER_NATIVE_DIALOG") return;
         if (!this.isStarted) return;
-        if (event.source !== this.rootWin && !this.isKnownFrameSource(event.source)) return;
+        const sourceContext = this.getContextByWindowSource(event.source);
+        if (event.source !== this.rootWin && !sourceContext) return;
         this.handleUserAction({
           type: "dialog",
           dialogType: msg.dialogType,
@@ -10899,7 +11362,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           defaultValue: msg.defaultValue,
           frameUrl: msg.frameUrl,
           fromIframe: msg.fromIframe === true,
-          sourceWindow: "ctx_page_0",
+          sourceWindow: sourceContext?.contextId || "ctx_page_0",
+          sourceContext: this.createContextSnapshot(sourceContext) || null,
           ts: Date.now()
         });
       });
@@ -11035,6 +11499,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     isKnownFrameSource(sourceWindow) {
       if (!sourceWindow || !this.registry || typeof this.registry.getContextsByType !== "function") return false;
       return this.registry.getContextsByType("iframe").some((ctx) => ctx.windowRef === sourceWindow);
+    }
+    getContextByWindowSource(sourceWindow) {
+      if (!sourceWindow || !this.registry || typeof this.registry.getAllContexts !== "function") return null;
+      return this.registry.getAllContexts().find((ctx) => ctx.windowRef === sourceWindow) || null;
     }
     createContextSnapshot(ctx) {
       if (!ctx) return null;

@@ -105,6 +105,40 @@ test("MAIN-world hook captures GrapesJS semantic component and block drops", asy
   assert.equal(listeners.get("component:drag:end")?.length, 1, "same editor must only be bound once");
 });
 
+test("MAIN-world hook captures native prompt result and default value", async () => {
+  const messages = [];
+  const fakeWindow = {
+    location: { href: "https://example.test/editor" },
+    alert() {},
+    confirm() { return true; },
+    prompt(message, defaultValue) {
+      assert.equal(message, "Please enter a custom width (px).(320~1200)");
+      assert.equal(defaultValue, "900");
+      return "960";
+    },
+    postMessage(message) { messages.push(message); },
+    addEventListener() {}
+  };
+  fakeWindow.window = fakeWindow;
+  fakeWindow.top = fakeWindow;
+
+  const source = await readFile(new URL("../dialogHook.js", import.meta.url), "utf8");
+  vm.runInNewContext(source, {
+    window: fakeWindow,
+    console: { debug() {} },
+    setTimeout(callback) { callback(); }
+  });
+
+  const result = fakeWindow.prompt("Please enter a custom width (px).(320~1200)", "900");
+  const promptMessage = messages.find((message) => message.type === "RECORDER_NATIVE_DIALOG");
+
+  assert.equal(result, "960");
+  assert.equal(promptMessage.dialogType, "prompt");
+  assert.equal(promptMessage.message, "Please enter a custom width (px).(320~1200)");
+  assert.equal(promptMessage.defaultValue, "900");
+  assert.equal(promptMessage.result, "960");
+});
+
 test("recording lifecycle resumes without creating another navigation action", async () => {
   const source = await readFile(new URL("../MainApp.js", import.meta.url), "utf8");
   const startMethod = source.slice(source.indexOf("  start() {"), source.indexOf("  resumeRecording() {"));
@@ -118,6 +152,18 @@ test("recording lifecycle resumes without creating another navigation action", a
   assert.match(resumeMethod, /setRecordingState\(true, \{ allowHoverPreview: true \}\)/);
   assert.match(resumeMethod, /this\.navigationTracker\.start\(\)/);
   assert.match(resumeMethod, /this\.startDynamicFrameWatcher\(\)/);
+});
+
+test("native dialog listener records the event source context", async () => {
+  const source = await readFile(new URL("../MainApp.js", import.meta.url), "utf8");
+  const listenerMethod = source.slice(
+    source.indexOf("  setupNativeDialogListener() {"),
+    source.indexOf("  setupGrapesDropListener() {")
+  );
+
+  assert.match(listenerMethod, /const sourceContext = this\.getContextByWindowSource\(event\.source\)/);
+  assert.match(listenerMethod, /sourceWindow: sourceContext\?\.contextId \|\| "ctx_page_0"/);
+  assert.match(listenerMethod, /sourceContext: this\.createContextSnapshot\(sourceContext\) \|\| null/);
 });
 
 test("actions created in separate page stores receive globally distinct ids", () => {
@@ -308,6 +354,37 @@ test("navigation without viewport metadata remains backward compatible", () => {
   );
 });
 
+test("native prompt from iframe installs dialog handler on the owning page", () => {
+  const command = {
+    code: [
+      'await page.locator("iframe#gjsiframe").contentFrame().getByText("Custom width").click();'
+    ]
+  };
+  const generator = new PlaywrightCodeGenerator({ priSize: 3 }, command, "page");
+  generator.setContexts([
+    { contextId: "ctx_page_0", type: "page", parentContextId: null },
+    {
+      contextId: "ctx_iframe_0",
+      type: "iframe",
+      parentContextId: "ctx_page_0",
+      frameSelector: "iframe#gjsiframe"
+    }
+  ]);
+
+  const result = generator.generate({
+    type: "dialog",
+    dialogType: "prompt",
+    result: "900",
+    sourceWindow: "ctx_iframe_0"
+  });
+
+  assert.equal(result.isReplace, true);
+  assert.equal(result.code[0], "page.once('dialog', async dialog => {");
+  assert.equal(result.code[2], '  await dialog.accept("900");');
+  assert.equal(result.code[4], command.code[0]);
+  assert.doesNotMatch(result.code.join("\n"), /contentFrame\(\)\.once\('dialog'/);
+});
+
 test("popup code applies its recorded viewport after the popup is acquired", () => {
   const generator = createGenerator();
   generator.command = {
@@ -366,19 +443,19 @@ test("drag code converts the recorded target ratios using the current target siz
 
   assert.equal(lines[0], "{");
   assert.equal(lines[1], "  const dropTarget = targetLocator;");
-  assert.match(code, /await sourceLocator\.scrollIntoViewIfNeeded\(\)/);
-  assert.match(code, /await dropTarget\.scrollIntoViewIfNeeded\(\)/);
+  assert.match(code, /await safeScrollIntoViewIfNeeded\(sourceLocator\)/);
+  assert.match(code, /await safeScrollIntoViewIfNeeded\(dropTarget\)/);
   assert.match(code, /await dropTarget\.waitFor\(\{ state: 'visible' \}\)/);
   assert.match(code, /const dropSize = await dropTarget\.evaluate/);
   assert.match(code, /dropSize\.width \* 0\.25/);
   assert.match(code, /dropSize\.height \* 0\.6/);
   assert.doesNotMatch(code, /x: 24\.5, y: 39/);
   assert.ok(
-    lines.findIndex(line => line.includes("sourceLocator.scrollIntoViewIfNeeded")) <
-    lines.findIndex(line => line.includes("dropTarget.scrollIntoViewIfNeeded"))
+    lines.findIndex(line => line.includes("safeScrollIntoViewIfNeeded(sourceLocator)")) <
+    lines.findIndex(line => line.includes("safeScrollIntoViewIfNeeded(dropTarget)"))
   );
   assert.ok(
-    lines.findIndex(line => line.includes("dropTarget.scrollIntoViewIfNeeded")) <
+    lines.findIndex(line => line.includes("safeScrollIntoViewIfNeeded(dropTarget)")) <
     lines.findIndex(line => line.includes("const dropSize"))
   );
 });
@@ -401,6 +478,78 @@ test("drag source positions record the pointer ratio inside the source element",
       sourceHeight: 100
     });
   }
+});
+
+test("canvas drags replay the recorded pointer path with page mouse coordinates", () => {
+  const generator = createGenerator();
+  const lines = generator.dragAndDropCodeSetter(
+    {
+      canvasDragPath: [
+        { x: 10, y: 20, xRatio: 0.1, yRatio: 0.2 },
+        { x: 40, y: 50, xRatio: 0.4, yRatio: 0.5 },
+        { x: 80, y: 90, xRatio: 0.8, yRatio: 0.9 }
+      ]
+    },
+    null,
+    { funName: "ByDomPath", obj: {} },
+    "source-context",
+    "target-context"
+  );
+  const code = lines.join("\n");
+
+  assert.match(code, /const canvas = pageLocator;/);
+  assert.match(code, /const path = \[\{"xRatio":0\.1,"yRatio":0\.2\}/);
+  assert.match(code, /await page\.mouse\.down\(\)/);
+  assert.match(code, /await page\.mouse\.up\(\)/);
+  assert.doesNotMatch(code, /\.dragTo\(/);
+});
+
+test("canvas input focuses the recorded canvas position before typing", () => {
+  const generator = createGenerator();
+  const lines = generator.canvasInputSetter(
+    {
+      canvasInputPosition: { xRatio: 0.25, yRatio: 0.75 }
+    },
+    { funName: "ByDomPath", obj: {} },
+    "source-context",
+    "A"
+  );
+  const code = lines.join("\n");
+
+  assert.match(code, /const canvas = pageLocator;/);
+  assert.match(code, /canvas\.click\(\{ position: \{ x: box\.width \* point\.xRatio, y: box\.height \* point\.yRatio \} \}\)/);
+  assert.match(code, /await page\.keyboard\.type\("A"\)/);
+});
+
+test("canvas wheel actions hover the recorded canvas position before scrolling", () => {
+  const generator = createGenerator();
+  const lines = generator.canvasWheelSetter(
+    {
+      canvasWheel: {
+        deltaX: 0,
+        deltaY: 320,
+        position: { xRatio: 0.95, yRatio: 0.4 }
+      }
+    },
+    { funName: "ByDomPath", obj: {} },
+    "source-context"
+  );
+  const code = lines.join("\n");
+
+  assert.match(code, /const canvas = pageLocator;/);
+  assert.match(code, /canvas\.hover\(\{ position: \{ x: wheelBox\.width \* wheelPoint\.xRatio, y: wheelBox\.height \* wheelPoint\.yRatio \} \}\)/);
+  assert.match(code, /await page\.mouse\.wheel\(0, 320\)/);
+});
+
+test("double-click actions can preserve a recorded canvas-relative position", () => {
+  const generator = createGenerator();
+  const code = generator.doubleClickSetter(
+    { type: "dbclick", clickPosition: { x: 12.5, y: 34 } },
+    { funName: "ByDomPath", obj: {} },
+    "source-context"
+  );
+
+  assert.equal(code, "await pageLocator.dblclick({ position: { x: 12.5, y: 34 } });");
 });
 
 test("GrapesJS iframe drags replay with page mouse coordinates instead of dragTo", () => {
@@ -574,7 +723,7 @@ test("drag code restores the recorded scroll-container ratio before calculating 
   assert.match(code, /scroller\.scrollTop =/);
   assert.ok(
     lines.findIndex(line => line.includes("scroller.scrollTop")) <
-    lines.findIndex(line => line.includes("dropTarget.scrollIntoViewIfNeeded")),
+    lines.findIndex(line => line.includes("safeScrollIntoViewIfNeeded(dropTarget)")),
     "recorded scroll restoration must run before adaptive target scrolling"
   );
 });
@@ -1222,6 +1371,35 @@ test("ion-select popover generates open and option click code", () => {
   assert.doesNotMatch(code.join("\n"), /selectOption/);
   assert.doesNotMatch(code.join("\n"), /getByText/);
   assert.doesNotMatch(code.join("\n"), /getByRole/);
+});
+
+test("ion-select open step avoids generated display-text locators", () => {
+  const generator = new PlaywrightCodeGenerator({ priSize: 3 }, {}, "page");
+  const code = generator.ionSelectSetter(
+    {
+      selectedValue: "ALL",
+      selectedText: "ALL",
+      selectedTexts: ["ALL"],
+      selectInterface: "alert"
+    },
+    {
+      0: {
+        funName: "ByPlaywright",
+        obj: {
+          locator: "getByLabel('Basic Query').getByText('ALL DISTINCT DISTINCT DISTINCT')"
+        }
+      },
+      1: {
+        funName: "ByDomPath",
+        obj: { csspath: ".select-expanded", shadowChain: [] }
+      }
+    },
+    "page"
+  );
+
+  assert.equal(code[0], "await page.getByLabel('Basic Query').click();");
+  assert.doesNotMatch(code[0], /ALL DISTINCT DISTINCT DISTINCT/);
+  assert.doesNotMatch(code[0], /select-expanded/);
 });
 
 test("multi-value ion-select popover targets checkboxes by accessible name", () => {

@@ -41,7 +41,7 @@ export class PlaywrightCodeGenerator {
       return gotoLine;
     }
     if (action.type === 'dialog') {
-      const winPrefix = this._getContextPrefix(action.sourceWindow);
+      const winPrefix = this._getDialogPagePrefix(action.sourceWindow);
       let dialogAction = "await dialog.dismiss();";
 
       if (action.dialogType === "alert") {
@@ -186,6 +186,10 @@ export class PlaywrightCodeGenerator {
       generatedCode = this.doubleClickSetter(action, sourcepath, sourceWindow);
     } else if (action.type === 'input' || action.type === 'color') {
       generatedCode = this.inputSetter(action, sourcepath, sourceWindow, inputText);
+    } else if (action.type === 'canvasInput') {
+      generatedCode = this.canvasInputSetter(action, sourcepath, sourceWindow, inputText);
+    } else if (action.type === 'canvasWheel') {
+      generatedCode = this.canvasWheelSetter(action, sourcepath, sourceWindow);
     } else if (action.type === 'range') {
       generatedCode = this.rangeSetter(action, sourcepath, sourceWindow, inputText);
     } else if (action.type === 'keyboard') {
@@ -295,6 +299,35 @@ export class PlaywrightCodeGenerator {
       candidate?.obj?.csspath &&
       !this._isBlockedPathCandidate(candidate)
     ) || best;
+  }
+
+  _getBestIonSelectPath(paths) {
+    const best = this._getBestPath(paths);
+    if (!best) return null;
+
+    const locatorText = best.funName === "ByPlaywright"
+      ? String(best.obj?.locator || this._playwrightSelectorToLocator(best.obj?.selector) || "")
+      : "";
+    const labelLocatorMatch = locatorText.match(/^(getByLabel\((?:"[^"]*"|'[^']*')(?:,\s*\{[^}]*\})?\))(?:\..*)?$/);
+    if (labelLocatorMatch) {
+      return {
+        ...best,
+        obj: {
+          ...best.obj,
+          locator: labelLocatorMatch[1]
+        }
+      };
+    }
+
+    const textTargetedSelect = best.funName === "ByText" || /\.getByText\(/.test(locatorText) || /^getByText\(/.test(locatorText);
+    if (!textTargetedSelect) return best;
+
+    const candidates = Array.isArray(paths) ? paths : Object.values(paths || {});
+    return candidates.find(candidate => {
+      if (candidate?.funName !== "ByPlaywright") return false;
+      const candidateLocator = String(candidate.obj?.locator || this._playwrightSelectorToLocator(candidate.obj?.selector) || "");
+      return candidateLocator && !/getByText\(/.test(candidateLocator);
+    }) || best;
   }
 
   _buildLocatorOptions(paths) {
@@ -450,6 +483,20 @@ _getContextPrefix(winVar) {
 // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
 
 // 檔案：myrecorderRestructure/usecases/PlaywrightCodeGenerator.js
+
+  _getDialogPagePrefix(sourceWindow) {
+      const context = this.contextMap.get(sourceWindow);
+      if (!context) return this._getContextPrefix(sourceWindow);
+
+      let current = context;
+      while (current?.parentContextId) {
+          const parent = this.contextMap.get(current.parentContextId);
+          if (!parent) break;
+          current = parent;
+      }
+
+      return this._getBaseContextAlias(current);
+  }
 
 setContexts(contexts = [], rootAlias = this.pageAlias) {
       if (!Array.isArray(contexts)) return;
@@ -762,7 +809,7 @@ declareContexts(contexts, rootAlias) {
   }
 
   ionSelectSetter(action, sourcepath, sourceWindow) {
-    const best = this._getBestPath(sourcepath);
+    const best = this._getBestIonSelectPath(sourcepath);
     if (!best) return null;
 
     const winPrefix = this._getContextPrefix(sourceWindow);
@@ -833,8 +880,153 @@ declareContexts(contexts, rootAlias) {
     return `await ${pagePrefix}.keyboard.press(${this.quoteForCode(inputKey)});`;
   }
 
+  canvasInputSetter(action, sourcepath, sourceWindow, inputText) {
+    const best = this._getBestPath(sourcepath);
+    if (!best) return null;
+
+    this.mergeActionContextSnapshots(action);
+    const winPrefix = this._getContextPrefix(sourceWindow);
+    const locator = this._buildLocatorString(winPrefix, best);
+    const pagePrefix = this._getMousePageAliasForAction(action, sourceWindow, sourceWindow);
+    const position = this._normalizeCanvasPoint(action?.canvasInputPosition);
+
+    this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
+
+    const lines = [
+      "{",
+      `  const canvas = ${locator};`,
+      "  await canvas.scrollIntoViewIfNeeded();"
+    ];
+
+    if (position) {
+      lines.push(
+        "  const box = await canvas.boundingBox();",
+        "  if (!box) throw new Error('Unable to calculate canvas input coordinates');",
+        `  const point = ${JSON.stringify(position)};`,
+        "  await canvas.click({ position: { x: box.width * point.xRatio, y: box.height * point.yRatio } });"
+      );
+    } else {
+      lines.push("  await canvas.click();");
+    }
+
+    lines.push(
+      `  await ${pagePrefix}.keyboard.type(${this.quoteForCode(inputText)});`,
+      "}"
+    );
+
+    return lines;
+  }
+
+  canvasWheelSetter(action, sourcepath, sourceWindow) {
+    const best = this._getBestPath(sourcepath);
+    if (!best) return null;
+
+    this.mergeActionContextSnapshots(action);
+    const winPrefix = this._getContextPrefix(sourceWindow);
+    const locator = this._buildLocatorString(winPrefix, best);
+    const pagePrefix = this._getMousePageAliasForAction(action, sourceWindow, sourceWindow);
+    const position = this._normalizeCanvasPoint(action?.canvasWheel?.position);
+    const deltaX = Number(action?.canvasWheel?.deltaX);
+    const deltaY = Number(action?.canvasWheel?.deltaY);
+    if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) return null;
+
+    this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
+
+    const lines = [
+      "{",
+      `  const canvas = ${locator};`,
+      "  await canvas.scrollIntoViewIfNeeded();"
+    ];
+
+    if (position) {
+      lines.push(
+        `  const wheelPoint = ${JSON.stringify(position)};`,
+        "  const wheelBox = await canvas.boundingBox();",
+        "  if (!wheelBox) throw new Error('Unable to calculate canvas wheel coordinates');",
+        "  await canvas.hover({ position: { x: wheelBox.width * wheelPoint.xRatio, y: wheelBox.height * wheelPoint.yRatio } });"
+      );
+    } else {
+      lines.push("  await canvas.hover();");
+    }
+
+    lines.push(
+      `  await ${pagePrefix}.mouse.wheel(${Math.round(deltaX * 100) / 100}, ${Math.round(deltaY * 100) / 100});`,
+      "}"
+    );
+
+    return lines;
+  }
+
+  canvasDragSetter(action, sourcepath, sourceWindow, targetWindow) {
+    const best = this._getBestPath(sourcepath);
+    if (!best) return null;
+
+    this.mergeActionContextSnapshots(action);
+    const winPrefix = this._getContextPrefix(sourceWindow);
+    const locator = this._buildLocatorString(winPrefix, best);
+    const mousePageAlias = this._getMousePageAliasForAction(action, sourceWindow, targetWindow || sourceWindow);
+    const path = action.canvasDragPath
+      .map(point => this._normalizeCanvasPoint(point))
+      .filter(Boolean);
+
+    if (path.length < 2) return null;
+
+    this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
+    this.updateUserActionDB(action, best.funName, best.obj, "target", sourcepath);
+
+    return [
+      "{",
+      `  const canvas = ${locator};`,
+      "  await canvas.scrollIntoViewIfNeeded();",
+      "  const box = await canvas.boundingBox();",
+      "  if (!box) throw new Error('Unable to calculate canvas drag coordinates');",
+      `  const path = ${JSON.stringify(path)};`,
+      "  const toPagePoint = point => ({",
+      "    x: box.x + box.width * point.xRatio,",
+      "    y: box.y + box.height * point.yRatio",
+      "  });",
+      "  const start = toPagePoint(path[0]);",
+      `  await ${mousePageAlias}.mouse.move(start.x, start.y);`,
+      `  await ${mousePageAlias}.mouse.down();`,
+      "  for (const point of path.slice(1)) {",
+      "    const pagePoint = toPagePoint(point);",
+      `    await ${mousePageAlias}.mouse.move(pagePoint.x, pagePoint.y);`,
+      "  }",
+      `  await ${mousePageAlias}.mouse.up();`,
+      "}"
+    ];
+  }
+
+  _normalizeCanvasPoint(point) {
+    if (!point) return null;
+
+    let xRatio = Number(point.xRatio);
+    let yRatio = Number(point.yRatio);
+    const width = Number(point.width || point.sourceWidth || point.targetWidth);
+    const height = Number(point.height || point.sourceHeight || point.targetHeight);
+    const x = Number(point.x);
+    const y = Number(point.y);
+
+    if (!Number.isFinite(xRatio) && Number.isFinite(x) && Number.isFinite(width) && width > 0) {
+      xRatio = x / width;
+    }
+    if (!Number.isFinite(yRatio) && Number.isFinite(y) && Number.isFinite(height) && height > 0) {
+      yRatio = y / height;
+    }
+    if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)) return null;
+
+    return {
+      xRatio: Math.max(0, Math.min(1, Math.round(xRatio * 10000) / 10000)),
+      yRatio: Math.max(0, Math.min(1, Math.round(yRatio * 10000) / 10000))
+    };
+  }
+
   dragAndDropCodeSetter(action, targetpath, sourcepath, sourceWindow, targetWindow) {
     const bestSou = this._getBestPath(sourcepath);
+    if (Array.isArray(action?.canvasDragPath) && action.canvasDragPath.length >= 2) {
+      return this.canvasDragSetter(action, sourcepath, sourceWindow, targetWindow);
+    }
+
     const bestTar = this._getBestDragTargetPath(targetpath);
     if (!bestSou || !bestTar) return null;
 
@@ -948,8 +1140,8 @@ declareContexts(contexts, rootAlias) {
       }
 
       lines.push(
-        `  await ${souLocator}.scrollIntoViewIfNeeded();`,
-        "  await dropTarget.scrollIntoViewIfNeeded();",
+        `  await safeScrollIntoViewIfNeeded(${souLocator});`,
+        "  await safeScrollIntoViewIfNeeded(dropTarget);",
         "  await dropTarget.waitFor({ state: 'visible' });"
       );
 
@@ -1094,8 +1286,8 @@ declareContexts(contexts, rootAlias) {
     this._appendDropScrollRestoreLines(lines, scrollState);
 
     lines.push(
-      "  await dragSource.scrollIntoViewIfNeeded();",
-      "  await dropTarget.scrollIntoViewIfNeeded();",
+      "  await safeScrollIntoViewIfNeeded(dragSource);",
+      "  await safeScrollIntoViewIfNeeded(dropTarget);",
       "  await dragSource.waitFor({ state: 'visible' });",
       "  await dropTarget.waitFor({ state: 'visible' });",
       "  const sourceBox = await dragSource.boundingBox();",
@@ -1164,7 +1356,13 @@ declareContexts(contexts, rootAlias) {
     const locator = this._buildLocatorString(winPrefix, best);
     
     this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
-    
+
+    const clickX = Number(action?.clickPosition?.x);
+    const clickY = Number(action?.clickPosition?.y);
+    if (Number.isFinite(clickX) && Number.isFinite(clickY)) {
+      return `await ${locator}.dblclick({ position: { x: ${clickX}, y: ${clickY} } });`;
+    }
+
     return `await ${locator}.dblclick();`;
   }
 

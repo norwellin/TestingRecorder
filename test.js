@@ -393,16 +393,16 @@ document.addEventListener("DOMContentLoaded", async function () {
 
         if (action.type === "dialog" && action.triggerAction) {
             const dialogText = action.dialogType || action.message || "dialog";
-            appendLabeledElement(cell, "Dialog", dialogText, null, null, index, "source");
+            appendReadOnlyLabeledValue(cell, "Dialog", dialogText);
             appendLabeledElement(
                 cell,
                 "Trigger",
                 action.triggerAction.sourceData || getActionValue(action.triggerAction),
                 action.triggerAction.sourceMethod,
-                null,
-                null,
+                action.triggerAction.sourceDomPathOptions,
+                action.triggerAction.sourceDomPathChain,
                 index,
-                "source"
+                "trigger"
             );
             return cell;
         }
@@ -502,8 +502,11 @@ document.addEventListener("DOMContentLoaded", async function () {
     }
 
     function getLocatorOptions(action, field, value, method, domOptions, chain) {
+        const optionOwner = field === "trigger" && action?.triggerAction
+            ? action.triggerAction
+            : action;
         const optionsKey = field === "target" ? "targetLocatorOptions" : "sourceLocatorOptions";
-        const storedOptions = Array.isArray(action?.[optionsKey]) ? action[optionsKey] : [];
+        const storedOptions = Array.isArray(optionOwner?.[optionsKey]) ? optionOwner[optionsKey] : [];
         const filteredStoredOptions = storedOptions.filter(option => !isBlockedLocatorOption(option));
         if (filteredStoredOptions.length) return filteredStoredOptions;
 
@@ -698,6 +701,14 @@ document.addEventListener("DOMContentLoaded", async function () {
         const annotatedBody = annotateCodeBodyWithNotes(orderedBody);
         return [
             "import { test, expect } from '@playwright/test';",
+            "",
+            "async function safeScrollIntoViewIfNeeded(locator, timeout = 1000) {",
+            "  try {",
+            "    await locator.scrollIntoViewIfNeeded({ timeout });",
+            "  } catch (error) {",
+            "    console.warn(`scrollIntoViewIfNeeded skipped: ${error.message}`);",
+            "  }",
+            "}",
             "",
             "test('test', async ({ page }) => {",
             ...annotatedBody.map(line => "  " + line),
@@ -1007,6 +1018,8 @@ document.addEventListener("DOMContentLoaded", async function () {
                 || text.includes(".mouse.up(");
         }
         if (action.type === "input") return text.includes(".fill(");
+        if (action.type === "canvasInput") return text.includes(".keyboard.type(");
+        if (action.type === "canvasWheel") return text.includes(".mouse.wheel(");
         if (action.type === "change") return text.includes(".selectOption(");
         if (action.type === "ionSelect") {
             return text.includes(".click(")
@@ -1101,6 +1114,24 @@ document.addEventListener("DOMContentLoaded", async function () {
         }).length;
 
         return candidates[Math.min(ordinal, candidates.length - 1)];
+    }
+
+    function findCodeBodyIndexForDialogTrigger(codeBody, dialogAction, triggerAction, path = null) {
+        if (!dialogAction || !triggerAction) return -1;
+
+        const dialogLines = getActionGeneratedLines(dialogAction);
+        for (const line of dialogLines) {
+            if (!matchesActionCodeLine(triggerAction, line)) continue;
+            const codeIndex = codeBody.indexOf(line);
+            if (codeIndex >= 0) return codeIndex;
+        }
+
+        const escapedPath = escapePathForCode(path);
+        return codeBody.findIndex(line => {
+            if (!matchesActionCodeLine(triggerAction, line)) return false;
+            if (!matchesActionLocatorMethod(triggerAction, line, "source")) return false;
+            return !escapedPath || String(line).includes(escapedPath);
+        });
     }
 
     function replaceDomPathInCodeLine(line, field, oldPath, newPath, newChain = []) {
@@ -1290,6 +1321,8 @@ document.addEventListener("DOMContentLoaded", async function () {
     function getActionOperation(action) {
         if (action?.type === "dragANDdrop") return ".dragTo(";
         if (action?.type === "input") return ".fill(";
+        if (action?.type === "canvasInput") return ".keyboard.type(";
+        if (action?.type === "canvasWheel") return ".mouse.wheel(";
         if (action?.type === "change") return ".selectOption(";
         if (action?.type === "ionSelect") return ".click(";
         if (action?.type === "dbclick") return ".dblclick(";
@@ -1345,16 +1378,19 @@ document.addEventListener("DOMContentLoaded", async function () {
         const action = actions[actionIndex];
         if (!action || !candidate?.method) return;
 
-        const methodKey = field === "target" ? "targetMethod" : "sourceMethod";
-        const dataKey = field === "target" ? "targetData" : "sourceData";
-        const chainKey = field === "target" ? "targetDomPathChain" : "sourceDomPathChain";
-        const optionsKey = field === "target" ? "targetLocatorOptions" : "sourceLocatorOptions";
-        const overrideKey = field === "target"
+        const isTriggerField = field === "trigger" && action.type === "dialog" && action.triggerAction;
+        const subjectAction = isTriggerField ? action.triggerAction : action;
+        const subjectField = isTriggerField ? "source" : field;
+        const methodKey = subjectField === "target" ? "targetMethod" : "sourceMethod";
+        const dataKey = subjectField === "target" ? "targetData" : "sourceData";
+        const chainKey = subjectField === "target" ? "targetDomPathChain" : "sourceDomPathChain";
+        const optionsKey = subjectField === "target" ? "targetLocatorOptions" : "sourceLocatorOptions";
+        const overrideKey = subjectField === "target"
             ? "targetLocatorSelectionOverridden"
             : "sourceLocatorSelectionOverridden";
-        const oldMethod = action[methodKey];
-        const oldValue = action[dataKey];
-        const oldChain = action[chainKey] || [];
+        const oldMethod = subjectAction[methodKey];
+        const oldValue = subjectAction[dataKey];
+        const oldChain = subjectAction[chainKey] || [];
         const nextValue = candidate.currentValue || getLocatorOptionValue(candidate.method, candidate.data);
         const nextChain = candidate.method === "ByDomPath" || candidate.method === "ByPlaywright"
             ? candidate.data?.shadowChain || []
@@ -1365,23 +1401,26 @@ document.addEventListener("DOMContentLoaded", async function () {
         const latestStoredActions = Array.isArray(storage.generatedAction)
             ? storage.generatedAction
             : [];
-        const codeIndex = findCodeBodyIndexForAction(codeBody, actionIndex, oldValue, field);
+        const codeIndex = isTriggerField
+            ? findCodeBodyIndexForDialogTrigger(codeBody, action, subjectAction, oldValue)
+            : findCodeBodyIndexForAction(codeBody, actionIndex, oldValue, subjectField);
         const actionLines = getActionGeneratedLines(action);
         const nextLines = actionLines.map(line => {
             const isDragLocatorDeclaration =
                 action.type === "dragANDdrop" &&
-                new RegExp(`^\\s*const\\s+${field === "target" ? "dropTarget" : "dragSource"}\\s*=`).test(String(line || ""));
-            return matchesActionCodeLine(action, line) || isDragLocatorDeclaration
-                ? replaceActionLocatorInCodeLine(action, line, field, candidate, oldMethod, oldChain)
+                new RegExp(`^\\s*const\\s+${subjectField === "target" ? "dropTarget" : "dragSource"}\\s*=`).test(String(line || ""));
+            const lineAction = isTriggerField ? subjectAction : action;
+            return matchesActionCodeLine(lineAction, line) || isDragLocatorDeclaration
+                ? replaceActionLocatorInCodeLine(lineAction, line, subjectField, candidate, oldMethod, oldChain)
                 : line;
         });
 
-        action[methodKey] = candidate.method;
-        action[dataKey] = nextValue;
-        action[chainKey] = nextChain;
-        action[overrideKey] = true;
+        subjectAction[methodKey] = candidate.method;
+        subjectAction[dataKey] = nextValue;
+        subjectAction[chainKey] = nextChain;
+        subjectAction[overrideKey] = true;
         if (candidate.method === "ByDomPath") {
-            action[field === "target"
+            subjectAction[subjectField === "target"
                 ? "targetDomPathSelectionOverridden"
                 : "sourceDomPathSelectionOverridden"] = true;
         }
@@ -1405,9 +1444,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 
         if (codeIndex >= 0) {
             codeBody[codeIndex] = replaceActionLocatorInCodeLine(
-                action,
+                isTriggerField ? subjectAction : action,
                 codeBody[codeIndex],
-                field,
+                subjectField,
                 candidate,
                 oldMethod,
                 oldChain
@@ -1420,12 +1459,20 @@ document.addEventListener("DOMContentLoaded", async function () {
             [methodKey]: candidate.method,
             [dataKey]: nextValue,
             [chainKey]: nextChain,
-            [optionsKey]: action[optionsKey] || [],
+            [optionsKey]: subjectAction[optionsKey] || [],
             [overrideKey]: true,
             generatedCodeLines: getActionGeneratedLines(action),
             generatedCodeLine: action.generatedCodeLine || "",
             generatedCodeReplacesPrevious: action.generatedCodeReplacesPrevious === true
         };
+        if (isTriggerField) {
+            recorderPatch.triggerAction = { ...subjectAction };
+            delete recorderPatch[methodKey];
+            delete recorderPatch[dataKey];
+            delete recorderPatch[chainKey];
+            delete recorderPatch[optionsKey];
+            delete recorderPatch[overrideKey];
+        }
 
         await chrome.storage.local.set({
             generatedAction: actions,

@@ -329,6 +329,14 @@ function buildFullCode(codeBody, actions) {
   return [
     "import { test, expect } from '@playwright/test';",
     "",
+    "async function safeScrollIntoViewIfNeeded(locator, timeout = 1000) {",
+    "  try {",
+    "    await locator.scrollIntoViewIfNeeded({ timeout });",
+    "  } catch (error) {",
+    "    console.warn(`scrollIntoViewIfNeeded skipped: ${error.message}`);",
+    "  }",
+    "}",
+    "",
     "test('test', async ({ page }) => {",
     ...annotatedCodeBody.map(line => "  " + line),
     "});"

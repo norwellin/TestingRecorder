@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "My Recorder_Dom new",
+  "name": "My Recorder_canvas support",
   "version": "1.0",
   "permissions": [
     "scripting",

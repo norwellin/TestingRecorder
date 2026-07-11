@@ -33,6 +33,9 @@ export class OuterEventListener {
     this.isDragging = false;
     this.DRAG_THRESHOLD = 5;
     this.dragSource = null;
+    this.canvasDragPath = [];
+    this.lastCanvasPointerPosition = new WeakMap();
+    this.canvasWheelRecords = new WeakMap();
     this.mouseDownFlag = false;
     this.dragStepFlag = 0;
     this.suppressClickUntil = 0;
@@ -58,6 +61,7 @@ export class OuterEventListener {
     this.mainDocument.addEventListener("mouseout", this.mouseoutHandler.bind(this), true);
     this.mainDocument.addEventListener("mouseleave", this.hideHoverPreview.bind(this), true);
     this.mainDocument.addEventListener("mouseup", this.mouseupHandler.bind(this), true);
+    this.mainDocument.addEventListener("wheel", this.wheelHandler.bind(this), true);
     this.mainWindow.addEventListener("dragstart", this.dragStartHandler.bind(this));
     this.mainDocument.addEventListener('dblclick', this.dblClickHandler.bind(this), true);
     this.mainDocument.addEventListener('keydown', this.keydownHandler.bind(this));
@@ -139,6 +143,10 @@ export class OuterEventListener {
     if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
     if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
     if (extraData.sourcePosition) action.sourcePosition = extraData.sourcePosition;
+    if (extraData.clickPosition) action.clickPosition = extraData.clickPosition;
+    if (extraData.canvasDragPath) action.canvasDragPath = extraData.canvasDragPath;
+    if (extraData.canvasInputPosition) action.canvasInputPosition = extraData.canvasInputPosition;
+    if (extraData.canvasWheel) action.canvasWheel = extraData.canvasWheel;
 
     // 【請補上這兩行】將拖拉標記附加到 action 上，否則 MainApp1 會認不出來！
     if (extraData.isDragStart) action.isDragStart = true;
@@ -490,6 +498,16 @@ export class OuterEventListener {
   keydownHandler(e) {
     if (!this.isRecording || !e.isTrusted || e.repeat) return;
     const target = this.getTextInputEventTarget(e);
+    const canvasTarget = this.getCanvasEventTarget(e);
+
+    if (!target && canvasTarget && this.isCanvasTextKey(e)) {
+      this.currentHoveredElement = canvasTarget;
+      this.dispatchAction("canvasInput", canvasTarget, null, {
+        inputText: e.key,
+        canvasInputPosition: this.lastCanvasPointerPosition.get(canvasTarget) || null
+      });
+      return;
+    }
 
     if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
       if (target) this.flushPendingTextInputRecord(target);
@@ -556,10 +574,58 @@ export class OuterEventListener {
     }).filter(Boolean);
   }
   dblClickHandler(e) {
-    if (!this.isRecording) return;
+    if (!this.isRecording || !e.isTrusted) return;
     if (this.shouldSuppressSyntheticPageEvent()) return;
+    const target = this.getComposedEventTarget(e);
+    if (this.isCanvasElement(target)) {
+      const clickPosition = this.getElementPosition(e, target);
+      if (clickPosition) this.lastCanvasPointerPosition.set(target, clickPosition);
+      this.currentHoveredElement = target;
+      this.dispatchAction("dbclick", this.currentHoveredElement, null, { clickPosition });
+      return;
+    }
+
     this.currentHoveredElement = e.target;
     this.dispatchAction("dbclick", this.currentHoveredElement);
+  }
+
+  wheelHandler(e) {
+    if (!this.isRecording || !e.isTrusted) return;
+    if (this.shouldSuppressSyntheticPageEvent()) return;
+
+    const target = this.getCanvasEventTarget(e);
+    if (!target) return;
+
+    const position = this.getElementPosition(e, target);
+    if (position) this.lastCanvasPointerPosition.set(target, position);
+
+    const delta = this.getWheelDelta(e);
+    if (!delta) return;
+
+    const existing = this.canvasWheelRecords.get(target);
+    if (existing?.timer) clearTimeout(existing.timer);
+
+    const next = {
+      deltaX: (existing?.deltaX || 0) + delta.deltaX,
+      deltaY: (existing?.deltaY || 0) + delta.deltaY,
+      position: position || existing?.position || null,
+      timer: null
+    };
+
+    next.timer = setTimeout(() => {
+      this.canvasWheelRecords.delete(target);
+      if (!this.isRecording) return;
+      this.currentHoveredElement = target;
+      this.dispatchAction("canvasWheel", target, null, {
+        canvasWheel: {
+          deltaX: Math.round(next.deltaX * 100) / 100,
+          deltaY: Math.round(next.deltaY * 100) / 100,
+          position: next.position
+        }
+      });
+    }, 150);
+
+    this.canvasWheelRecords.set(target, next);
   }
 
   dragStartHandler(e) {
@@ -585,6 +651,14 @@ export class OuterEventListener {
     this.dragStart = { x: e.clientX, y: e.clientY };
     this.isDragging = false;
     this.dragSource = this.getDragSourceElement(e.target);
+    this.canvasDragPath = [];
+    if (this.isCanvasElement(this.dragSource)) {
+      const startPoint = this.getElementPosition(e, this.dragSource);
+      if (startPoint) {
+        this.canvasDragPath = [startPoint];
+        this.lastCanvasPointerPosition.set(this.dragSource, startPoint);
+      }
+    }
     this.mouseDownFlag = true;
     this.dragStepFlag = 1;
     this.hideHoverPreview();
@@ -600,6 +674,15 @@ export class OuterEventListener {
       this.hideHoverPreview();
     }
 
+    if (this.isDragging && this.isCanvasElement(this.dragSource)) {
+      const point = this.getElementPosition(e, this.dragSource);
+      if (point) {
+        this.canvasDragPath.push(point);
+        this.lastCanvasPointerPosition.set(this.dragSource, point);
+      }
+      return;
+    }
+
     if (!this.dragStart || this.dragStepFlag !== 1) return;
 
     const dx = e.clientX - this.dragStart.x;
@@ -610,6 +693,15 @@ export class OuterEventListener {
       this.isDragging = true;
       this.dragStepFlag = 2;
       this.mouseDownFlag = false;
+
+      if (this.isCanvasElement(this.dragSource)) {
+        const point = this.getElementPosition(e, this.dragSource);
+        if (point) {
+          this.canvasDragPath.push(point);
+          this.lastCanvasPointerPosition.set(this.dragSource, point);
+        }
+        return;
+      }
 
       this.dispatchAction("dragANDdrop", this.dragSource, null, {
         isDragStart: true,
@@ -764,6 +856,27 @@ export class OuterEventListener {
     if (this.isDragging) {
       this.isDragging = false;
       this.dragStart = { x: 0, y: 0 };
+
+      if (this.isCanvasElement(this.dragSource)) {
+        const canvas = this.dragSource;
+        const endPoint = this.getElementPosition(e, canvas);
+        if (endPoint) {
+          this.canvasDragPath.push(endPoint);
+          this.lastCanvasPointerPosition.set(canvas, endPoint);
+        }
+        this.currentHoveredElement = canvas;
+        this.mouseDownFlag = false;
+        this.dragStepFlag = 0;
+        this.suppressClickUntil = Date.now() + 300;
+        this.dispatchAction("dragANDdrop", canvas, canvas, {
+          sourcePosition: this.canvasDragPath[0] || null,
+          dropPosition: endPoint,
+          canvasDragPath: this.canvasDragPath.filter(Boolean)
+        });
+        this.canvasDragPath = [];
+        return;
+      }
+
       this.currentHoveredElement = this.getDropTargetElement(e);
       this.mouseDownFlag = false;
       this.dragStepFlag = 0;
@@ -784,6 +897,14 @@ export class OuterEventListener {
     if (Date.now() < this.suppressClickUntil) return;
     if (this.shouldSuppressSyntheticPageEvent()) return;
     const target = this.getComposedEventTarget(e);
+    if (this.isCanvasElement(target)) {
+      const clickPosition = this.getElementPosition(e, target);
+      if (clickPosition) this.lastCanvasPointerPosition.set(target, clickPosition);
+      this.currentHoveredElement = target;
+      this.dispatchAction("click", this.currentHoveredElement, null, { clickPosition });
+      return;
+    }
+
     if (target?.tagName === "ION-SELECT") {
       this.pendingIonSelectInteractions.set(target, Date.now());
       this.activeIonSelect = target;
@@ -835,6 +956,14 @@ export class OuterEventListener {
     const target = this.getComposedEventTarget(e);
     if (!target) return;
 
+    if (this.isCanvasElement(target)) {
+      const clickPosition = this.getElementPosition(e, target);
+      if (clickPosition) this.lastCanvasPointerPosition.set(target, clickPosition);
+      this.currentHoveredElement = target;
+      this.dispatchAction("rightClick", this.currentHoveredElement, null, { clickPosition });
+      return;
+    }
+
     const toolbarItem = target?.closest?.(
       ".gjs-toolbar-item, [data-command], [data-cmd]"
     );
@@ -873,6 +1002,53 @@ export class OuterEventListener {
 
   isFileInput(element) {
     return element?.tagName === "INPUT" && element.getAttribute("type") === "file";
+  }
+
+  isCanvasElement(element) {
+    return element?.tagName === "CANVAS";
+  }
+
+  getCanvasEventTarget(e) {
+    const target = this.getComposedEventTarget(e);
+    return this.isCanvasElement(target) ? target : null;
+  }
+
+  isCanvasTextKey(e) {
+    return !e.isComposing && !e.ctrlKey && !e.metaKey && !e.altKey && e.key?.length === 1;
+  }
+
+  getElementPosition(event, element) {
+    if (!event || !element?.getBoundingClientRect) return null;
+    const rect = element.getBoundingClientRect();
+    if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+
+    const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+    const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+    const round = value => Math.round(value * 100) / 100;
+    return {
+      x: round(x),
+      y: round(y),
+      xRatio: Math.round((x / rect.width) * 10000) / 10000,
+      yRatio: Math.round((y / rect.height) * 10000) / 10000,
+      width: round(rect.width),
+      height: round(rect.height)
+    };
+  }
+
+  getWheelDelta(event) {
+    if (!event) return null;
+    const unit = event.deltaMode === 1
+      ? 16
+      : event.deltaMode === 2
+        ? (this.mainWindow?.innerHeight || 800)
+        : 1;
+    const deltaX = Number(event.deltaX) * unit;
+    const deltaY = Number(event.deltaY) * unit;
+    if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) return null;
+    if (deltaX === 0 && deltaY === 0) return null;
+    return { deltaX, deltaY };
   }
 
   recordColorInput(element) {
@@ -968,7 +1144,7 @@ export class OuterEventListener {
   }
 
   isMouseDragCandidate(element) {
-    return !!element?.closest?.(".gjs-layer-move, [data-toggle-move]");
+    return this.isCanvasElement(element) || !!element?.closest?.(".gjs-layer-move, [data-toggle-move]");
   }
 
   getDragTargetElement(element) {
@@ -994,6 +1170,7 @@ export class OuterEventListener {
     this.isDragging = false;
     this.dragStart = { x: 0, y: 0 };
     this.dragSource = null;
+    this.canvasDragPath = [];
     this.mouseDownFlag = false;
     this.dragStepFlag = 0;
   }

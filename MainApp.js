@@ -172,7 +172,8 @@ export class MainApp {
       if (msg?.source !== "RECORDER_PAGE_HOOK") return;
       if (msg.type !== "RECORDER_NATIVE_DIALOG") return;
       if (!this.isStarted) return;
-      if (event.source !== this.rootWin && !this.isKnownFrameSource(event.source)) return;
+      const sourceContext = this.getContextByWindowSource(event.source);
+      if (event.source !== this.rootWin && !sourceContext) return;
 
       this.handleUserAction({
         type: "dialog",
@@ -182,7 +183,8 @@ export class MainApp {
         defaultValue: msg.defaultValue,
         frameUrl: msg.frameUrl,
         fromIframe: msg.fromIframe === true,
-        sourceWindow: "ctx_page_0",
+        sourceWindow: sourceContext?.contextId || "ctx_page_0",
+        sourceContext: this.createContextSnapshot(sourceContext) || null,
         ts: Date.now()
       });
     });
@@ -345,6 +347,13 @@ export class MainApp {
     return this.registry
       .getContextsByType("iframe")
       .some((ctx) => ctx.windowRef === sourceWindow);
+  }
+
+  getContextByWindowSource(sourceWindow) {
+    if (!sourceWindow || !this.registry || typeof this.registry.getAllContexts !== "function") return null;
+    return this.registry
+      .getAllContexts()
+      .find((ctx) => ctx.windowRef === sourceWindow) || null;
   }
 
   createContextSnapshot(ctx) {
