@@ -521,6 +521,27 @@ test("canvas input focuses the recorded canvas position before typing", () => {
   assert.match(code, /await page\.keyboard\.type\("A"\)/);
 });
 
+test("monaco set-value actions replay through the Monaco model instead of filling the textarea", () => {
+  const generator = createGenerator();
+  const lines = generator.monacoSetValueSetter(
+    {
+      type: "monacoSetValue",
+      monaco: { editorIndex: 1, modelIndex: 2, modelUri: "inmemory://model/3" }
+    },
+    { funName: "ByDomPath", obj: {} },
+    "source-context",
+    "const answer = 42;"
+  );
+  const code = lines.join("\n");
+
+  assert.match(code, /const editorRoot = pageLocator;/);
+  assert.match(code, /editorRoot\.evaluate\(/);
+  assert.match(code, /editor\.setValue\(payload\.code\)/);
+  assert.match(code, /model\.setValue\(payload\.code\)/);
+  assert.match(code, /"code":"const answer = 42;"/);
+  assert.doesNotMatch(code, /\.fill\(/);
+});
+
 test("canvas wheel actions hover the recorded canvas position before scrolling", () => {
   const generator = createGenerator();
   const lines = generator.canvasWheelSetter(
@@ -1295,6 +1316,42 @@ test("trusted typing beforeinput remains recordable", () => {
 
     assert.equal(listener.userEditedInputs.has(target), true);
     assert.equal(scheduled, 1);
+  }
+});
+
+test("monaco textarea input uses Monaco set-value recording instead of normal input fill", () => {
+  for (const Listener of [OuterEventListener, IframeEventListener]) {
+    const target = {
+      nodeType: 1,
+      tagName: "TEXTAREA",
+      value: "partial buffer",
+      getAttribute: () => null
+    };
+    let normalScheduled = 0;
+    let monacoScheduled = 0;
+    const listener = Object.create(Listener.prototype);
+    Object.assign(listener, {
+      isRecording: true,
+      composingInputs: new WeakSet(),
+      getTextInputEventTarget: () => target,
+      shouldSuppressSyntheticPageEvent: () => false,
+      isRangeInput: () => false,
+      isColorInput: () => false,
+      isMonacoInputElement: () => true,
+      scheduleTextInputRecord: () => { normalScheduled += 1; },
+      scheduleMonacoSetValueRecord: () => { monacoScheduled += 1; },
+      debugInputEvent: () => {}
+    });
+
+    listener.inputHandler({
+      isTrusted: true,
+      inputType: "insertText",
+      isComposing: false,
+      target
+    });
+
+    assert.equal(monacoScheduled, 1);
+    assert.equal(normalScheduled, 0);
   }
 });
 

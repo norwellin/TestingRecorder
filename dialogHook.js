@@ -11,9 +11,18 @@
     if (event.source !== window) return;
     const message = event.data;
     if (message?.source !== "RECORDER_CONTENT_SCRIPT") return;
-    if (message.type !== "RECORDER_ELEMENT_ID_ANALYSIS") return;
 
-    console.log("[Recorder ID Analysis]", message.analysis);
+    if (message.type === "RECORDER_ELEMENT_ID_ANALYSIS") {
+      console.log("[Recorder ID Analysis]", message.analysis);
+      return;
+    }
+
+    if (message.type === "RECORDER_MONACO_GET_VALUE") {
+      postRecorderPageMessage("RECORDER_MONACO_VALUE", {
+        requestId: message.requestId,
+        monacoValue: getMonacoValueSnapshot(message)
+      });
+    }
   });
 
   function notify(dialogType, message, extraData = {}) {
@@ -47,6 +56,41 @@
     window.postMessage(message, "*");
     if (window.top && window.top !== window) {
       window.top.postMessage({ ...message, fromIframe: true }, "*");
+    }
+  }
+
+  function getMonacoValueSnapshot(request = {}) {
+    try {
+      const monaco = window.monaco;
+      if (!monaco?.editor) {
+        return { ok: false, error: "Monaco is not available" };
+      }
+
+      const editors = typeof monaco.editor.getEditors === "function"
+        ? monaco.editor.getEditors()
+        : [];
+      const models = typeof monaco.editor.getModels === "function"
+        ? monaco.editor.getModels()
+        : [];
+      const requestedEditorIndex = Math.max(0, Math.floor(Number(request.editorIndex) || 0));
+      const requestedModelIndex = Math.max(0, Math.floor(Number(request.modelIndex) || requestedEditorIndex || 0));
+      const editor = editors[requestedEditorIndex] || null;
+      const model = editor?.getModel?.() || models[requestedModelIndex] || models[0] || null;
+
+      if (!model || typeof model.getValue !== "function") {
+        return { ok: false, error: "Monaco model not found" };
+      }
+
+      const modelIndex = Math.max(0, models.indexOf(model));
+      return {
+        ok: true,
+        value: model.getValue(),
+        editorIndex: editor ? requestedEditorIndex : -1,
+        modelIndex: modelIndex >= 0 ? modelIndex : requestedModelIndex,
+        modelUri: String(model.uri?.toString?.() || model.uri || "")
+      };
+    } catch (error) {
+      return { ok: false, error: error?.message || String(error) };
     }
   }
 

@@ -1018,6 +1018,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 || text.includes(".mouse.up(");
         }
         if (action.type === "input") return text.includes(".fill(");
+        if (action.type === "monacoSetValue") return text.includes("editorRoot.evaluate(") || text.includes("editor.setValue(") || text.includes("model.setValue(");
         if (action.type === "canvasInput") return text.includes(".keyboard.type(");
         if (action.type === "canvasWheel") return text.includes(".mouse.wheel(");
         if (action.type === "change") return text.includes(".selectOption(");
@@ -1321,6 +1322,7 @@ document.addEventListener("DOMContentLoaded", async function () {
     function getActionOperation(action) {
         if (action?.type === "dragANDdrop") return ".dragTo(";
         if (action?.type === "input") return ".fill(";
+        if (action?.type === "monacoSetValue") return ".evaluate(";
         if (action?.type === "canvasInput") return ".keyboard.type(";
         if (action?.type === "canvasWheel") return ".mouse.wheel(";
         if (action?.type === "change") return ".selectOption(";

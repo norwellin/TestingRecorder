@@ -24,6 +24,7 @@ export class IframeEventListener {
     this.userEditedInputs = new WeakSet();
     this.composingInputs = new WeakSet();
     this.lastColorInput = new WeakMap();
+    this.lastMonacoValues = new WeakMap();
     this.pendingIonSelectInteractions = new WeakMap();
     this.activeIonSelect = null;
     this.dragStart = { x: 0, y: 0 };
@@ -138,6 +139,7 @@ export class IframeEventListener {
     if (extraData.canvasDragPath) action.canvasDragPath = extraData.canvasDragPath;
     if (extraData.canvasInputPosition) action.canvasInputPosition = extraData.canvasInputPosition;
     if (extraData.canvasWheel) action.canvasWheel = extraData.canvasWheel;
+    if (extraData.monaco) action.monaco = extraData.monaco;
 
     if (extraData.isDragStart) action.isDragStart = true;
     if (extraData.isDrop) action.isDrop = true;
@@ -300,6 +302,11 @@ export class IframeEventListener {
     const target = this.getTextInputEventTarget(e) || e.target;
     if (!this.isTextInputElement(target)) return;
 
+    if (this.isMonacoInputElement(target)) {
+      this.scheduleMonacoSetValueRecord(target, 150);
+      return;
+    }
+
     if (!this.preEditSourcePaths.has(target)) {
       const sourcePath = this.domParserService.getOpenSourcePath(target, this.iframeWindow);
       if (sourcePath && Object.keys(sourcePath).length > 0) {
@@ -341,6 +348,11 @@ export class IframeEventListener {
     const tag = target.tagName.toLowerCase();
     const type = target.getAttribute("type");
     const isRange = this.isRangeInput(target);
+
+    if (this.isMonacoInputElement(target)) {
+      this.scheduleMonacoSetValueRecord(target);
+      return;
+    }
 
     if (isRange) {
       clearTimeout(this.timer);
@@ -1047,6 +1059,97 @@ export class IframeEventListener {
     if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) return null;
     if (deltaX === 0 && deltaY === 0) return null;
     return { deltaX, deltaY };
+  }
+
+  isMonacoInputElement(element) {
+    return !!this.getMonacoRoot(element);
+  }
+
+  getMonacoRoot(element) {
+    return element?.closest?.(".monaco-editor") || null;
+  }
+
+  getMonacoEditorIndex(monacoRoot) {
+    const roots = Array.from(monacoRoot?.ownerDocument?.querySelectorAll?.(".monaco-editor") || []);
+    const index = roots.indexOf(monacoRoot);
+    return index >= 0 ? index : 0;
+  }
+
+  scheduleMonacoSetValueRecord(element, delay = 500) {
+    const monacoRoot = this.getMonacoRoot(element);
+    if (!monacoRoot) return;
+
+    clearTimeout(this.timer);
+    this.pendingTextInputElement = monacoRoot;
+    this.timer = setTimeout(async () => {
+      this.timer = null;
+      if (this.pendingTextInputElement === monacoRoot) {
+        this.pendingTextInputElement = null;
+      }
+      if (!this.isRecording) return;
+
+      const snapshot = await this.requestMonacoValueSnapshot(monacoRoot);
+      if (!snapshot?.ok || typeof snapshot.value !== "string") {
+        console.warn("[Recorder] Unable to read Monaco value", snapshot?.error || snapshot);
+        return;
+      }
+
+      if (this.lastMonacoValues.get(monacoRoot) === snapshot.value) return;
+      this.lastMonacoValues.set(monacoRoot, snapshot.value);
+
+      const sourcePath = this.domParserService.getOpenSourcePath(monacoRoot, this.iframeWindow);
+      this.currentHoveredElement = monacoRoot;
+      this.dispatchAction("monacoSetValue", monacoRoot, null, {
+        inputText: snapshot.value,
+        preParsedSourcePath: sourcePath,
+        monaco: {
+          editorIndex: snapshot.editorIndex,
+          modelIndex: snapshot.modelIndex,
+          modelUri: snapshot.modelUri || ""
+        }
+      });
+    }, delay);
+  }
+
+  requestMonacoValueSnapshot(monacoRoot) {
+    const targetWindow = monacoRoot?.ownerDocument?.defaultView || this.iframeWindow;
+    if (!targetWindow?.postMessage) {
+      return Promise.resolve({ ok: false, error: "Window is not available" });
+    }
+
+    const requestId = `monaco_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const editorIndex = this.getMonacoEditorIndex(monacoRoot);
+
+    return new Promise(resolve => {
+      let settled = false;
+      const cleanup = () => {
+        settled = true;
+        targetWindow.removeEventListener("message", onMessage);
+      };
+      const onMessage = (event) => {
+        if (event.source !== targetWindow) return;
+        const data = event.data;
+        if (data?.source !== "RECORDER_PAGE_HOOK" || data.type !== "RECORDER_MONACO_VALUE") return;
+        if (data.requestId !== requestId) return;
+        cleanup();
+        resolve(data.monacoValue || { ok: false, error: "Missing Monaco response" });
+      };
+
+      targetWindow.addEventListener("message", onMessage);
+      targetWindow.postMessage({
+        source: "RECORDER_CONTENT_SCRIPT",
+        type: "RECORDER_MONACO_GET_VALUE",
+        requestId,
+        editorIndex,
+        modelIndex: editorIndex
+      }, "*");
+
+      setTimeout(() => {
+        if (settled) return;
+        cleanup();
+        resolve({ ok: false, error: "Timed out waiting for Monaco value" });
+      }, 500);
+    });
   }
 
   recordColorInput(element) {

@@ -186,6 +186,8 @@ export class PlaywrightCodeGenerator {
       generatedCode = this.doubleClickSetter(action, sourcepath, sourceWindow);
     } else if (action.type === 'input' || action.type === 'color') {
       generatedCode = this.inputSetter(action, sourcepath, sourceWindow, inputText);
+    } else if (action.type === 'monacoSetValue') {
+      generatedCode = this.monacoSetValueSetter(action, sourcepath, sourceWindow, inputText);
     } else if (action.type === 'canvasInput') {
       generatedCode = this.canvasInputSetter(action, sourcepath, sourceWindow, inputText);
     } else if (action.type === 'canvasWheel') {
@@ -1376,6 +1378,51 @@ declareContexts(contexts, rootAlias) {
     this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
     
     return `await ${locator}.fill(${this.quoteForCode(inputText)});`;
+  }
+
+  monacoSetValueSetter(action, sourcepath, sourceWindow, inputText) {
+    const best = this._getBestPath(sourcepath);
+    if (!best) return null;
+
+    const winPrefix = this._getContextPrefix(sourceWindow);
+    const locator = this._buildLocatorString(winPrefix, best);
+    const monaco = action?.monaco || {};
+    const payload = {
+      editorIndex: Math.max(0, Math.floor(Number(monaco.editorIndex) || 0)),
+      modelIndex: Math.max(0, Math.floor(Number(monaco.modelIndex) || 0)),
+      modelUri: String(monaco.modelUri || ""),
+      code: String(inputText ?? "")
+    };
+
+    this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
+
+    return [
+      "{",
+      `  const editorRoot = ${locator};`,
+      "  await editorRoot.evaluate((element, payload) => {",
+      "    const win = element.ownerDocument.defaultView;",
+      "    const monaco = win?.monaco;",
+      "    if (!monaco?.editor) throw new Error('Monaco is not available');",
+      "    const editors = monaco.editor.getEditors?.() || [];",
+      "    const models = monaco.editor.getModels?.() || [];",
+      "    const editorFromDom = editors.find(candidate => {",
+      "      const domNode = candidate?.getDomNode?.();",
+      "      return domNode === element || domNode?.contains?.(element) || element.contains?.(domNode);",
+      "    });",
+      "    const editor = editorFromDom || editors[payload.editorIndex];",
+      "    if (editor?.setValue) {",
+      "      editor.setValue(payload.code);",
+      "      return;",
+      "    }",
+      "    const modelByUri = payload.modelUri",
+      "      ? models.find(model => String(model.uri?.toString?.() || model.uri || '') === payload.modelUri)",
+      "      : null;",
+      "    const model = modelByUri || editor?.getModel?.() || models[payload.modelIndex] || models[0];",
+      "    if (!model?.setValue) throw new Error('Monaco editor/model not found');",
+      "    model.setValue(payload.code);",
+      `  }, ${JSON.stringify(payload)});`,
+      "}"
+    ];
   }
 
   rangeSetter(action, sourcepath, sourceWindow, value) {
