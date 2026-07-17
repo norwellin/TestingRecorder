@@ -546,14 +546,23 @@ document.addEventListener("DOMContentLoaded", async function () {
         return fallback;
     }
 
+    function getLocatorRiskLabelPrefix(candidate) {
+        const data = candidate?.data || {};
+        const labels = [];
+        if (data.possibleDynamicId === true) labels.push("【可能為動態 ID】");
+        if (data.possibleDynamicClass === true) labels.push("【可能為動態 Class】");
+        return labels.length ? `${labels.join("")} ` : "";
+    }
+
     function formatLocatorOptionLabel(candidate, domIndex = 0) {
         const data = candidate?.data || {};
         const recommended = candidate?.recommended ? "（推薦）" : "";
+        const riskPrefix = getLocatorRiskLabelPrefix(candidate);
 
         if (candidate.method === "ByPlaywright") {
             const hostPrefix = formatDomPathParts("", data.shadowChain || []).replace(/\s*>>\s*$/, "");
             const selector = data.locator || data.selector || candidate.currentValue || "";
-            return `Playwright${recommended} — ${[hostPrefix, selector].filter(Boolean).join(" >> ")}`;
+            return `${riskPrefix}Playwright${recommended} — ${[hostPrefix, selector].filter(Boolean).join(" >> ")}`;
         }
         if (candidate.method === "ByGjsToolbarItem") {
             const toolbar = data.toolbarSelector || ".gjs-toolbar";
@@ -692,7 +701,11 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
 
         const span = document.createElement("span");
-        span.textContent = method === "ByDomPath" ? formatDomPathParts(value, chain) : value || "";
+        const selectedOption = locatorOptions.find(candidate =>
+            isSelectedLocatorOption(candidate, method, value, chain)
+        ) || locatorOptions[0];
+        const displayedValue = method === "ByDomPath" ? formatDomPathParts(value, chain) : value || "";
+        span.textContent = `${getLocatorRiskLabelPrefix(selectedOption)}${displayedValue}`;
         parent.appendChild(span);
     }
 

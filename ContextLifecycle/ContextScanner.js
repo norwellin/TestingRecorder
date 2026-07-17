@@ -15,6 +15,7 @@ export class ContextScanner {
     this.iframePathMap = new Map();
   }
 
+  //等頁面上的 iframe 載入穩定，再執行 scanAllContexts()
   async scanAllContextsAsync() {
     if (this.options.waitForDynamicFrames) {
       await this.waitForFramesOrStable(this.rootDocument, {
@@ -284,7 +285,7 @@ export class ContextScanner {
     this.contextCounter += 1;
     return id;
   }
-
+//安全取得 iframe 的 contentWindow，跨網域存取失敗時回傳 null 並警告
   safeGetFrameWindow(frameEl) {
     try {
       return frameEl?.contentWindow || null;
@@ -293,7 +294,7 @@ export class ContextScanner {
       return null;
     }
   }
-
+//安全取得 iframe 的 document，失敗（跨網域）時記錄詳細除錯資訊並回傳 null。
   safeGetFrameDocument(frameWin, frameEl = null, index = 0, frameSelector = null) {
     try {
       return frameWin?.document || null;
@@ -394,6 +395,7 @@ export class ContextScanner {
     });
   }
 
+  //Debug
   // 視覺化顯示目前已經建立的 Tree
   printContextTree(rootContext, contextMap, depth = 0) {
     const indent = '  '.repeat(depth);
@@ -408,7 +410,7 @@ export class ContextScanner {
       }
     });
   }
-
+//Debug
   debugTable(contexts) {
     console.table(
       contexts.map((ctx) => ({

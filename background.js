@@ -28,6 +28,7 @@ async function getTargetTab() {
   return targetTab || null;
 }
 
+//將開始、停止、清除、刪除 Action 等命令傳給被錄製網頁中的 MainApp。
 async function sendCommandToRecorder(command) {
   const message = typeof command === "string" ? { type: command } : command;
   if (!message?.type) return false;
@@ -358,6 +359,7 @@ function mergeSelectorOverrides(nextActions, storedActions) {
   });
 }
 
+//訊息處理中心
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log("background received:", message);
 
@@ -679,7 +681,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// ==================== myrecorderRestructure/background.js ====================
+// ==================== popup 處理====================
 
 // 用來暫存剛建立、但還沒拿到真實網址的新分頁 (Key: tabId, Value: openerTabId)
 const pendingPopups = new Map();
@@ -728,7 +730,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 // 3. 專門負責發送情報給 MainApp 的通訊員
-
 function sendPopupToContentScript(openerTabId, newTabId, url) {
   console.log(`[Background] 完美捕捉新視窗！URL: ${url}`);
   

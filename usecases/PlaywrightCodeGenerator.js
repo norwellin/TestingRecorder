@@ -345,17 +345,26 @@ export class PlaywrightCodeGenerator {
         const selectors = Array.isArray(candidate.obj.selectors) && candidate.obj.selectors.length
           ? candidate.obj.selectors
           : [candidate.obj.selector];
+        const selectorRisks = Array.isArray(candidate.obj.selectorRisks)
+          ? candidate.obj.selectorRisks
+          : [];
 
         selectors.forEach((selector, selectorIndex) => {
           const locator = this._playwrightSelectorToLocator(selector);
           if (!selector || !locator || this._isBlockedSelectorCandidate(selector) || this._isBlockedSelectorCandidate(locator)) return;
+          const risk = selectorRisks.find(item => item?.selector === selector) || {};
           options.push({
             id: `ByPlaywright-${selectorIndex}`,
             method: "ByPlaywright",
             data: {
               selector,
               locator,
-              shadowChain: candidate.obj.shadowChain || []
+              shadowChain: candidate.obj.shadowChain || [],
+              possibleDynamicId: risk.possibleDynamicId === true,
+              possibleDynamicClass: risk.possibleDynamicClass === true,
+              dynamicIds: Array.isArray(risk.dynamicIds) ? risk.dynamicIds : [],
+              dynamicClasses: Array.isArray(risk.dynamicClasses) ? risk.dynamicClasses : [],
+              unstableClasses: Array.isArray(risk.unstableClasses) ? risk.unstableClasses : []
             },
             recommended: selector === candidate.obj.selector
           });
@@ -970,15 +979,19 @@ declareContexts(contexts, rootAlias) {
     const path = action.canvasDragPath
       .map(point => this._normalizeCanvasPoint(point))
       .filter(Boolean);
+    const sourceScrollState = this._normalizeScrollState(action?.sourceScrollState);
 
     if (path.length < 2) return null;
 
     this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
     this.updateUserActionDB(action, best.funName, best.obj, "target", sourcepath);
 
-    return [
+    const lines = [
       "{",
-      `  const canvas = ${locator};`,
+      `  const canvas = ${locator};`
+    ];
+    this._appendScrollRestoreLines(lines, "canvas", sourceScrollState);
+    lines.push(
       "  await canvas.scrollIntoViewIfNeeded();",
       "  const box = await canvas.boundingBox();",
       "  if (!box) throw new Error('Unable to calculate canvas drag coordinates');",
@@ -996,7 +1009,8 @@ declareContexts(contexts, rootAlias) {
       "  }",
       `  await ${mousePageAlias}.mouse.up();`,
       "}"
-    ];
+    );
+    return lines;
   }
 
   _normalizeCanvasPoint(point) {
@@ -1059,30 +1073,8 @@ declareContexts(contexts, rootAlias) {
       : positionMode === "ratio" && !hasDropRatio && hasAbsolutePosition;
     const xRatio = Math.max(0, Math.min(1, dropXRatio));
     const yRatio = Math.max(0, Math.min(1, dropYRatio));
-    const recordedScrollState = action?.dropPosition?.scrollState;
-    const scrollState = recordedScrollState?.scope === "element"
-      ? {
-          scope: "element",
-          ancestorDepth: Math.max(0, Math.floor(Number(recordedScrollState.ancestorDepth) || 0)),
-          scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
-          scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
-        }
-      : recordedScrollState?.scope === "document"
-        ? {
-            scope: "document",
-            rootTag: ["html", "body"].includes(String(recordedScrollState.rootTag || "").toLowerCase())
-              ? String(recordedScrollState.rootTag).toLowerCase()
-              : "",
-            scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
-            scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
-          }
-        : recordedScrollState?.scope === "ion-content"
-          ? {
-              scope: "ion-content",
-              scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
-              scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
-            }
-        : null;
+    const sourceScrollState = this._normalizeScrollState(action?.sourceScrollState);
+    const scrollState = this._normalizeScrollState(action?.dropPosition?.scrollState);
 
     if (this._shouldUseMouseDragForGrapesIframe(action)) {
       return this._buildGrapesIframeMouseDragCode({
@@ -1091,6 +1083,7 @@ declareContexts(contexts, rootAlias) {
         tarLocator,
         sourceWindow,
         targetWindow,
+        sourceScrollState,
         scrollState,
         useRatio,
         useAbsolute,
@@ -1101,48 +1094,16 @@ declareContexts(contexts, rootAlias) {
       });
     }
 
-    if (useRatio || scrollState) {
+    if (useRatio || scrollState || sourceScrollState) {
       const lines = [
         "{",
         `  const dropTarget = ${tarLocator};`
       ];
 
-      if (scrollState) {
-        if (scrollState.scope === "ion-content") {
-          lines.push(
-            "  await dropTarget.evaluate(async (element, state) => {",
-            "    const ionContent = element.matches('ion-content') ? element : element.closest('ion-content');",
-            "    if (!ionContent) return;",
-            "    const scroller = await ionContent.getScrollElement();",
-            "    const x = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
-            "    const y = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
-            "    await ionContent.scrollToPoint(x, y, 0);",
-            `  }, ${JSON.stringify(scrollState)});`
-          );
-        } else if (scrollState.scope === "element") {
-          lines.push(
-            "  await dropTarget.evaluate((element, state) => {",
-            "    let scroller = element;",
-            "    for (let depth = 0; depth < state.ancestorDepth && scroller; depth += 1) scroller = scroller.parentElement;",
-            "    if (!scroller) return;",
-            "    scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
-            "    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
-            `  }, ${JSON.stringify(scrollState)});`
-          );
-        } else {
-          lines.push(
-            "  await dropTarget.evaluate((element, state) => {",
-            "    const doc = element.ownerDocument;",
-            "    const scroller = (state.rootTag && doc.querySelector(state.rootTag)) || doc.scrollingElement || doc.documentElement;",
-            "    scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
-            "    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
-            `  }, ${JSON.stringify(scrollState)});`
-          );
-        }
-      }
-
+      this._appendScrollRestoreLines(lines, souLocator, sourceScrollState);
+      lines.push(`  await safeScrollIntoViewIfNeeded(${souLocator});`);
+      this._appendDropScrollRestoreLines(lines, scrollState);
       lines.push(
-        `  await safeScrollIntoViewIfNeeded(${souLocator});`,
         "  await safeScrollIntoViewIfNeeded(dropTarget);",
         "  await dropTarget.waitFor({ state: 'visible' });"
       );
@@ -1217,12 +1178,44 @@ declareContexts(contexts, rootAlias) {
     return this.pageAlias;
   }
 
+  _normalizeScrollState(recordedScrollState) {
+    if (recordedScrollState?.scope === "element") {
+      return {
+        scope: "element",
+        ancestorDepth: Math.max(0, Math.floor(Number(recordedScrollState.ancestorDepth) || 0)),
+        scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
+        scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
+      };
+    }
+    if (recordedScrollState?.scope === "document") {
+      const rootTag = String(recordedScrollState.rootTag || "").toLowerCase();
+      return {
+        scope: "document",
+        rootTag: ["html", "body"].includes(rootTag) ? rootTag : "",
+        scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
+        scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
+      };
+    }
+    if (recordedScrollState?.scope === "ion-content") {
+      return {
+        scope: "ion-content",
+        scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
+        scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
+      };
+    }
+    return null;
+  }
+
   _appendDropScrollRestoreLines(lines, scrollState) {
+    this._appendScrollRestoreLines(lines, "dropTarget", scrollState);
+  }
+
+  _appendScrollRestoreLines(lines, locatorExpression, scrollState) {
     if (!scrollState) return;
 
     if (scrollState.scope === "ion-content") {
       lines.push(
-        "  await dropTarget.evaluate(async (element, state) => {",
+        `  await ${locatorExpression}.evaluate(async (element, state) => {`,
         "    const ionContent = element.matches('ion-content') ? element : element.closest('ion-content');",
         "    if (!ionContent) return;",
         "    const scroller = await ionContent.getScrollElement();",
@@ -1236,7 +1229,7 @@ declareContexts(contexts, rootAlias) {
 
     if (scrollState.scope === "element") {
       lines.push(
-        "  await dropTarget.evaluate((element, state) => {",
+        `  await ${locatorExpression}.evaluate((element, state) => {`,
         "    let scroller = element;",
         "    for (let depth = 0; depth < state.ancestorDepth && scroller; depth += 1) scroller = scroller.parentElement;",
         "    if (!scroller) return;",
@@ -1248,7 +1241,7 @@ declareContexts(contexts, rootAlias) {
     }
 
     lines.push(
-      "  await dropTarget.evaluate((element, state) => {",
+      `  await ${locatorExpression}.evaluate((element, state) => {`,
       "    const doc = element.ownerDocument;",
       "    const scroller = (state.rootTag && doc.querySelector(state.rootTag)) || doc.scrollingElement || doc.documentElement;",
       "    scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
@@ -1263,6 +1256,7 @@ declareContexts(contexts, rootAlias) {
     tarLocator,
     sourceWindow,
     targetWindow,
+    sourceScrollState,
     scrollState,
     useRatio,
     useAbsolute,
@@ -1285,17 +1279,23 @@ declareContexts(contexts, rootAlias) {
       `  const dropTarget = ${tarLocator};`
     ];
 
-    this._appendDropScrollRestoreLines(lines, scrollState);
-
+    this._appendScrollRestoreLines(lines, "dragSource", sourceScrollState);
     lines.push(
       "  await safeScrollIntoViewIfNeeded(dragSource);",
-      "  await safeScrollIntoViewIfNeeded(dropTarget);",
       "  await dragSource.waitFor({ state: 'visible' });",
-      "  await dropTarget.waitFor({ state: 'visible' });",
       "  const sourceBox = await dragSource.boundingBox();",
+      "  if (!sourceBox) throw new Error('Unable to calculate GrapesJS drag source coordinates');",
+      `  const sourcePoint = { x: sourceBox.x + sourceBox.width * ${sourceXRatio}, y: sourceBox.y + sourceBox.height * ${sourceYRatio} };`,
+      `  await ${mousePageAlias}.mouse.move(sourcePoint.x, sourcePoint.y);`,
+      `  await ${mousePageAlias}.mouse.down();`
+    );
+
+    this._appendDropScrollRestoreLines(lines, scrollState);
+    lines.push(
+      "  await safeScrollIntoViewIfNeeded(dropTarget);",
+      "  await dropTarget.waitFor({ state: 'visible' });",
       "  const targetBox = await dropTarget.boundingBox();",
-      "  if (!sourceBox || !targetBox) throw new Error('Unable to calculate GrapesJS drag coordinates');",
-      `  const sourcePoint = { x: sourceBox.x + sourceBox.width * ${sourceXRatio}, y: sourceBox.y + sourceBox.height * ${sourceYRatio} };`
+      "  if (!targetBox) throw new Error('Unable to calculate GrapesJS drag target coordinates');"
     );
 
     if (useRatio) {
@@ -1307,8 +1307,6 @@ declareContexts(contexts, rootAlias) {
     }
 
     lines.push(
-      `  await ${mousePageAlias}.mouse.move(sourcePoint.x, sourcePoint.y);`,
-      `  await ${mousePageAlias}.mouse.down();`,
       `  await ${mousePageAlias}.mouse.move((sourcePoint.x + targetPoint.x) / 2, (sourcePoint.y + targetPoint.y) / 2, { steps: 10 });`,
       `  await ${mousePageAlias}.mouse.move(targetPoint.x, targetPoint.y, { steps: 20 });`,
       `  await ${mousePageAlias}.mouse.up();`,

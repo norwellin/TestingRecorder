@@ -480,6 +480,92 @@ test("drag source positions record the pointer ratio inside the source element",
   }
 });
 
+test("iframe drag starts record the source scroll position", async () => {
+  const sourceScrollState = {
+    scope: "document",
+    rootTag: "html",
+    scrollLeftRatio: 0,
+    scrollTopRatio: 0.35
+  };
+  const source = {
+    getBoundingClientRect: () => ({ left: 10, top: 20, width: 200, height: 100 })
+  };
+  let recordedExtraData = null;
+  const listener = Object.create(IframeEventListener.prototype);
+  Object.assign(listener, {
+    isRecording: true,
+    isDragging: false,
+    dragStart: { x: 0, y: 0 },
+    dragStepFlag: 0,
+    mouseDownFlag: false,
+    dragSource: null,
+    canvasDragPath: [],
+    DRAG_THRESHOLD: 5,
+    isRangeInput: () => false,
+    isMouseDragCandidate: () => true,
+    getDragSourceElement: () => source,
+    getDropScrollState: async () => sourceScrollState,
+    isCanvasElement: () => false,
+    hideHoverPreview: () => {},
+    getDragTargetElement: target => target,
+    shouldPreviewHover: () => false,
+    dispatchAction: (_type, _source, _target, extraData) => {
+      recordedExtraData = extraData;
+    }
+  });
+
+  listener.mousedownHandler({
+    isTrusted: true,
+    target: source,
+    clientX: 60,
+    clientY: 70
+  });
+  await listener.mousemoveHandler({
+    isTrusted: true,
+    target: source,
+    clientX: 70,
+    clientY: 80
+  });
+
+  assert.deepEqual(recordedExtraData.sourceScrollState, sourceScrollState);
+});
+
+test("canvas mousemove detects dragging without recording intermediate points", () => {
+  for (const Listener of [OuterEventListener, IframeEventListener]) {
+    const canvas = {};
+    const startPoint = { x: 10, y: 20, xRatio: 0.1, yRatio: 0.2 };
+    const listener = Object.create(Listener.prototype);
+    Object.assign(listener, {
+      isRecording: true,
+      isDragging: false,
+      dragStart: { x: 10, y: 20 },
+      dragStepFlag: 1,
+      mouseDownFlag: true,
+      dragSource: canvas,
+      canvasDragPath: [startPoint],
+      DRAG_THRESHOLD: 5,
+      isRangeInput: () => false,
+      getDragTargetElement: target => target,
+      shouldPreviewHover: () => false,
+      hideHoverPreview: () => {},
+      isCanvasElement: element => element === canvas,
+      getElementPosition: () => {
+        throw new Error("canvas mousemove must not calculate a recorded point");
+      }
+    });
+
+    listener.mousemoveHandler({
+      isTrusted: true,
+      target: canvas,
+      clientX: 30,
+      clientY: 40
+    });
+
+    assert.equal(listener.isDragging, true);
+    assert.deepEqual(listener.canvasDragPath, [startPoint]);
+  }
+});
+
 test("canvas drags replay the recorded pointer path with page mouse coordinates", () => {
   const generator = createGenerator();
   const lines = generator.dragAndDropCodeSetter(
@@ -590,7 +676,22 @@ test("GrapesJS iframe drags replay with page mouse coordinates instead of dragTo
         frameSelector: "iframe#gjsiframe"
       },
       sourcePosition: { xRatio: 0.2, yRatio: 0.75 },
-      dropPosition: { xRatio: 0.4, yRatio: 0.6 }
+      sourceScrollState: {
+        scope: "document",
+        rootTag: "html",
+        scrollLeftRatio: 0,
+        scrollTopRatio: 0.25
+      },
+      dropPosition: {
+        xRatio: 0.4,
+        yRatio: 0.6,
+        scrollState: {
+          scope: "document",
+          rootTag: "html",
+          scrollLeftRatio: 0,
+          scrollTopRatio: 0.75
+        }
+      }
     },
     { funName: "ByDomPath", obj: {} },
     { funName: "ByDomPath", obj: {} },
@@ -608,6 +709,40 @@ test("GrapesJS iframe drags replay with page mouse coordinates instead of dragTo
   assert.match(code, /await page\.mouse\.down\(\)/);
   assert.match(code, /await page\.mouse\.up\(\)/);
   assert.doesNotMatch(code, /\.dragTo\(/);
+  const sourceRestore = lines.findIndex(line => line.includes('"scrollTopRatio":0.25'));
+  const mouseDown = lines.findIndex(line => line.includes("mouse.down()"));
+  const targetRestore = lines.findIndex(line => line.includes('"scrollTopRatio":0.75'));
+  const targetMeasurement = lines.findIndex(line => line.includes("targetBox"));
+  assert.ok(sourceRestore < mouseDown);
+  assert.ok(mouseDown < targetRestore);
+  assert.ok(targetRestore < targetMeasurement);
+});
+
+test("ordinary iframe drags restore source scrolling before dragTo", () => {
+  const generator = createGenerator();
+  const lines = generator.dragAndDropCodeSetter(
+    {
+      sourceScrollState: {
+        scope: "element",
+        ancestorDepth: 1,
+        scrollLeftRatio: 0,
+        scrollTopRatio: 0.4
+      }
+    },
+    { funName: "ByDomPath", obj: {} },
+    { funName: "ByDomPath", obj: {} },
+    "source-context",
+    "target-context"
+  );
+  const code = lines.join("\n");
+
+  assert.match(code, /sourceLocator\.evaluate/);
+  assert.match(code, /"scrollTopRatio":0\.4/);
+  assert.match(code, /sourceLocator\.dragTo\(dropTarget\)/);
+  assert.ok(
+    lines.findIndex(line => line.includes('"scrollTopRatio":0.4')) <
+    lines.findIndex(line => line.includes("safeScrollIntoViewIfNeeded(sourceLocator)"))
+  );
 });
 
 test("GrapesJS metadata alone does not use mouse replay when source or target is outside a GrapesJS iframe", () => {
@@ -1154,6 +1289,73 @@ test("playwright-injected selectors using dynamic IDs are moved to the end", () 
     service.moveDynamicIdSelectorsToEnd(["#save", ".primary-action"], target),
     ["#save", ".primary-action"]
   );
+});
+
+test("playwright-injected selector filtering removes dynamic classes and demotes suspected classes", () => {
+  const service = new DOMParserService({ mainWindow: {} });
+  const ownerDocument = {
+    defaultView: {
+      CSS: { escape: value => value }
+    }
+  };
+  const target = {
+    id: "i123",
+    classList: ["active", "has-focus", "css-1k2x3y", "primary-action"],
+    ownerDocument,
+    parentElement: null
+  };
+
+  const result = service.filterAndRankPlaywrightSelectors(
+    [
+      "button.active",
+      "button.has-focus",
+      "button.css-1k2x3y",
+      'internal:role=button[name="Save"i]',
+      "#i123"
+    ],
+    target
+  );
+
+  assert.deepEqual(result.selectors, [
+    'internal:role=button[name="Save"i]',
+    "button.css-1k2x3y",
+    "#i123"
+  ]);
+  assert.equal(result.risks[1].possibleDynamicClass, true);
+  assert.deepEqual(result.risks[1].unstableClasses, ["css-1k2x3y"]);
+  assert.equal(result.risks[2].possibleDynamicId, true);
+  assert.deepEqual(result.risks[2].dynamicIds, ["i123"]);
+  assert.deepEqual(service.analyzeClassRisk("has-focus"), {
+    level: "dynamic",
+    reason: "Runtime state class"
+  });
+});
+
+test("locator options preserve dynamic selector risk metadata for the frontend", () => {
+  const generator = new PlaywrightCodeGenerator({ priSize: 1 }, {}, "page");
+  const selector = "button.css-1k2x3y";
+  const options = generator._buildLocatorOptions({
+    0: {
+      funName: "ByPlaywright",
+      obj: {
+        selector,
+        selectors: [selector],
+        selectorRisks: [{
+          selector,
+          possibleDynamicId: false,
+          possibleDynamicClass: true,
+          dynamicIds: [],
+          dynamicClasses: [],
+          unstableClasses: ["css-1k2x3y"]
+        }],
+        shadowChain: []
+      }
+    }
+  });
+
+  assert.equal(options[0].data.possibleDynamicId, false);
+  assert.equal(options[0].data.possibleDynamicClass, true);
+  assert.deepEqual(options[0].data.unstableClasses, ["css-1k2x3y"]);
 });
 
 test("outer and iframe listeners record Enter against the event target", () => {

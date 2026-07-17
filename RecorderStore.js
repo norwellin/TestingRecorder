@@ -28,6 +28,7 @@ export class RecorderStore {
         sourceContext: null,
         sourceElementInfo: null,
         sourcePosition: null,
+        sourceScrollState: null,
         targetContextId: null,
         targetContext: null,
         targetElementInfo: null
@@ -281,13 +282,14 @@ export class RecorderStore {
 
   // ===== Drag session =====
   // 修改 RecorderStore.js
-startDragSession({ sourceContextId = null, sourceContext = null, sourceElementInfo = null, sourcePath = null, sourcePosition = null } = {}) {
+startDragSession({ sourceContextId = null, sourceContext = null, sourceElementInfo = null, sourcePath = null, sourcePosition = null, sourceScrollState = null } = {}) {
   this.state.dragSession = {
     isDragging: true,
     sourceContextId,
     sourceContext,
     sourceElementInfo,
     sourcePosition,
+    sourceScrollState,
     sourcePath, // <=== 必須新增這一行，把解析好的路徑存起來！
     targetContextId: null,
     targetContext: null,
@@ -318,6 +320,7 @@ startDragSession({ sourceContextId = null, sourceContext = null, sourceElementIn
       sourceContext: null,
       sourceElementInfo: null,
       sourcePosition: null,
+      sourceScrollState: null,
       targetContextId: null,
       targetContext: null,
       targetElementInfo: null

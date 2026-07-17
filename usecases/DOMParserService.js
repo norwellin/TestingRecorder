@@ -20,7 +20,7 @@ export class DOMParserService {
     };
     this.playwrightObj = {
       ByGjsToolbarItem: { toolbarSelector: null, itemSelector: null, index: null },
-      ByPlaywright: { selector: null, selectors: [], shadowChain: [] },
+      ByPlaywright: { selector: null, selectors: [], selectorRisks: [], shadowChain: [] },
       ByDomPath: { csspath: null, shadowChain: [], options: [] }
     };
 
@@ -72,6 +72,7 @@ export class DOMParserService {
       this.playwrightObj.ByPlaywright = {
         selector: generated.playwrightSelector,
         selectors: generated.playwrightSelectors,
+        selectorRisks: generated.playwrightSelectorRisks,
         shadowChain
       };
       result[resultIndex++] = {
@@ -127,6 +128,8 @@ export class DOMParserService {
       index
     };
   }
+//做Playwright inject的初始化
+
 
   getPlaywrightInjectedScript(targetDocument) {
     if (!targetDocument) {
@@ -153,51 +156,157 @@ export class DOMParserService {
     return injected;
   }
 
-  selectorReferencesElementId(selector, id, targetDocument) {
-    if (!selector || !id) return false;
-
-    const css = targetDocument?.defaultView?.CSS;
-    const escapedId = css?.escape
-      ? css.escape(id)
-      : String(id).replace(/[^a-zA-Z0-9_-]/g, character => `\\${character}`);
-    const doubleQuotedId = JSON.stringify(String(id));
-    const singleQuotedId = `'${String(id).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
-
-    return selector.includes(`#${escapedId}`)
-      || selector.includes(`id=${doubleQuotedId}`)
-      || selector.includes(`id=${singleQuotedId}`)
-      || selector.includes(`[id=${doubleQuotedId}]`)
-      || selector.includes(`[id=${singleQuotedId}]`);
+  decodeCssIdentifier(value) {
+    return String(value || "").replace(
+      /\\([0-9a-fA-F]{1,6})(?:\s)?|\\(.)/g,
+      (_match, hex, escapedCharacter) => hex
+        ? String.fromCodePoint(parseInt(hex, 16))
+        : escapedCharacter
+    );
   }
 
-  selectorUsesDynamicId(selector, targetElement) {
-    if (!selector || !targetElement) return false;
+  //輸入selector回傳id陣列，目前支援過濾: css, playwright, normal
+  extractSelectorIds(selector) {
+    if (typeof selector !== "string" || !selector) return [];
 
-    for (let element = targetElement; element; element = element.parentElement) {
-      if (
-        element.id
-        && this.isDynamicGeneratedId(element.id)
-        && this.selectorReferencesElementId(selector, element.id, targetElement.ownerDocument)
-      ) {
-        return true;
-      }
+    const ids = [];
+    const addId = value => {
+      const decoded = this.decodeCssIdentifier(value).trim();
+      if (decoded) ids.push(decoded);
+    };
+
+    // Extract exact CSS attribute selectors before quoted text is masked.
+    const attributeIdPattern = /\[\s*id\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\]\s]+))\s*\]/gi;
+    for (const match of selector.matchAll(attributeIdPattern)) {
+      addId(match[1] ?? match[2] ?? match[3]);
     }
-    return false;
+
+    // Playwright may also represent an ID with an explicit id= selector engine.
+    const idEnginePattern = /(?:^|>>\s*)id\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\s>]+))/gi;
+    for (const match of selector.matchAll(idEnginePattern)) {
+      addId(match[1] ?? match[2] ?? match[3]);
+    }
+
+    const selectorWithoutQuotedText = selector.replace(
+      /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g,
+      ""
+    );
+    const cssIdPattern = /#((?:\\[0-9a-fA-F]{1,6}\s?|\\.|[a-zA-Z0-9_-])+)/g;
+    for (const match of selectorWithoutQuotedText.matchAll(cssIdPattern)) {
+      addId(match[1]);
+    }
+
+    return [...new Set(ids)];
+  }
+//從 selector 字串中提取所有 CSS class 名稱，解碼後移除重複，最後以陣列回傳。
+  extractSelectorClasses(selector) {
+    if (typeof selector !== "string" || !selector) return [];
+
+    const classes = [];
+    const addClass = value => {
+      const decoded = this.decodeCssIdentifier(value).trim();
+      if (decoded) classes.push(decoded);
+    };
+
+    // Support exact class attribute selectors in addition to the usual .class form.
+    const attributeClassPattern = /\[\s*class\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\]\s]+))\s*\]/gi;
+    for (const match of selector.matchAll(attributeClassPattern)) {
+      const value = match[1] ?? match[2] ?? match[3] ?? "";
+      value.split(/\s+/).forEach(addClass);
+    }
+
+    const selectorWithoutQuotedText = selector.replace(
+      /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g,
+      ""
+    );
+    const cssClassPattern = /\.((?:\\[0-9a-fA-F]{1,6}\s?|\\.|[a-zA-Z0-9_-])+)/g;
+    for (const match of selectorWithoutQuotedText.matchAll(cssClassPattern)) {
+      addClass(match[1]);
+    }
+
+    return [...new Set(classes)];
   }
 
-  moveDynamicIdSelectorsToEnd(selectors, targetElement) {
+  analyzeClassRisk(className) {
+    if (typeof className !== "string" || !className.trim()) {
+      return { level: "dynamic", reason: "Empty or invalid class" };
+    }
+
+    const value = className.trim();
+    const dynamicStateClass = /^(active|focus|has-focus|hover|visited|disabled|selected|checked|ion-activated|ion-focused|ion-touched|ion-dirty|ion-valid|ion-invalid|gjs-[a-zA-Z0-9_-]+)$/i;
+    const platformOrRuntimeClass = /^(hydrated|md|ios)$/i;
+    const cssInJsLike = /^(css-|sc-|styled-).*[a-zA-Z0-9_-]{4,}$/i;
+    const utilityClass = /^(p|m|px|py|mx|my|w|h|text|bg|flex|grid|col|row|rounded|shadow|border)-[a-z0-9]+$/i;
+    const pureHash = /^[a-z0-9]{8,15}$/i;
+
+    if (dynamicStateClass.test(value)) {
+      return { level: "dynamic", reason: "Runtime state class" };
+    }
+    if (platformOrRuntimeClass.test(value)) {
+      return { level: "unstable", reason: "Platform or runtime class" };
+    }
+    if (cssInJsLike.test(value)) {
+      return { level: "unstable", reason: "CSS-in-JS generated class" };
+    }
+    if (utilityClass.test(value)) {
+      return { level: "unstable", reason: "Utility class" };
+    }
+    if (pureHash.test(value)) {
+      return { level: "unstable", reason: "Hash-like class" };
+    }
+    return { level: "stable", reason: "No dynamic class rule matched" };
+  }
+
+  analyzeSelectorRisk(selector) {
+    const dynamicClasses = [];
+    const unstableClasses = [];
+
+    for (const className of this.extractSelectorClasses(selector)) {
+      const risk = this.analyzeClassRisk(className);
+      if (risk.level === "dynamic") dynamicClasses.push(className);
+      if (risk.level === "unstable") unstableClasses.push(className);
+    }
+
+    const dynamicIds = this.extractSelectorIds(selector)
+      .filter(id => this.isDynamicGeneratedId(id));
+    return {
+      selector,
+      possibleDynamicId: dynamicIds.length > 0,
+      possibleDynamicClass: dynamicClasses.length > 0 || unstableClasses.length > 0,
+      dynamicIds,
+      dynamicClasses: [...new Set(dynamicClasses)],
+      unstableClasses: [...new Set(unstableClasses)]
+    };
+  }
+
+  filterAndRankPlaywrightSelectors(selectors) {
     const stableSelectors = [];
+    const unstableClassSelectors = [];
     const dynamicIdSelectors = [];
+    const riskBySelector = new Map();
 
     for (const selector of selectors || []) {
-      if (this.selectorUsesDynamicId(selector, targetElement)) {
-        dynamicIdSelectors.push(selector);
-      } else {
-        stableSelectors.push(selector);
-      }
+      const risk = this.analyzeSelectorRisk(selector);
+      riskBySelector.set(selector, risk);
+
+      // Confirmed runtime-state classes are unsafe across replays.
+      if (risk.dynamicClasses.length) continue;
+      if (risk.possibleDynamicId) dynamicIdSelectors.push(selector);
+      else if (risk.unstableClasses.length) unstableClassSelectors.push(selector);
+      else stableSelectors.push(selector);
     }
-    return [...stableSelectors, ...dynamicIdSelectors];
+
+    const rankedSelectors = [
+      ...stableSelectors,
+      ...unstableClassSelectors,
+      ...dynamicIdSelectors
+    ];
+    return {
+      selectors: rankedSelectors,
+      risks: rankedSelectors.map(selector => riskBySelector.get(selector))
+    };
   }
+//禁止使用: .gjs-selected-parent，此class表示: 目前有子元素處於 GrapesJS 選取狀態。
 
   isBlockedSelectorCandidate(selector) {
     return /\.gjs-selected-parent(?![a-zA-Z0-9_-])/.test(
@@ -206,16 +315,18 @@ export class DOMParserService {
   }
 
   generateLocatorCandidatesWithPlaywrightInjected(el, root = el?.getRootNode?.()) {
-    if (el?.nodeType !== 1 || !root) {
+    if (el?.nodeType !== 1 || !root) { //el存在且，為element
       return {
         playwrightSelector: "",
         playwrightSelectors: [],
+        playwrightSelectorRisks: [],
         finderWithoutIdSelector: ""
       };
     }
 
     let playwrightSelector = "";
     let playwrightSelectors = [];
+    let playwrightSelectorRisks = [];
     try {
       const injected = this.getPlaywrightInjectedScript(el.ownerDocument);
       const generated = injected.generateSelector(el, {
@@ -226,7 +337,9 @@ export class DOMParserService {
       const generatedSelectors = [...new Set(
         [generated.selector, ...(generated.selectors || [])].filter(Boolean)
       )].filter(selector => !this.isBlockedSelectorCandidate(selector));
-      playwrightSelectors = this.moveDynamicIdSelectorsToEnd(generatedSelectors, el);
+      const filtered = this.filterAndRankPlaywrightSelectors(generatedSelectors);
+      playwrightSelectors = filtered.selectors;
+      playwrightSelectorRisks = filtered.risks;
       playwrightSelector = playwrightSelectors[0] || "";
     } catch (err) {
       console.warn("[DOMParser] playwright-injected selector generation failed", err);
@@ -249,6 +362,7 @@ export class DOMParserService {
     return {
       playwrightSelector,
       playwrightSelectors,
+      playwrightSelectorRisks,
       finderWithoutIdSelector
     };
   }
@@ -256,7 +370,7 @@ export class DOMParserService {
   bestDomPath(paths) {
     return this.rankDomPaths(paths)[0]?.path || null;
   }
-
+//沒有用了
   rankDomPaths(paths) {
     const WL = this.weight.WL;
     const Wc = this.weight.Wc;
@@ -282,7 +396,7 @@ export class DOMParserService {
 
     return ranked.sort((a, b) => b.score - a.score);
   }
-// ?? ?啣??寞?嚗?憭?喳閫??憟賜??? ID 閬?
+
   setCustomDynamicIdRules(rulesArray) {
     if (!Array.isArray(rulesArray)) return;
     
@@ -396,7 +510,7 @@ export class DOMParserService {
 
     return "";
   }
-
+//找出目標元素從最外層 Document 到它所在 Shadow DOM 之間，必須依序經過的所有 Shadow Host，並為每個 Shadow Host 產生 Selector
   getShadowChain(el) {
     const chain = [];
     let root = el?.getRootNode?.();
@@ -534,26 +648,9 @@ export class DOMParserService {
     return this.inspectSelectorUniqueness(path, shadowChain, targetEl).isUnique;
   }
 
-// ?? ?啣?嚗?瞈曆?蝛拙??隤???蝝??? Class
+
   isDynamicOrUnstableClass(className) {
-    if (typeof className !== 'string') return true;
-    const val = className.trim();
-    if (!val) return true;
-
-    // 1. ???獢??望? Class (憒?葉???乩葉?摰像??
-    const stateClasses = /^(active|focus|hover|visited|disabled|selected|checked|hydrated|md|ios|ion-activated|ion-focused|ion-touched|ion-dirty|ion-valid|ion-invalid|gjs-[a-zA-Z0-9_-]+)$/i;
-    
-    // 2. CSS-in-JS Hash 鈭Ⅳ (憒?React Styled-components ?Ｙ???css-1k2x3y, sc-bdVaJa)
-    const cssInJsLike = /^(css-|sc-|styled-).*[a-zA-Z0-9_-]{4,}$/i;
-    
-    // 3. Tailwind / Bootstrap 蝑??? Utility Class (憒?p-4, m-2, text-center, flex, w-full)
-    const utilityClasses = /^(p|m|px|py|mx|my|w|h|text|bg|flex|grid|col|row|rounded|shadow|border)-[a-z0-9]+$/i;
-    
-    // 4. 蝝硃??蝣?(靘?蝺刻陌??敺?曄? 8 蝣潔誑銝璈?銝?
-    const pureHash = /^[a-z0-9]{8,15}$/i; 
-
-    // 憒?蝚血?隞颱?銝蝔柴?蝛拙??孵噩??撠勗???true (隞?”?憯? Class嚗?閰脰◤敹賜)
-    return stateClasses.test(val) || cssInJsLike.test(val) || utilityClasses.test(val) || pureHash.test(val);
+    return this.analyzeClassRisk(className).level !== "stable";
   }
   setInfo(el) {
     if (!el) return;
@@ -588,7 +685,7 @@ export class DOMParserService {
   clearPlaywrightObj() {
     this.playwrightObj = {
       ByGjsToolbarItem: { toolbarSelector: null, itemSelector: null, index: null },
-      ByPlaywright: { selector: null, selectors: [], shadowChain: [] },
+      ByPlaywright: { selector: null, selectors: [], selectorRisks: [], shadowChain: [] },
       ByDomPath: { csspath: null, shadowChain: [], options: [] }
     };
   }
@@ -602,7 +699,7 @@ export class DOMParserService {
   }
 
   analyzeDynamicId(id) {
-    if (typeof id !== 'string' || !id.trim()) {
+    if (typeof id !== 'string' || !id.trim()) {//移除id不是字串，id前後空白後為空
       return {
         isDynamic: false,
         reason: "Element has no ID"
@@ -611,6 +708,7 @@ export class DOMParserService {
 
     const value = id.trim();
 
+    //先測自訂規則
     for (const pattern of this.customDynamicIdPatterns) {
       // Reset stateful regular expressions (for example, patterns using /g).
       pattern.lastIndex = 0;
@@ -648,7 +746,7 @@ export class DOMParserService {
         reason: "Looks like a long generated hash (10 or more characters)"
       }
     ];
-
+    //測試上面規則
     const matchedRule = rules.find(rule => rule.pattern.test(value));
     if (matchedRule) {
       return {
@@ -662,7 +760,7 @@ export class DOMParserService {
       reason: "Does not match any known dynamic ID pattern"
     };
   }
-
+//判斷是不是dynamic id，回傳true or false
   isDynamicGeneratedId(id) {
     return this.analyzeDynamicId(id).isDynamic;
   }

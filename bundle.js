@@ -501,6 +501,7 @@
           sourceContext: null,
           sourceElementInfo: null,
           sourcePosition: null,
+          sourceScrollState: null,
           targetContextId: null,
           targetContext: null,
           targetElementInfo: null
@@ -704,13 +705,14 @@
     }
     // ===== Drag session =====
     // 修改 RecorderStore.js
-    startDragSession({ sourceContextId = null, sourceContext = null, sourceElementInfo = null, sourcePath = null, sourcePosition = null } = {}) {
+    startDragSession({ sourceContextId = null, sourceContext = null, sourceElementInfo = null, sourcePath = null, sourcePosition = null, sourceScrollState = null } = {}) {
       this.state.dragSession = {
         isDragging: true,
         sourceContextId,
         sourceContext,
         sourceElementInfo,
         sourcePosition,
+        sourceScrollState,
         sourcePath,
         // <=== 必須新增這一行，把解析好的路徑存起來！
         targetContextId: null,
@@ -737,6 +739,7 @@
         sourceContext: null,
         sourceElementInfo: null,
         sourcePosition: null,
+        sourceScrollState: null,
         targetContextId: null,
         targetContext: null,
         targetElementInfo: null
@@ -6783,7 +6786,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       };
       this.playwrightObj = {
         ByGjsToolbarItem: { toolbarSelector: null, itemSelector: null, index: null },
-        ByPlaywright: { selector: null, selectors: [], shadowChain: [] },
+        ByPlaywright: { selector: null, selectors: [], selectorRisks: [], shadowChain: [] },
         ByDomPath: { csspath: null, shadowChain: [], options: [] }
       };
       this.weight = { WL: 0.4, Wc: 0.6, Wa: 1, Wcl: 1, Wt: 1, Wn: 3 };
@@ -6825,6 +6828,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         this.playwrightObj.ByPlaywright = {
           selector: generated.playwrightSelector,
           selectors: generated.playwrightSelectors,
+          selectorRisks: generated.playwrightSelectorRisks,
           shadowChain
         };
         result[resultIndex++] = {
@@ -6894,34 +6898,126 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.playwrightInjectedScripts.set(targetDocument, injected);
       return injected;
     }
-    selectorReferencesElementId(selector2, id, targetDocument) {
-      if (!selector2 || !id) return false;
-      const css = targetDocument?.defaultView?.CSS;
-      const escapedId = css?.escape ? css.escape(id) : String(id).replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`);
-      const doubleQuotedId = JSON.stringify(String(id));
-      const singleQuotedId = `'${String(id).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
-      return selector2.includes(`#${escapedId}`) || selector2.includes(`id=${doubleQuotedId}`) || selector2.includes(`id=${singleQuotedId}`) || selector2.includes(`[id=${doubleQuotedId}]`) || selector2.includes(`[id=${singleQuotedId}]`);
+    decodeCssIdentifier(value) {
+      return String(value || "").replace(
+        /\\([0-9a-fA-F]{1,6})(?:\s)?|\\(.)/g,
+        (_match, hex, escapedCharacter) => hex ? String.fromCodePoint(parseInt(hex, 16)) : escapedCharacter
+      );
     }
-    selectorUsesDynamicId(selector2, targetElement) {
-      if (!selector2 || !targetElement) return false;
-      for (let element = targetElement; element; element = element.parentElement) {
-        if (element.id && this.isDynamicGeneratedId(element.id) && this.selectorReferencesElementId(selector2, element.id, targetElement.ownerDocument)) {
-          return true;
-        }
+    extractSelectorIds(selector2) {
+      if (typeof selector2 !== "string" || !selector2) return [];
+      const ids = [];
+      const addId = (value) => {
+        const decoded = this.decodeCssIdentifier(value).trim();
+        if (decoded) ids.push(decoded);
+      };
+      const attributeIdPattern = /\[\s*id\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\]\s]+))\s*\]/gi;
+      for (const match of selector2.matchAll(attributeIdPattern)) {
+        addId(match[1] ?? match[2] ?? match[3]);
       }
-      return false;
+      const idEnginePattern = /(?:^|>>\s*)id\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\s>]+))/gi;
+      for (const match of selector2.matchAll(idEnginePattern)) {
+        addId(match[1] ?? match[2] ?? match[3]);
+      }
+      const selectorWithoutQuotedText = selector2.replace(
+        /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g,
+        ""
+      );
+      const cssIdPattern = /#((?:\\[0-9a-fA-F]{1,6}\s?|\\.|[a-zA-Z0-9_-])+)/g;
+      for (const match of selectorWithoutQuotedText.matchAll(cssIdPattern)) {
+        addId(match[1]);
+      }
+      return [...new Set(ids)];
     }
-    moveDynamicIdSelectorsToEnd(selectors, targetElement) {
+    extractSelectorClasses(selector2) {
+      if (typeof selector2 !== "string" || !selector2) return [];
+      const classes = [];
+      const addClass = (value) => {
+        const decoded = this.decodeCssIdentifier(value).trim();
+        if (decoded) classes.push(decoded);
+      };
+      const attributeClassPattern = /\[\s*class\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\]\s]+))\s*\]/gi;
+      for (const match of selector2.matchAll(attributeClassPattern)) {
+        const value = match[1] ?? match[2] ?? match[3] ?? "";
+        value.split(/\s+/).forEach(addClass);
+      }
+      const selectorWithoutQuotedText = selector2.replace(
+        /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g,
+        ""
+      );
+      const cssClassPattern = /\.((?:\\[0-9a-fA-F]{1,6}\s?|\\.|[a-zA-Z0-9_-])+)/g;
+      for (const match of selectorWithoutQuotedText.matchAll(cssClassPattern)) {
+        addClass(match[1]);
+      }
+      return [...new Set(classes)];
+    }
+    analyzeClassRisk(className2) {
+      if (typeof className2 !== "string" || !className2.trim()) {
+        return { level: "dynamic", reason: "Empty or invalid class" };
+      }
+      const value = className2.trim();
+      const dynamicStateClass = /^(active|focus|has-focus|hover|visited|disabled|selected|checked|ion-activated|ion-focused|ion-touched|ion-dirty|ion-valid|ion-invalid|gjs-[a-zA-Z0-9_-]+)$/i;
+      const platformOrRuntimeClass = /^(hydrated|md|ios)$/i;
+      const cssInJsLike = /^(css-|sc-|styled-).*[a-zA-Z0-9_-]{4,}$/i;
+      const utilityClass = /^(p|m|px|py|mx|my|w|h|text|bg|flex|grid|col|row|rounded|shadow|border)-[a-z0-9]+$/i;
+      const pureHash = /^[a-z0-9]{8,15}$/i;
+      if (dynamicStateClass.test(value)) {
+        return { level: "dynamic", reason: "Runtime state class" };
+      }
+      if (platformOrRuntimeClass.test(value)) {
+        return { level: "unstable", reason: "Platform or runtime class" };
+      }
+      if (cssInJsLike.test(value)) {
+        return { level: "unstable", reason: "CSS-in-JS generated class" };
+      }
+      if (utilityClass.test(value)) {
+        return { level: "unstable", reason: "Utility class" };
+      }
+      if (pureHash.test(value)) {
+        return { level: "unstable", reason: "Hash-like class" };
+      }
+      return { level: "stable", reason: "No dynamic class rule matched" };
+    }
+    analyzeSelectorRisk(selector2) {
+      const dynamicClasses = [];
+      const unstableClasses = [];
+      for (const className2 of this.extractSelectorClasses(selector2)) {
+        const risk = this.analyzeClassRisk(className2);
+        if (risk.level === "dynamic") dynamicClasses.push(className2);
+        if (risk.level === "unstable") unstableClasses.push(className2);
+      }
+      const dynamicIds = this.extractSelectorIds(selector2).filter((id) => this.isDynamicGeneratedId(id));
+      return {
+        selector: selector2,
+        possibleDynamicId: dynamicIds.length > 0,
+        possibleDynamicClass: dynamicClasses.length > 0 || unstableClasses.length > 0,
+        dynamicIds,
+        dynamicClasses: [...new Set(dynamicClasses)],
+        unstableClasses: [...new Set(unstableClasses)]
+      };
+    }
+    filterAndRankPlaywrightSelectors(selectors) {
       const stableSelectors = [];
+      const unstableClassSelectors = [];
       const dynamicIdSelectors = [];
+      const riskBySelector = /* @__PURE__ */ new Map();
       for (const selector2 of selectors || []) {
-        if (this.selectorUsesDynamicId(selector2, targetElement)) {
-          dynamicIdSelectors.push(selector2);
-        } else {
-          stableSelectors.push(selector2);
-        }
+        const risk = this.analyzeSelectorRisk(selector2);
+        riskBySelector.set(selector2, risk);
+        if (risk.dynamicClasses.length) continue;
+        if (risk.possibleDynamicId) dynamicIdSelectors.push(selector2);
+        else if (risk.unstableClasses.length) unstableClassSelectors.push(selector2);
+        else stableSelectors.push(selector2);
       }
-      return [...stableSelectors, ...dynamicIdSelectors];
+      const rankedSelectors = [
+        ...stableSelectors,
+        ...unstableClassSelectors,
+        ...dynamicIdSelectors
+      ];
+      return {
+        selectors: rankedSelectors,
+        risks: rankedSelectors.map((selector2) => riskBySelector.get(selector2))
+      };
     }
     isBlockedSelectorCandidate(selector2) {
       return /\.gjs-selected-parent(?![a-zA-Z0-9_-])/.test(
@@ -6933,11 +7029,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         return {
           playwrightSelector: "",
           playwrightSelectors: [],
+          playwrightSelectorRisks: [],
           finderWithoutIdSelector: ""
         };
       }
       let playwrightSelector = "";
       let playwrightSelectors = [];
+      let playwrightSelectorRisks = [];
       try {
         const injected = this.getPlaywrightInjectedScript(el.ownerDocument);
         const generated = injected.generateSelector(el, {
@@ -6948,7 +7046,9 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         const generatedSelectors = [...new Set(
           [generated.selector, ...generated.selectors || []].filter(Boolean)
         )].filter((selector2) => !this.isBlockedSelectorCandidate(selector2));
-        playwrightSelectors = this.moveDynamicIdSelectorsToEnd(generatedSelectors, el);
+        const filtered = this.filterAndRankPlaywrightSelectors(generatedSelectors);
+        playwrightSelectors = filtered.selectors;
+        playwrightSelectorRisks = filtered.risks;
         playwrightSelector = playwrightSelectors[0] || "";
       } catch (err) {
         console.warn("[DOMParser] playwright-injected selector generation failed", err);
@@ -6969,6 +7069,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       return {
         playwrightSelector,
         playwrightSelectors,
+        playwrightSelectorRisks,
         finderWithoutIdSelector
       };
     }
@@ -7202,14 +7303,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     // ?? ?啣?嚗?瞈曆?蝛拙??隤???蝝??? Class
     isDynamicOrUnstableClass(className2) {
-      if (typeof className2 !== "string") return true;
-      const val = className2.trim();
-      if (!val) return true;
-      const stateClasses = /^(active|focus|hover|visited|disabled|selected|checked|hydrated|md|ios|ion-activated|ion-focused|ion-touched|ion-dirty|ion-valid|ion-invalid|gjs-[a-zA-Z0-9_-]+)$/i;
-      const cssInJsLike = /^(css-|sc-|styled-).*[a-zA-Z0-9_-]{4,}$/i;
-      const utilityClasses = /^(p|m|px|py|mx|my|w|h|text|bg|flex|grid|col|row|rounded|shadow|border)-[a-z0-9]+$/i;
-      const pureHash = /^[a-z0-9]{8,15}$/i;
-      return stateClasses.test(val) || cssInJsLike.test(val) || utilityClasses.test(val) || pureHash.test(val);
+      return this.analyzeClassRisk(className2).level !== "stable";
     }
     setInfo(el) {
       if (!el) return;
@@ -7239,7 +7333,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     clearPlaywrightObj() {
       this.playwrightObj = {
         ByGjsToolbarItem: { toolbarSelector: null, itemSelector: null, index: null },
-        ByPlaywright: { selector: null, selectors: [], shadowChain: [] },
+        ByPlaywright: { selector: null, selectors: [], selectorRisks: [], shadowChain: [] },
         ByDomPath: { csspath: null, shadowChain: [], options: [] }
       };
     }
@@ -7626,16 +7720,23 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         if (!candidate?.funName || !candidate?.obj) continue;
         if (candidate.funName === "ByPlaywright") {
           const selectors = Array.isArray(candidate.obj.selectors) && candidate.obj.selectors.length ? candidate.obj.selectors : [candidate.obj.selector];
+          const selectorRisks = Array.isArray(candidate.obj.selectorRisks) ? candidate.obj.selectorRisks : [];
           selectors.forEach((selector2, selectorIndex) => {
             const locator = this._playwrightSelectorToLocator(selector2);
             if (!selector2 || !locator || this._isBlockedSelectorCandidate(selector2) || this._isBlockedSelectorCandidate(locator)) return;
+            const risk = selectorRisks.find((item) => item?.selector === selector2) || {};
             options.push({
               id: `ByPlaywright-${selectorIndex}`,
               method: "ByPlaywright",
               data: {
                 selector: selector2,
                 locator,
-                shadowChain: candidate.obj.shadowChain || []
+                shadowChain: candidate.obj.shadowChain || [],
+                possibleDynamicId: risk.possibleDynamicId === true,
+                possibleDynamicClass: risk.possibleDynamicClass === true,
+                dynamicIds: Array.isArray(risk.dynamicIds) ? risk.dynamicIds : [],
+                dynamicClasses: Array.isArray(risk.dynamicClasses) ? risk.dynamicClasses : [],
+                unstableClasses: Array.isArray(risk.unstableClasses) ? risk.unstableClasses : []
               },
               recommended: selector2 === candidate.obj.selector
             });
@@ -8123,12 +8224,16 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const locator = this._buildLocatorString(winPrefix, best);
       const mousePageAlias = this._getMousePageAliasForAction(action, sourceWindow, targetWindow || sourceWindow);
       const path = action.canvasDragPath.map((point) => this._normalizeCanvasPoint(point)).filter(Boolean);
+      const sourceScrollState = this._normalizeScrollState(action?.sourceScrollState);
       if (path.length < 2) return null;
       this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
       this.updateUserActionDB(action, best.funName, best.obj, "target", sourcepath);
-      return [
+      const lines = [
         "{",
-        `  const canvas = ${locator};`,
+        `  const canvas = ${locator};`
+      ];
+      this._appendScrollRestoreLines(lines, "canvas", sourceScrollState);
+      lines.push(
         "  await canvas.scrollIntoViewIfNeeded();",
         "  const box = await canvas.boundingBox();",
         "  if (!box) throw new Error('Unable to calculate canvas drag coordinates');",
@@ -8146,7 +8251,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         "  }",
         `  await ${mousePageAlias}.mouse.up();`,
         "}"
-      ];
+      );
+      return lines;
     }
     _normalizeCanvasPoint(point) {
       if (!point) return null;
@@ -8193,22 +8299,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const useAbsolute = positionMode === "absolute" ? hasAbsolutePosition : positionMode === "ratio" && !hasDropRatio && hasAbsolutePosition;
       const xRatio = Math.max(0, Math.min(1, dropXRatio));
       const yRatio = Math.max(0, Math.min(1, dropYRatio));
-      const recordedScrollState = action?.dropPosition?.scrollState;
-      const scrollState = recordedScrollState?.scope === "element" ? {
-        scope: "element",
-        ancestorDepth: Math.max(0, Math.floor(Number(recordedScrollState.ancestorDepth) || 0)),
-        scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
-        scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
-      } : recordedScrollState?.scope === "document" ? {
-        scope: "document",
-        rootTag: ["html", "body"].includes(String(recordedScrollState.rootTag || "").toLowerCase()) ? String(recordedScrollState.rootTag).toLowerCase() : "",
-        scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
-        scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
-      } : recordedScrollState?.scope === "ion-content" ? {
-        scope: "ion-content",
-        scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
-        scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
-      } : null;
+      const sourceScrollState = this._normalizeScrollState(action?.sourceScrollState);
+      const scrollState = this._normalizeScrollState(action?.dropPosition?.scrollState);
       if (this._shouldUseMouseDragForGrapesIframe(action)) {
         return this._buildGrapesIframeMouseDragCode({
           action,
@@ -8216,6 +8308,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           tarLocator,
           sourceWindow,
           targetWindow,
+          sourceScrollState,
           scrollState,
           useRatio,
           useAbsolute,
@@ -8225,46 +8318,15 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           dropY
         });
       }
-      if (useRatio || scrollState) {
+      if (useRatio || scrollState || sourceScrollState) {
         const lines = [
           "{",
           `  const dropTarget = ${tarLocator};`
         ];
-        if (scrollState) {
-          if (scrollState.scope === "ion-content") {
-            lines.push(
-              "  await dropTarget.evaluate(async (element, state) => {",
-              "    const ionContent = element.matches('ion-content') ? element : element.closest('ion-content');",
-              "    if (!ionContent) return;",
-              "    const scroller = await ionContent.getScrollElement();",
-              "    const x = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
-              "    const y = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
-              "    await ionContent.scrollToPoint(x, y, 0);",
-              `  }, ${JSON.stringify(scrollState)});`
-            );
-          } else if (scrollState.scope === "element") {
-            lines.push(
-              "  await dropTarget.evaluate((element, state) => {",
-              "    let scroller = element;",
-              "    for (let depth = 0; depth < state.ancestorDepth && scroller; depth += 1) scroller = scroller.parentElement;",
-              "    if (!scroller) return;",
-              "    scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
-              "    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
-              `  }, ${JSON.stringify(scrollState)});`
-            );
-          } else {
-            lines.push(
-              "  await dropTarget.evaluate((element, state) => {",
-              "    const doc = element.ownerDocument;",
-              "    const scroller = (state.rootTag && doc.querySelector(state.rootTag)) || doc.scrollingElement || doc.documentElement;",
-              "    scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
-              "    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
-              `  }, ${JSON.stringify(scrollState)});`
-            );
-          }
-        }
+        this._appendScrollRestoreLines(lines, souLocator, sourceScrollState);
+        lines.push(`  await safeScrollIntoViewIfNeeded(${souLocator});`);
+        this._appendDropScrollRestoreLines(lines, scrollState);
         lines.push(
-          `  await safeScrollIntoViewIfNeeded(${souLocator});`,
           "  await safeScrollIntoViewIfNeeded(dropTarget);",
           "  await dropTarget.waitFor({ state: 'visible' });"
         );
@@ -8330,11 +8392,41 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       return this.pageAlias;
     }
+    _normalizeScrollState(recordedScrollState) {
+      if (recordedScrollState?.scope === "element") {
+        return {
+          scope: "element",
+          ancestorDepth: Math.max(0, Math.floor(Number(recordedScrollState.ancestorDepth) || 0)),
+          scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
+          scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
+        };
+      }
+      if (recordedScrollState?.scope === "document") {
+        const rootTag = String(recordedScrollState.rootTag || "").toLowerCase();
+        return {
+          scope: "document",
+          rootTag: ["html", "body"].includes(rootTag) ? rootTag : "",
+          scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
+          scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
+        };
+      }
+      if (recordedScrollState?.scope === "ion-content") {
+        return {
+          scope: "ion-content",
+          scrollLeftRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollLeftRatio) || 0)),
+          scrollTopRatio: Math.max(0, Math.min(1, Number(recordedScrollState.scrollTopRatio) || 0))
+        };
+      }
+      return null;
+    }
     _appendDropScrollRestoreLines(lines, scrollState) {
+      this._appendScrollRestoreLines(lines, "dropTarget", scrollState);
+    }
+    _appendScrollRestoreLines(lines, locatorExpression, scrollState) {
       if (!scrollState) return;
       if (scrollState.scope === "ion-content") {
         lines.push(
-          "  await dropTarget.evaluate(async (element, state) => {",
+          `  await ${locatorExpression}.evaluate(async (element, state) => {`,
           "    const ionContent = element.matches('ion-content') ? element : element.closest('ion-content');",
           "    if (!ionContent) return;",
           "    const scroller = await ionContent.getScrollElement();",
@@ -8347,7 +8439,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       if (scrollState.scope === "element") {
         lines.push(
-          "  await dropTarget.evaluate((element, state) => {",
+          `  await ${locatorExpression}.evaluate((element, state) => {`,
           "    let scroller = element;",
           "    for (let depth = 0; depth < state.ancestorDepth && scroller; depth += 1) scroller = scroller.parentElement;",
           "    if (!scroller) return;",
@@ -8358,7 +8450,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         return;
       }
       lines.push(
-        "  await dropTarget.evaluate((element, state) => {",
+        `  await ${locatorExpression}.evaluate((element, state) => {`,
         "    const doc = element.ownerDocument;",
         "    const scroller = (state.rootTag && doc.querySelector(state.rootTag)) || doc.scrollingElement || doc.documentElement;",
         "    scroller.scrollLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
@@ -8372,6 +8464,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       tarLocator,
       sourceWindow,
       targetWindow,
+      sourceScrollState,
       scrollState,
       useRatio,
       useAbsolute,
@@ -8388,16 +8481,22 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         `  const dragSource = ${souLocator};`,
         `  const dropTarget = ${tarLocator};`
       ];
-      this._appendDropScrollRestoreLines(lines, scrollState);
+      this._appendScrollRestoreLines(lines, "dragSource", sourceScrollState);
       lines.push(
         "  await safeScrollIntoViewIfNeeded(dragSource);",
-        "  await safeScrollIntoViewIfNeeded(dropTarget);",
         "  await dragSource.waitFor({ state: 'visible' });",
-        "  await dropTarget.waitFor({ state: 'visible' });",
         "  const sourceBox = await dragSource.boundingBox();",
+        "  if (!sourceBox) throw new Error('Unable to calculate GrapesJS drag source coordinates');",
+        `  const sourcePoint = { x: sourceBox.x + sourceBox.width * ${sourceXRatio}, y: sourceBox.y + sourceBox.height * ${sourceYRatio} };`,
+        `  await ${mousePageAlias}.mouse.move(sourcePoint.x, sourcePoint.y);`,
+        `  await ${mousePageAlias}.mouse.down();`
+      );
+      this._appendDropScrollRestoreLines(lines, scrollState);
+      lines.push(
+        "  await safeScrollIntoViewIfNeeded(dropTarget);",
+        "  await dropTarget.waitFor({ state: 'visible' });",
         "  const targetBox = await dropTarget.boundingBox();",
-        "  if (!sourceBox || !targetBox) throw new Error('Unable to calculate GrapesJS drag coordinates');",
-        `  const sourcePoint = { x: sourceBox.x + sourceBox.width * ${sourceXRatio}, y: sourceBox.y + sourceBox.height * ${sourceYRatio} };`
+        "  if (!targetBox) throw new Error('Unable to calculate GrapesJS drag target coordinates');"
       );
       if (useRatio) {
         lines.push(`  const targetPoint = { x: targetBox.x + targetBox.width * ${xRatio}, y: targetBox.y + targetBox.height * ${yRatio} };`);
@@ -8407,8 +8506,6 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         lines.push("  const targetPoint = { x: targetBox.x + targetBox.width / 2, y: targetBox.y + targetBox.height / 2 };");
       }
       lines.push(
-        `  await ${mousePageAlias}.mouse.move(sourcePoint.x, sourcePoint.y);`,
-        `  await ${mousePageAlias}.mouse.down();`,
         `  await ${mousePageAlias}.mouse.move((sourcePoint.x + targetPoint.x) / 2, (sourcePoint.y + targetPoint.y) / 2, { steps: 10 });`,
         `  await ${mousePageAlias}.mouse.move(targetPoint.x, targetPoint.y, { steps: 20 });`,
         `  await ${mousePageAlias}.mouse.up();`,
@@ -9403,11 +9500,6 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         this.hideHoverPreview();
       }
       if (this.isDragging && this.isCanvasElement(this.dragSource)) {
-        const point = this.getElementPosition(e, this.dragSource);
-        if (point) {
-          this.canvasDragPath.push(point);
-          this.lastCanvasPointerPosition.set(this.dragSource, point);
-        }
         return;
       }
       if (!this.dragStart || this.dragStepFlag !== 1) return;
@@ -9419,11 +9511,6 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         this.dragStepFlag = 2;
         this.mouseDownFlag = false;
         if (this.isCanvasElement(this.dragSource)) {
-          const point = this.getElementPosition(e, this.dragSource);
-          if (point) {
-            this.canvasDragPath.push(point);
-            this.lastCanvasPointerPosition.set(this.dragSource, point);
-          }
           return;
         }
         this.dispatchAction("dragANDdrop", this.dragSource, null, {
@@ -10140,6 +10227,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.DRAG_THRESHOLD = 5;
       this.dragSource = null;
       this.canvasDragPath = [];
+      this.dragSourceScrollStatePromise = null;
       this.lastCanvasPointerPosition = /* @__PURE__ */ new WeakMap();
       this.canvasWheelRecords = /* @__PURE__ */ new WeakMap();
       this.mouseDownFlag = false;
@@ -10236,6 +10324,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
       if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
       if (extraData.sourcePosition) action.sourcePosition = extraData.sourcePosition;
+      if (extraData.sourceScrollState) action.sourceScrollState = extraData.sourceScrollState;
       if (extraData.clickPosition) action.clickPosition = extraData.clickPosition;
       if (extraData.canvasDragPath) action.canvasDragPath = extraData.canvasDragPath;
       if (extraData.canvasInputPosition) action.canvasInputPosition = extraData.canvasInputPosition;
@@ -10652,16 +10741,19 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }, 150);
       this.canvasWheelRecords.set(target, next);
     }
-    dragStartHandler(e) {
+    async dragStartHandler(e) {
       if (!this.isRecording) return;
       const target = e.target;
       if (!target) return;
       if (this.isRangeInput(target)) return;
+      console.log("[drag]: iframe dragstart");
       if (target.getAttribute("draggable") === "true") {
         this.hideHoverPreview();
+        const sourceScrollState = await this.getDropScrollState(target);
         this.dispatchAction("dragANDdrop", target, null, {
           isDragStart: true,
-          sourcePosition: this.getDragSourcePosition(e, target)
+          sourcePosition: this.getDragSourcePosition(e, target),
+          sourceScrollState
         });
       }
     }
@@ -10673,6 +10765,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.isDragging = false;
       this.dragSource = this.getDragSourceElement(e.target);
       this.canvasDragPath = [];
+      this.dragSourceScrollStatePromise = this.getDropScrollState(this.dragSource).catch(() => null);
       if (this.isCanvasElement(this.dragSource)) {
         const startPoint = this.getElementPosition(e, this.dragSource);
         if (startPoint) {
@@ -10684,7 +10777,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.dragStepFlag = 1;
       this.hideHoverPreview();
     }
-    mousemoveHandler(e) {
+    async mousemoveHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
       if (this.isRangeInput(e.target)) return;
       this.currentHoveredElement = this.getDragTargetElement(e.target);
@@ -10694,11 +10787,6 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         this.hideHoverPreview();
       }
       if (this.isDragging && this.isCanvasElement(this.dragSource)) {
-        const point = this.getElementPosition(e, this.dragSource);
-        if (point) {
-          this.canvasDragPath.push(point);
-          this.lastCanvasPointerPosition.set(this.dragSource, point);
-        }
         return;
       }
       if (!this.dragStart || this.dragStepFlag !== 1) return;
@@ -10710,16 +10798,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         this.dragStepFlag = 2;
         this.mouseDownFlag = false;
         if (this.isCanvasElement(this.dragSource)) {
-          const point = this.getElementPosition(e, this.dragSource);
-          if (point) {
-            this.canvasDragPath.push(point);
-            this.lastCanvasPointerPosition.set(this.dragSource, point);
-          }
           return;
         }
+        const sourceScrollState = await this.dragSourceScrollStatePromise;
         this.dispatchAction("dragANDdrop", this.dragSource, null, {
           isDragStart: true,
-          sourcePosition: this.getDragSourcePosition(e, this.dragSource)
+          sourcePosition: this.getDragSourcePosition(e, this.dragSource),
+          sourceScrollState
         });
       }
     }
@@ -10846,6 +10931,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         this.dragStart = { x: 0, y: 0 };
         if (this.isCanvasElement(this.dragSource)) {
           const canvas = this.dragSource;
+          const sourceScrollState = await this.dragSourceScrollStatePromise;
           const endPoint = this.getElementPosition(e, canvas);
           if (endPoint) {
             this.canvasDragPath.push(endPoint);
@@ -10857,6 +10943,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           this.suppressClickUntil = Date.now() + 300;
           this.dispatchAction("dragANDdrop", canvas, canvas, {
             sourcePosition: this.canvasDragPath[0] || null,
+            sourceScrollState,
             dropPosition: endPoint,
             canvasDragPath: this.canvasDragPath.filter(Boolean)
           });
@@ -11209,6 +11296,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.dragStart = { x: 0, y: 0 };
       this.dragSource = null;
       this.canvasDragPath = [];
+      this.dragSourceScrollStatePromise = null;
       this.mouseDownFlag = false;
       this.dragStepFlag = 0;
     }
@@ -11765,6 +11853,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
             sourceContext: action.sourceContext || null,
             sourceElementInfo: action.getSourceElement(),
             sourcePosition: action.sourcePosition || null,
+            sourceScrollState: action.sourceScrollState || null,
             sourcePath
             // 預先存好解析結果
           });
@@ -11783,6 +11872,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           }
           action.setSourceElement(session.sourceElementInfo);
           action.sourcePosition = session.sourcePosition || action.sourcePosition || null;
+          action.sourceScrollState = session.sourceScrollState || action.sourceScrollState || null;
           action.preParsedSourcePath = session.sourcePath;
           this.attachPendingGrapesDrop(action);
           this.store.endDragSession();

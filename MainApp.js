@@ -401,6 +401,7 @@ export class MainApp {
           sourceContext: action.sourceContext || null,
           sourceElementInfo: action.getSourceElement(),
           sourcePosition: action.sourcePosition || null,
+          sourceScrollState: action.sourceScrollState || null,
           sourcePath: sourcePath // 預先存好解析結果
         });
         return;
@@ -420,6 +421,7 @@ export class MainApp {
         }
         action.setSourceElement(session.sourceElementInfo);
         action.sourcePosition = session.sourcePosition || action.sourcePosition || null;
+        action.sourceScrollState = session.sourceScrollState || action.sourceScrollState || null;
         // 將預先解析好的路徑塞入 action，避免後續重複解析失敗
         action.preParsedSourcePath = session.sourcePath;
         this.attachPendingGrapesDrop(action);
@@ -871,7 +873,7 @@ export class MainApp {
         listener = new IframeEventListener(
           listenerContexts,
           this.domParserService,
-          (action) => this.handleUserAction(action)
+          (action) => this.handleUserAction(action) //callback: 當 Listener 完成事件擷取並建立 Action 後，把 Action 傳回 MainApp 的 handleUserAction() 統一處理
         );
       }
 

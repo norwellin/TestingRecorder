@@ -32,6 +32,7 @@ export class IframeEventListener {
     this.DRAG_THRESHOLD = 5;
     this.dragSource = null;
     this.canvasDragPath = [];
+    this.dragSourceScrollStatePromise = null;
     this.lastCanvasPointerPosition = new WeakMap();
     this.canvasWheelRecords = new WeakMap();
     this.mouseDownFlag = false;
@@ -135,6 +136,7 @@ export class IframeEventListener {
     if (extraData.isDrop && targetElement) action.setTargetElement(targetElement);
     if (extraData.dropPosition) action.dropPosition = extraData.dropPosition;
     if (extraData.sourcePosition) action.sourcePosition = extraData.sourcePosition;
+    if (extraData.sourceScrollState) action.sourceScrollState = extraData.sourceScrollState;
     if (extraData.clickPosition) action.clickPosition = extraData.clickPosition;
     if (extraData.canvasDragPath) action.canvasDragPath = extraData.canvasDragPath;
     if (extraData.canvasInputPosition) action.canvasInputPosition = extraData.canvasInputPosition;
@@ -629,17 +631,19 @@ export class IframeEventListener {
     this.canvasWheelRecords.set(target, next);
   }
 
-  dragStartHandler(e) {
+  async dragStartHandler(e) {
     if (!this.isRecording) return;
     const target = e.target;
     if (!target) return;
     if (this.isRangeInput(target)) return;
-
+    console.log("[drag]: iframe dragstart");
     if (target.getAttribute("draggable") === "true") {
       this.hideHoverPreview();
+      const sourceScrollState = await this.getDropScrollState(target);
       this.dispatchAction("dragANDdrop", target, null, {
         isDragStart: true,
-        sourcePosition: this.getDragSourcePosition(e, target)
+        sourcePosition: this.getDragSourcePosition(e, target),
+        sourceScrollState
       });
     }
   }
@@ -653,6 +657,7 @@ export class IframeEventListener {
     this.isDragging = false;
     this.dragSource = this.getDragSourceElement(e.target);
     this.canvasDragPath = [];
+    this.dragSourceScrollStatePromise = this.getDropScrollState(this.dragSource).catch(() => null);
     if (this.isCanvasElement(this.dragSource)) {
       const startPoint = this.getElementPosition(e, this.dragSource);
       if (startPoint) {
@@ -665,7 +670,7 @@ export class IframeEventListener {
     this.hideHoverPreview();
   }
 
-  mousemoveHandler(e) {
+  async mousemoveHandler(e) {
     if (!this.isRecording || !e.isTrusted) return;
     if (this.isRangeInput(e.target)) return;
     this.currentHoveredElement = this.getDragTargetElement(e.target);
@@ -676,11 +681,6 @@ export class IframeEventListener {
     }
 
     if (this.isDragging && this.isCanvasElement(this.dragSource)) {
-      const point = this.getElementPosition(e, this.dragSource);
-      if (point) {
-        this.canvasDragPath.push(point);
-        this.lastCanvasPointerPosition.set(this.dragSource, point);
-      }
       return;
     }
 
@@ -696,17 +696,14 @@ export class IframeEventListener {
       this.mouseDownFlag = false;
 
       if (this.isCanvasElement(this.dragSource)) {
-        const point = this.getElementPosition(e, this.dragSource);
-        if (point) {
-          this.canvasDragPath.push(point);
-          this.lastCanvasPointerPosition.set(this.dragSource, point);
-        }
         return;
       }
 
+      const sourceScrollState = await this.dragSourceScrollStatePromise;
       this.dispatchAction("dragANDdrop", this.dragSource, null, {
         isDragStart: true,
-        sourcePosition: this.getDragSourcePosition(e, this.dragSource)
+        sourcePosition: this.getDragSourcePosition(e, this.dragSource),
+        sourceScrollState
       });
     }
   }
@@ -854,6 +851,7 @@ export class IframeEventListener {
 
       if (this.isCanvasElement(this.dragSource)) {
         const canvas = this.dragSource;
+        const sourceScrollState = await this.dragSourceScrollStatePromise;
         const endPoint = this.getElementPosition(e, canvas);
         if (endPoint) {
           this.canvasDragPath.push(endPoint);
@@ -865,6 +863,7 @@ export class IframeEventListener {
         this.suppressClickUntil = Date.now() + 300;
         this.dispatchAction("dragANDdrop", canvas, canvas, {
           sourcePosition: this.canvasDragPath[0] || null,
+          sourceScrollState,
           dropPosition: endPoint,
           canvasDragPath: this.canvasDragPath.filter(Boolean)
         });
@@ -1283,6 +1282,7 @@ export class IframeEventListener {
     this.dragStart = { x: 0, y: 0 };
     this.dragSource = null;
     this.canvasDragPath = [];
+    this.dragSourceScrollStatePromise = null;
     this.mouseDownFlag = false;
     this.dragStepFlag = 0;
   }

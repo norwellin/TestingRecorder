@@ -687,11 +687,6 @@ export class OuterEventListener {
     }
 
     if (this.isDragging && this.isCanvasElement(this.dragSource)) {
-      const point = this.getElementPosition(e, this.dragSource);
-      if (point) {
-        this.canvasDragPath.push(point);
-        this.lastCanvasPointerPosition.set(this.dragSource, point);
-      }
       return;
     }
 
@@ -707,11 +702,6 @@ export class OuterEventListener {
       this.mouseDownFlag = false;
 
       if (this.isCanvasElement(this.dragSource)) {
-        const point = this.getElementPosition(e, this.dragSource);
-        if (point) {
-          this.canvasDragPath.push(point);
-          this.lastCanvasPointerPosition.set(this.dragSource, point);
-        }
         return;
       }
 
