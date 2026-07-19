@@ -15,6 +15,7 @@
       this.contextCounter = 0;
       this.iframePathMap = /* @__PURE__ */ new Map();
     }
+    //等頁面上的 iframe 載入穩定，再執行 scanAllContexts()
     async scanAllContextsAsync() {
       if (this.options.waitForDynamicFrames) {
         await this.waitForFramesOrStable(this.rootDocument, {
@@ -227,6 +228,7 @@
       this.contextCounter += 1;
       return id;
     }
+    //安全取得 iframe 的 contentWindow，跨網域存取失敗時回傳 null 並警告
     safeGetFrameWindow(frameEl) {
       try {
         return frameEl?.contentWindow || null;
@@ -235,6 +237,7 @@
         return null;
       }
     }
+    //安全取得 iframe 的 document，失敗（跨網域）時記錄詳細除錯資訊並回傳 null。
     safeGetFrameDocument(frameWin, frameEl = null, index = 0, frameSelector = null) {
       try {
         return frameWin?.document || null;
@@ -316,6 +319,7 @@
         }, maxWait);
       });
     }
+    //Debug
     // 視覺化顯示目前已經建立的 Tree
     printContextTree(rootContext, contextMap, depth = 0) {
       const indent = "  ".repeat(depth);
@@ -329,6 +333,7 @@
         }
       });
     }
+    //Debug
     debugTable(contexts) {
       console.table(
         contexts.map((ctx) => ({
@@ -6877,6 +6882,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         index
       };
     }
+    //做Playwright inject的初始化
     getPlaywrightInjectedScript(targetDocument) {
       if (!targetDocument) {
         throw new Error("[DOMParser] playwright-injected requires an owner document");
@@ -6904,6 +6910,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         (_match, hex, escapedCharacter) => hex ? String.fromCodePoint(parseInt(hex, 16)) : escapedCharacter
       );
     }
+    //輸入selector回傳id陣列，目前支援過濾: css, playwright, normal
     extractSelectorIds(selector2) {
       if (typeof selector2 !== "string" || !selector2) return [];
       const ids = [];
@@ -6929,6 +6936,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       return [...new Set(ids)];
     }
+    //從 selector 字串中提取所有 CSS class 名稱，解碼後移除重複，最後以陣列回傳。
     extractSelectorClasses(selector2) {
       if (typeof selector2 !== "string" || !selector2) return [];
       const classes = [];
@@ -7019,6 +7027,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         risks: rankedSelectors.map((selector2) => riskBySelector.get(selector2))
       };
     }
+    //禁止使用: .gjs-selected-parent，此class表示: 目前有子元素處於 GrapesJS 選取狀態。
     isBlockedSelectorCandidate(selector2) {
       return /\.gjs-selected-parent(?![a-zA-Z0-9_-])/.test(
         String(selector2 || "")
@@ -7076,6 +7085,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     bestDomPath(paths) {
       return this.rankDomPaths(paths)[0]?.path || null;
     }
+    //沒有用了
     rankDomPaths(paths) {
       const WL = this.weight.WL;
       const Wc = this.weight.Wc;
@@ -7096,7 +7106,6 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       return ranked.sort((a, b) => b.score - a.score);
     }
-    // ?? ?啣??寞?嚗?憭?喳閫??憟賜??? ID 閬?
     setCustomDynamicIdRules(rulesArray) {
       if (!Array.isArray(rulesArray)) return;
       this.customDynamicIdPatterns = rulesArray.map((ruleStr) => {
@@ -7185,6 +7194,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       return "";
     }
+    //找出目標元素從最外層 Document 到它所在 Shadow DOM 之間，必須依序經過的所有 Shadow Host，並為每個 Shadow Host 產生 Selector
     getShadowChain(el) {
       const chain = [];
       let root = el?.getRootNode?.();
@@ -7301,7 +7311,6 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     findUniqueWithShadowChain(path, shadowChain, targetEl) {
       return this.inspectSelectorUniqueness(path, shadowChain, targetEl).isUnique;
     }
-    // ?? ?啣?嚗?瞈曆?蝛拙??隤???蝝??? Class
     isDynamicOrUnstableClass(className2) {
       return this.analyzeClassRisk(className2).level !== "stable";
     }
@@ -7398,6 +7407,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         reason: "Does not match any known dynamic ID pattern"
       };
     }
+    //判斷是不是dynamic id，回傳true or false
     isDynamicGeneratedId(id) {
       return this.analyzeDynamicId(id).isDynamic;
     }
@@ -8458,6 +8468,45 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         `  }, ${JSON.stringify(scrollState)});`
       );
     }
+    _appendGrapesDragScrollRestoreLines(lines, scrollState, mousePageAlias) {
+      if (!scrollState) return;
+      const stateJson = JSON.stringify(scrollState);
+      const getScrollerLines = scrollState.scope === "ion-content" ? [
+        "      const ionContent = element.matches('ion-content') ? element : element.closest('ion-content');",
+        "      if (!ionContent) return;",
+        "      const scroller = await ionContent.getScrollElement();"
+      ] : scrollState.scope === "element" ? [
+        "      let scroller = element;",
+        "      for (let depth = 0; depth < state.ancestorDepth && scroller; depth += 1) scroller = scroller.parentElement;",
+        "      if (!scroller) return;"
+      ] : [
+        "      const doc = element.ownerDocument;",
+        "      const scroller = (state.rootTag && doc.querySelector(state.rootTag)) || doc.scrollingElement || doc.documentElement;"
+      ];
+      lines.push(
+        `  const dragScrollState = ${stateJson};`,
+        "  const dragScrollStart = await dropTarget.evaluate(async (element, state) => {",
+        ...getScrollerLines.map((line) => line.replace(/^      /, "    ")),
+        "    return { left: scroller.scrollLeft, top: scroller.scrollTop };",
+        "  }, dragScrollState);",
+        "  if (dragScrollStart) {",
+        "    const dragScrollSteps = 12;",
+        "    for (let dragScrollStep = 1; dragScrollStep <= dragScrollSteps; dragScrollStep += 1) {",
+        "      await dropTarget.evaluate(async (element, payload) => {",
+        "        const { state, start, progress } = payload;",
+        ...getScrollerLines,
+        "        const targetLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
+        "        const targetTop = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
+        "        const left = start.left + (targetLeft - start.left) * progress;",
+        "        const top = start.top + (targetTop - start.top) * progress;",
+        "        if (state.scope === 'ion-content') await ionContent.scrollToPoint(left, top, 0);",
+        "        else { scroller.scrollLeft = left; scroller.scrollTop = top; }",
+        "      }, { state: dragScrollState, start: dragScrollStart, progress: dragScrollStep / dragScrollSteps });",
+        `      await ${mousePageAlias}.mouse.move(sourcePoint.x + 6 + (dragScrollStep % 2), sourcePoint.y - 5, { steps: 2 });`,
+        "    }",
+        "  }"
+      );
+    }
     _buildGrapesIframeMouseDragCode({
       action,
       souLocator,
@@ -8488,12 +8537,21 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         "  const sourceBox = await dragSource.boundingBox();",
         "  if (!sourceBox) throw new Error('Unable to calculate GrapesJS drag source coordinates');",
         `  const sourcePoint = { x: sourceBox.x + sourceBox.width * ${sourceXRatio}, y: sourceBox.y + sourceBox.height * ${sourceYRatio} };`,
+        "  await dragSource.evaluate(element => {",
+        "    element.addEventListener('pointerdown', event => {",
+        "      if (typeof element.setPointerCapture !== 'function') return;",
+        "      try {",
+        "        element.__recorderPointerId = event.pointerId;",
+        "        element.setPointerCapture(event.pointerId);",
+        "      } catch (error) { console.warn(`Pointer capture skipped: ${error.message}`); }",
+        "    }, { capture: true, once: true });",
+        "  });",
         `  await ${mousePageAlias}.mouse.move(sourcePoint.x, sourcePoint.y);`,
-        `  await ${mousePageAlias}.mouse.down();`
+        `  await ${mousePageAlias}.mouse.down();`,
+        `  await ${mousePageAlias}.mouse.move(sourcePoint.x + 5, sourcePoint.y - 5, { steps: 5 });`
       );
-      this._appendDropScrollRestoreLines(lines, scrollState);
+      this._appendGrapesDragScrollRestoreLines(lines, scrollState, mousePageAlias);
       lines.push(
-        "  await safeScrollIntoViewIfNeeded(dropTarget);",
         "  await dropTarget.waitFor({ state: 'visible' });",
         "  const targetBox = await dropTarget.boundingBox();",
         "  if (!targetBox) throw new Error('Unable to calculate GrapesJS drag target coordinates');"
@@ -8506,7 +8564,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         lines.push("  const targetPoint = { x: targetBox.x + targetBox.width / 2, y: targetBox.y + targetBox.height / 2 };");
       }
       lines.push(
-        `  await ${mousePageAlias}.mouse.move((sourcePoint.x + targetPoint.x) / 2, (sourcePoint.y + targetPoint.y) / 2, { steps: 10 });`,
+        "  await dragSource.evaluate(element => {",
+        "    const pointerId = element.__recorderPointerId;",
+        "    if (pointerId !== undefined && typeof element.hasPointerCapture === 'function' && element.hasPointerCapture(pointerId)) {",
+        "      element.releasePointerCapture(pointerId);",
+        "    }",
+        "    delete element.__recorderPointerId;",
+        "  });",
         `  await ${mousePageAlias}.mouse.move(targetPoint.x, targetPoint.y, { steps: 20 });`,
         `  await ${mousePageAlias}.mouse.up();`,
         "}"
@@ -12228,6 +12292,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
             listenerContexts,
             this.domParserService,
             (action) => this.handleUserAction(action)
+            //callback: 當 Listener 完成事件擷取並建立 Action 後，把 Action 傳回 MainApp 的 handleUserAction() 統一處理
           );
         }
         if (listener) {

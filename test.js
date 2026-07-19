@@ -7,6 +7,14 @@ document.addEventListener("DOMContentLoaded", async function () {
     const exportButton = document.getElementById("export-script");  // ?臬?單??
     const hoverHighlightButton = document.getElementById("toggle-hover-highlight");
     const dropPositionModeSelect = document.getElementById("drop-position-mode");
+    const loginEnabledInput = document.getElementById("login-enabled");
+    const usernameLocatorInput = document.getElementById("username-locator");
+    const passwordLocatorInput = document.getElementById("password-locator");
+    const loginButtonLocatorInput = document.getElementById("login-button-locator");
+    const credentialSourceSelect = document.getElementById("credential-source");
+    const loginUsernameInput = document.getElementById("login-username");
+    const loginPasswordInput = document.getElementById("login-password");
+    const loginSettingsNote = document.getElementById("login-settings-note");
     const statusDiv = document.getElementById("status");            // ???摮＊蝷箏?憛?
     const recordingIndicator = document.getElementById("recording-indicator"); // ?ˊ銝剔?蝝??內??
     const actionsDiv = document.getElementById("recorded-actions"); // 憿舐內雿輻??雿???皜?憛?
@@ -20,6 +28,52 @@ document.addEventListener("DOMContentLoaded", async function () {
     let pendingCodeViewRefresh = null;
     let locatorSelectInteractionActive = false;
     const noteSaveTimers = new Map();
+
+    function getLoginSettings() {
+        return {
+            enabled: loginEnabledInput?.checked === true,
+            usernameLocator: usernameLocatorInput?.value.trim() || "",
+            passwordLocator: passwordLocatorInput?.value.trim() || "",
+            loginButtonLocator: loginButtonLocatorInput?.value.trim() || "",
+            credentialSource: credentialSourceSelect?.value === "environment"
+                ? "environment"
+                : "direct",
+            username: loginUsernameInput?.value || "",
+            password: loginPasswordInput?.value || ""
+        };
+    }
+
+    function validateLoginSettings(settings) {
+        if (!settings.enabled) return "";
+
+        const requiredFields = [
+            ["Username locator", settings.usernameLocator],
+            ["Password locator", settings.passwordLocator],
+            ["Login button locator", settings.loginButtonLocator]
+        ];
+        if (settings.credentialSource === "direct") {
+            requiredFields.push(
+                ["Username", settings.username],
+                ["Password", settings.password]
+            );
+        }
+        const missingField = requiredFields.find(([, value]) => !value);
+        if (missingField) return `${missingField[0]} is required`;
+
+        return "";
+    }
+
+    function updateCredentialSourceUI() {
+        const isDirect = credentialSourceSelect?.value !== "environment";
+        document.querySelectorAll(".login-direct-field").forEach(element => {
+            element.hidden = !isDirect;
+        });
+        if (loginSettingsNote) {
+            loginSettingsNote.textContent = isDirect
+                ? "Direct mode writes the username and password into the generated and exported test file as plain text."
+                : "Generated tests read TEST_USERNAME and TEST_PASSWORD from environment variables; credentials are not embedded in the test file.";
+        }
+    }
 
     function findMatchingActionIndex(actionList, action, preferredIndex) {
         const list = Array.isArray(actionList) ? actionList : [];
@@ -888,9 +942,33 @@ document.addEventListener("DOMContentLoaded", async function () {
             }
         });
 
-        return codeBody.length && !hasMissingActionCode
-            ? codeBody
-            : (Array.isArray(fallbackCodeBody) ? fallbackCodeBody.filter(Boolean) : []);
+        const fallbackLines = Array.isArray(fallbackCodeBody)
+            ? fallbackCodeBody.filter(Boolean)
+            : [];
+        if (!codeBody.length || hasMissingActionCode) return fallbackLines;
+
+        const markerIndex = fallbackLines.findIndex(line =>
+            String(line).trim() === "// Recorder login setup"
+        );
+        const legacyUsernameLineIndex = fallbackLines.findIndex(line =>
+            String(line).includes(".fill(process.env.TEST_USERNAME)")
+        );
+        const loginSetupLines = markerIndex >= 0
+            ? fallbackLines.slice(markerIndex, markerIndex + 4)
+            : (legacyUsernameLineIndex >= 0
+                ? fallbackLines.slice(legacyUsernameLineIndex, legacyUsernameLineIndex + 4)
+                : []);
+        const pauseLines = fallbackLines.filter(line =>
+            String(line).trim() === "await page.pause();"
+        );
+
+        const nextCodeBody = [...codeBody];
+        const navigationIndex = nextCodeBody.findIndex(line => /\.goto\(/.test(String(line)));
+        if (loginSetupLines.length && navigationIndex >= 0) {
+            nextCodeBody.splice(navigationIndex + 1, 0, ...loginSetupLines);
+        }
+
+        return [...nextCodeBody, ...pauseLines];
     }
 
     function parseFrameDeclaration(line) {
@@ -1768,10 +1846,28 @@ document.addEventListener("DOMContentLoaded", async function () {
     
     // 暺???憪?鋆賬?
     startButton.addEventListener("click", async () => {
-        await chrome.storage.local.set({ hoverPreviewSessionEnabled: true });
+        const loginSettings = getLoginSettings();
+        const loginValidationError = validateLoginSettings(loginSettings);
+        if (loginValidationError) {
+            alert(loginValidationError);
+            return;
+        }
+
+        await chrome.storage.local.set({
+            hoverPreviewSessionEnabled: true,
+            loginSettings: {
+                enabled: loginSettings.enabled,
+                usernameLocator: loginSettings.usernameLocator,
+                passwordLocator: loginSettings.passwordLocator,
+                loginButtonLocator: loginSettings.loginButtonLocator,
+                credentialSource: loginSettings.credentialSource,
+                username: loginSettings.username
+            }
+        });
         const response = await chrome.runtime.sendMessage({
             type: "START_RECORDING",
-            dropPositionMode
+            dropPositionMode,
+            loginSettings
         });
         if (!response?.ok) {
             await chrome.storage.local.set({ hoverPreviewSessionEnabled: false });
@@ -1850,15 +1946,30 @@ document.addEventListener("DOMContentLoaded", async function () {
         });
     });
 
+    credentialSourceSelect?.addEventListener("change", updateCredentialSourceUI);
+
     // 10. ?瑁??????單頛摰敺??餃? Background ?輯???
     const hoverStorage = await chrome.storage.local.get([
         "hoverHighlightEnabled",
-        "dropPositionMode"
+        "dropPositionMode",
+        "loginSettings"
     ]);
     updateHoverHighlightButton(hoverStorage.hoverHighlightEnabled !== false);
     dropPositionMode = ["ratio", "absolute", "center"].includes(hoverStorage.dropPositionMode)
         ? hoverStorage.dropPositionMode
         : "ratio";
     if (dropPositionModeSelect) dropPositionModeSelect.value = dropPositionMode;
+    const storedLoginSettings = hoverStorage.loginSettings || {};
+    if (loginEnabledInput) loginEnabledInput.checked = storedLoginSettings.enabled === true;
+    if (usernameLocatorInput) usernameLocatorInput.value = storedLoginSettings.usernameLocator || "";
+    if (passwordLocatorInput) passwordLocatorInput.value = storedLoginSettings.passwordLocator || "";
+    if (loginButtonLocatorInput) loginButtonLocatorInput.value = storedLoginSettings.loginButtonLocator || "";
+    if (credentialSourceSelect) {
+        credentialSourceSelect.value = storedLoginSettings.credentialSource === "environment"
+            ? "environment"
+            : "direct";
+    }
+    if (loginUsernameInput) loginUsernameInput.value = storedLoginSettings.username || "";
+    updateCredentialSourceUI();
     await loadInitialState();
 });

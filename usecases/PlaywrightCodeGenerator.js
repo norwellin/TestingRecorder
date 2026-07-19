@@ -1250,6 +1250,52 @@ declareContexts(contexts, rootAlias) {
     );
   }
 
+  _appendGrapesDragScrollRestoreLines(lines, scrollState, mousePageAlias) {
+    if (!scrollState) return;
+
+    const stateJson = JSON.stringify(scrollState);
+    const getScrollerLines = scrollState.scope === "ion-content"
+      ? [
+          "      const ionContent = element.matches('ion-content') ? element : element.closest('ion-content');",
+          "      if (!ionContent) return;",
+          "      const scroller = await ionContent.getScrollElement();"
+        ]
+      : scrollState.scope === "element"
+        ? [
+            "      let scroller = element;",
+            "      for (let depth = 0; depth < state.ancestorDepth && scroller; depth += 1) scroller = scroller.parentElement;",
+            "      if (!scroller) return;"
+          ]
+        : [
+            "      const doc = element.ownerDocument;",
+            "      const scroller = (state.rootTag && doc.querySelector(state.rootTag)) || doc.scrollingElement || doc.documentElement;"
+          ];
+
+    lines.push(
+      `  const dragScrollState = ${stateJson};`,
+      "  const dragScrollStart = await dropTarget.evaluate(async (element, state) => {",
+      ...getScrollerLines.map(line => line.replace(/^      /, "    ")),
+      "    return { left: scroller.scrollLeft, top: scroller.scrollTop };",
+      "  }, dragScrollState);",
+      "  if (dragScrollStart) {",
+      "    const dragScrollSteps = 12;",
+      "    for (let dragScrollStep = 1; dragScrollStep <= dragScrollSteps; dragScrollStep += 1) {",
+      "      await dropTarget.evaluate(async (element, payload) => {",
+      "        const { state, start, progress } = payload;",
+      ...getScrollerLines,
+      "        const targetLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
+      "        const targetTop = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
+      "        const left = start.left + (targetLeft - start.left) * progress;",
+      "        const top = start.top + (targetTop - start.top) * progress;",
+      "        if (state.scope === 'ion-content') await ionContent.scrollToPoint(left, top, 0);",
+      "        else { scroller.scrollLeft = left; scroller.scrollTop = top; }",
+      "      }, { state: dragScrollState, start: dragScrollStart, progress: dragScrollStep / dragScrollSteps });",
+      `      await ${mousePageAlias}.mouse.move(sourcePoint.x + 6 + (dragScrollStep % 2), sourcePoint.y - 5, { steps: 2 });`,
+      "    }",
+      "  }"
+    );
+  }
+
   _buildGrapesIframeMouseDragCode({
     action,
     souLocator,
@@ -1286,13 +1332,22 @@ declareContexts(contexts, rootAlias) {
       "  const sourceBox = await dragSource.boundingBox();",
       "  if (!sourceBox) throw new Error('Unable to calculate GrapesJS drag source coordinates');",
       `  const sourcePoint = { x: sourceBox.x + sourceBox.width * ${sourceXRatio}, y: sourceBox.y + sourceBox.height * ${sourceYRatio} };`,
+      "  await dragSource.evaluate(element => {",
+      "    element.addEventListener('pointerdown', event => {",
+      "      if (typeof element.setPointerCapture !== 'function') return;",
+      "      try {",
+      "        element.__recorderPointerId = event.pointerId;",
+      "        element.setPointerCapture(event.pointerId);",
+      "      } catch (error) { console.warn(`Pointer capture skipped: ${error.message}`); }",
+      "    }, { capture: true, once: true });",
+      "  });",
       `  await ${mousePageAlias}.mouse.move(sourcePoint.x, sourcePoint.y);`,
-      `  await ${mousePageAlias}.mouse.down();`
+      `  await ${mousePageAlias}.mouse.down();`,
+      `  await ${mousePageAlias}.mouse.move(sourcePoint.x + 5, sourcePoint.y - 5, { steps: 5 });`
     );
 
-    this._appendDropScrollRestoreLines(lines, scrollState);
+    this._appendGrapesDragScrollRestoreLines(lines, scrollState, mousePageAlias);
     lines.push(
-      "  await safeScrollIntoViewIfNeeded(dropTarget);",
       "  await dropTarget.waitFor({ state: 'visible' });",
       "  const targetBox = await dropTarget.boundingBox();",
       "  if (!targetBox) throw new Error('Unable to calculate GrapesJS drag target coordinates');"
@@ -1307,7 +1362,13 @@ declareContexts(contexts, rootAlias) {
     }
 
     lines.push(
-      `  await ${mousePageAlias}.mouse.move((sourcePoint.x + targetPoint.x) / 2, (sourcePoint.y + targetPoint.y) / 2, { steps: 10 });`,
+      "  await dragSource.evaluate(element => {",
+      "    const pointerId = element.__recorderPointerId;",
+      "    if (pointerId !== undefined && typeof element.hasPointerCapture === 'function' && element.hasPointerCapture(pointerId)) {",
+      "      element.releasePointerCapture(pointerId);",
+      "    }",
+      "    delete element.__recorderPointerId;",
+      "  });",
       `  await ${mousePageAlias}.mouse.move(targetPoint.x, targetPoint.y, { steps: 20 });`,
       `  await ${mousePageAlias}.mouse.up();`,
       "}"

@@ -716,6 +716,21 @@ test("GrapesJS iframe drags replay with page mouse coordinates instead of dragTo
   assert.ok(sourceRestore < mouseDown);
   assert.ok(mouseDown < targetRestore);
   assert.ok(targetRestore < targetMeasurement);
+  assert.match(code, /const dragScrollSteps = 12/);
+  assert.match(code, /dragScrollStep % 2/);
+  assert.match(code, /sourcePoint\.x \+ 5, sourcePoint\.y - 5/);
+  assert.match(code, /element\.setPointerCapture\(event\.pointerId\)/);
+  assert.match(code, /element\.releasePointerCapture\(pointerId\)/);
+  assert.ok(
+    lines.findIndex(line => line.includes("setPointerCapture")) < mouseDown,
+    "pointer capture must be installed before mouse down"
+  );
+  assert.ok(
+    lines.findIndex(line => line.includes("releasePointerCapture")) > targetMeasurement,
+    "pointer capture must remain active until target scrolling and measurement finish"
+  );
+  assert.doesNotMatch(code, /sourcePoint\.x \+ targetPoint\.x/);
+  assert.doesNotMatch(code, /safeScrollIntoViewIfNeeded\(dropTarget\)/);
 });
 
 test("ordinary iframe drags restore source scrolling before dragTo", () => {

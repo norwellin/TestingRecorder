@@ -116,6 +116,53 @@
             color: white;
         }
 
+        .login-settings {
+            margin-bottom: 15px;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: white;
+        }
+
+        .login-settings summary {
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .login-settings-grid {
+            display: grid;
+            grid-template-columns: 170px minmax(260px, 1fr);
+            align-items: center;
+            gap: 8px 12px;
+            margin-top: 12px;
+        }
+
+        .login-settings-grid input[type="text"],
+        .login-settings-grid input[type="password"] {
+            min-width: 0;
+            padding: 7px 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        .login-settings-grid select {
+            padding: 7px 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: white;
+        }
+
+        .login-direct-field[hidden] {
+            display: none;
+        }
+
+        .login-settings-note {
+            grid-column: 1 / -1;
+            margin: 2px 0 0;
+            color: #666;
+            font-size: 12px;
+        }
+
         .status-bar {
             display: flex;
             align-items: center;
@@ -592,6 +639,42 @@
         <button id="export-script">Export Script</button>
         <button id="toggle-hover-highlight" title="Toggle hovered element highlight">Highlight On</button>
     </div>
+
+    <details class="login-settings">
+        <summary>Login Settings</summary>
+        <div class="login-settings-grid">
+            <label for="login-enabled">Login setup</label>
+            <label>
+                <input id="login-enabled" type="checkbox">
+                Enable login setup
+            </label>
+
+            <label for="username-locator">Username locator</label>
+            <input id="username-locator" type="text" placeholder="#username">
+
+            <label for="password-locator">Password locator</label>
+            <input id="password-locator" type="text" placeholder="#password">
+
+            <label for="login-button-locator">Login button locator</label>
+            <input id="login-button-locator" type="text" placeholder="button[type='submit']">
+
+            <label for="credential-source">Credential source</label>
+            <select id="credential-source">
+                <option value="direct">Enter credentials directly</option>
+                <option value="environment">Environment variables (recommended)</option>
+            </select>
+
+            <label class="login-direct-field" for="login-username">Username</label>
+            <input class="login-direct-field" id="login-username" type="text" autocomplete="off">
+
+            <label class="login-direct-field" for="login-password">Password</label>
+            <input class="login-direct-field" id="login-password" type="password" autocomplete="new-password">
+
+            <p id="login-settings-note" class="login-settings-note">
+                Direct mode writes the username and password into the generated and exported test file as plain text.
+            </p>
+        </div>
+    </details>
 
     <div class="status-bar">
         <div id="recording-indicator" class="recording-indicator"></div>
