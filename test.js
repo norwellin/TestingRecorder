@@ -271,7 +271,6 @@ document.addEventListener("DOMContentLoaded", async function () {
             actionElement.appendChild(createCell(getActionSource(action)));
             actionElement.appendChild(createCell(getActionTarget(action)));
             actionElement.appendChild(createCell(getActionBehavior(action), "action-behavior"));
-            actionElement.appendChild(createMethodCell(action));
             actionElement.appendChild(createElementCell(action, index));
             actionElement.appendChild(createNoteCell(action, index));
             actionElement.appendChild(createDeleteCell(action, index));
@@ -386,20 +385,6 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
         if (action.type === "keyboard") return action.keyboard || "";
         return action.sourceData || "";
-    }
-
-    function formatActionMethod(action) {
-        if (action.type === "dragANDdrop") {
-            return `來源: ${action.sourceMethod || ""}\n目標: ${action.targetMethod || ""}`;
-        }
-        if (action.type === "dialog" && action.triggerAction) {
-            return `dialog\ntrigger: ${action.triggerAction.sourceMethod || ""}`;
-        }
-        return action.sourceMethod || "";
-    }
-
-    function createMethodCell(action) {
-        return createCell(formatActionMethod(action), "action-method");
     }
 
     function createElementCell(action, index) {
