@@ -724,8 +724,8 @@ export class MainApp {
     delete safeAct.source;  // 移除無法序列化的真實 DOM 節點
     delete safeAct.target;  // 移除無法序列化的真實 DOM 節點
 
-    safeAct.displaySourceWindow = this.getDisplayContextName(safeAct.sourceWindow);
-    safeAct.displayTargetWindow = this.getDisplayContextName(safeAct.targetWindow);
+    safeAct.displaySourceWindow = this.getDisplayContextName(safeAct.sourceWindow, safeAct.sourceContext);
+    safeAct.displayTargetWindow = this.getDisplayContextName(safeAct.targetWindow, safeAct.targetContext);
 
     return safeAct;
   }
@@ -746,8 +746,14 @@ export class MainApp {
     return this.dropPositionMode;
   }
 
-  getDisplayContextName(contextId) {
+  getDisplayContextName(contextId, contextSnapshot = null) {
     if (!contextId) return "";
+
+    const context = this.registry?.getContext?.(contextId) || contextSnapshot;
+    if (context?.type === "iframe") {
+      const frameId = context.frameElement?.id || context.frameId;
+      return frameId ? `iframe#${frameId}` : "iframe";
+    }
 
     if (this.codeGenerator && typeof this.codeGenerator._getContextPrefix === "function") {
       return this.codeGenerator._getContextPrefix(contextId);

@@ -1273,26 +1273,14 @@ declareContexts(contexts, rootAlias) {
 
     lines.push(
       `  const dragScrollState = ${stateJson};`,
-      "  const dragScrollStart = await dropTarget.evaluate(async (element, state) => {",
+      "  await dropTarget.evaluate(async (element, state) => {",
       ...getScrollerLines.map(line => line.replace(/^      /, "    ")),
-      "    return { left: scroller.scrollLeft, top: scroller.scrollTop };",
+      "    const left = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
+      "    const top = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
+      "    if (state.scope === 'ion-content') await ionContent.scrollToPoint(left, top, 0);",
+      "    else { scroller.scrollLeft = left; scroller.scrollTop = top; }",
       "  }, dragScrollState);",
-      "  if (dragScrollStart) {",
-      "    const dragScrollSteps = 12;",
-      "    for (let dragScrollStep = 1; dragScrollStep <= dragScrollSteps; dragScrollStep += 1) {",
-      "      await dropTarget.evaluate(async (element, payload) => {",
-      "        const { state, start, progress } = payload;",
-      ...getScrollerLines,
-      "        const targetLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
-      "        const targetTop = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
-      "        const left = start.left + (targetLeft - start.left) * progress;",
-      "        const top = start.top + (targetTop - start.top) * progress;",
-      "        if (state.scope === 'ion-content') await ionContent.scrollToPoint(left, top, 0);",
-      "        else { scroller.scrollLeft = left; scroller.scrollTop = top; }",
-      "      }, { state: dragScrollState, start: dragScrollStart, progress: dragScrollStep / dragScrollSteps });",
-      `      await ${mousePageAlias}.mouse.move(sourcePoint.x + 6 + (dragScrollStep % 2), sourcePoint.y - 5, { steps: 2 });`,
-      "    }",
-      "  }"
+      `  await ${mousePageAlias}.mouse.move(sourcePoint.x + 7, sourcePoint.y - 5, { steps: 2 });`
     );
   }
 
@@ -1369,7 +1357,7 @@ declareContexts(contexts, rootAlias) {
       "    }",
       "    delete element.__recorderPointerId;",
       "  });",
-      `  await ${mousePageAlias}.mouse.move(targetPoint.x, targetPoint.y, { steps: 20 });`,
+      `  await ${mousePageAlias}.mouse.move(targetPoint.x, targetPoint.y);`,
       `  await ${mousePageAlias}.mouse.up();`,
       "}"
     );

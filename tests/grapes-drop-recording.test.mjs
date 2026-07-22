@@ -587,6 +587,8 @@ test("canvas drags replay the recorded pointer path with page mouse coordinates"
   assert.match(code, /const path = \[\{"xRatio":0\.1,"yRatio":0\.2\}/);
   assert.match(code, /await page\.mouse\.down\(\)/);
   assert.match(code, /await page\.mouse\.up\(\)/);
+  assert.match(code, /await page\.mouse\.move\(targetPoint\.x, targetPoint\.y\);/);
+  assert.doesNotMatch(code, /targetPoint\.x, targetPoint\.y, \{ steps: 20 \}/);
   assert.doesNotMatch(code, /\.dragTo\(/);
 });
 
@@ -716,8 +718,9 @@ test("GrapesJS iframe drags replay with page mouse coordinates instead of dragTo
   assert.ok(sourceRestore < mouseDown);
   assert.ok(mouseDown < targetRestore);
   assert.ok(targetRestore < targetMeasurement);
-  assert.match(code, /const dragScrollSteps = 12/);
-  assert.match(code, /dragScrollStep % 2/);
+  assert.doesNotMatch(code, /dragScrollSteps|dragScrollStep|progress/);
+  assert.match(code, /scrollToPoint\(left, top, 0\)/);
+  assert.match(code, /sourcePoint\.x \+ 7, sourcePoint\.y - 5/);
   assert.match(code, /sourcePoint\.x \+ 5, sourcePoint\.y - 5/);
   assert.match(code, /element\.setPointerCapture\(event\.pointerId\)/);
   assert.match(code, /element\.releasePointerCapture\(pointerId\)/);

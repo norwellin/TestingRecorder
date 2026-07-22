@@ -8485,26 +8485,14 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       ];
       lines.push(
         `  const dragScrollState = ${stateJson};`,
-        "  const dragScrollStart = await dropTarget.evaluate(async (element, state) => {",
+        "  await dropTarget.evaluate(async (element, state) => {",
         ...getScrollerLines.map((line) => line.replace(/^      /, "    ")),
-        "    return { left: scroller.scrollLeft, top: scroller.scrollTop };",
+        "    const left = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
+        "    const top = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
+        "    if (state.scope === 'ion-content') await ionContent.scrollToPoint(left, top, 0);",
+        "    else { scroller.scrollLeft = left; scroller.scrollTop = top; }",
         "  }, dragScrollState);",
-        "  if (dragScrollStart) {",
-        "    const dragScrollSteps = 12;",
-        "    for (let dragScrollStep = 1; dragScrollStep <= dragScrollSteps; dragScrollStep += 1) {",
-        "      await dropTarget.evaluate(async (element, payload) => {",
-        "        const { state, start, progress } = payload;",
-        ...getScrollerLines,
-        "        const targetLeft = (scroller.scrollWidth - scroller.clientWidth) * state.scrollLeftRatio;",
-        "        const targetTop = (scroller.scrollHeight - scroller.clientHeight) * state.scrollTopRatio;",
-        "        const left = start.left + (targetLeft - start.left) * progress;",
-        "        const top = start.top + (targetTop - start.top) * progress;",
-        "        if (state.scope === 'ion-content') await ionContent.scrollToPoint(left, top, 0);",
-        "        else { scroller.scrollLeft = left; scroller.scrollTop = top; }",
-        "      }, { state: dragScrollState, start: dragScrollStart, progress: dragScrollStep / dragScrollSteps });",
-        `      await ${mousePageAlias}.mouse.move(sourcePoint.x + 6 + (dragScrollStep % 2), sourcePoint.y - 5, { steps: 2 });`,
-        "    }",
-        "  }"
+        `  await ${mousePageAlias}.mouse.move(sourcePoint.x + 7, sourcePoint.y - 5, { steps: 2 });`
       );
     }
     _buildGrapesIframeMouseDragCode({
@@ -8571,7 +8559,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         "    }",
         "    delete element.__recorderPointerId;",
         "  });",
-        `  await ${mousePageAlias}.mouse.move(targetPoint.x, targetPoint.y, { steps: 20 });`,
+        `  await ${mousePageAlias}.mouse.move(targetPoint.x, targetPoint.y);`,
         `  await ${mousePageAlias}.mouse.up();`,
         "}"
       );
@@ -12167,8 +12155,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const safeAct = { ...action };
       delete safeAct.source;
       delete safeAct.target;
-      safeAct.displaySourceWindow = this.getDisplayContextName(safeAct.sourceWindow);
-      safeAct.displayTargetWindow = this.getDisplayContextName(safeAct.targetWindow);
+      safeAct.displaySourceWindow = this.getDisplayContextName(safeAct.sourceWindow, safeAct.sourceContext);
+      safeAct.displayTargetWindow = this.getDisplayContextName(safeAct.targetWindow, safeAct.targetContext);
       return safeAct;
     }
     getRecordingViewport() {
@@ -12183,8 +12171,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.dropPositionMode = ["ratio", "absolute", "center"].includes(mode) ? mode : "ratio";
       return this.dropPositionMode;
     }
-    getDisplayContextName(contextId) {
+    getDisplayContextName(contextId, contextSnapshot = null) {
       if (!contextId) return "";
+      const context = this.registry?.getContext?.(contextId) || contextSnapshot;
+      if (context?.type === "iframe") {
+        const frameId = context.frameElement?.id || context.frameId;
+        return frameId ? `iframe#${frameId}` : "iframe";
+      }
       if (this.codeGenerator && typeof this.codeGenerator._getContextPrefix === "function") {
         return this.codeGenerator._getContextPrefix(contextId);
       }
