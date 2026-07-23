@@ -7006,20 +7006,17 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     filterAndRankPlaywrightSelectors(selectors) {
       const stableSelectors = [];
-      const unstableClassSelectors = [];
       const dynamicIdSelectors = [];
       const riskBySelector = /* @__PURE__ */ new Map();
       for (const selector2 of selectors || []) {
         const risk = this.analyzeSelectorRisk(selector2);
         riskBySelector.set(selector2, risk);
-        if (risk.dynamicClasses.length) continue;
+        if (risk.dynamicClasses.length || risk.unstableClasses.length) continue;
         if (risk.possibleDynamicId) dynamicIdSelectors.push(selector2);
-        else if (risk.unstableClasses.length) unstableClassSelectors.push(selector2);
         else stableSelectors.push(selector2);
       }
       const rankedSelectors = [
         ...stableSelectors,
-        ...unstableClassSelectors,
         ...dynamicIdSelectors
       ];
       return {

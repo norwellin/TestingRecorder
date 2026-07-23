@@ -1309,7 +1309,7 @@ test("playwright-injected selectors using dynamic IDs are moved to the end", () 
   );
 });
 
-test("playwright-injected selector filtering removes dynamic classes and demotes suspected classes", () => {
+test("playwright-injected selector filtering removes dynamic and unstable classes", () => {
   const service = new DOMParserService({ mainWindow: {} });
   const ownerDocument = {
     defaultView: {
@@ -1336,13 +1336,10 @@ test("playwright-injected selector filtering removes dynamic classes and demotes
 
   assert.deepEqual(result.selectors, [
     'internal:role=button[name="Save"i]',
-    "button.css-1k2x3y",
     "#i123"
   ]);
-  assert.equal(result.risks[1].possibleDynamicClass, true);
-  assert.deepEqual(result.risks[1].unstableClasses, ["css-1k2x3y"]);
-  assert.equal(result.risks[2].possibleDynamicId, true);
-  assert.deepEqual(result.risks[2].dynamicIds, ["i123"]);
+  assert.equal(result.risks[1].possibleDynamicId, true);
+  assert.deepEqual(result.risks[1].dynamicIds, ["i123"]);
   assert.deepEqual(service.analyzeClassRisk("has-focus"), {
     level: "dynamic",
     reason: "Runtime state class"

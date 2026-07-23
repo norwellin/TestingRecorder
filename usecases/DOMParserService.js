@@ -281,7 +281,6 @@ export class DOMParserService {
 
   filterAndRankPlaywrightSelectors(selectors) {
     const stableSelectors = [];
-    const unstableClassSelectors = [];
     const dynamicIdSelectors = [];
     const riskBySelector = new Map();
 
@@ -289,16 +288,15 @@ export class DOMParserService {
       const risk = this.analyzeSelectorRisk(selector);
       riskBySelector.set(selector, risk);
 
-      // Confirmed runtime-state classes are unsafe across replays.
-      if (risk.dynamicClasses.length) continue;
+      // Dynamic and unstable classes are unsafe across replays, so never retain
+      // locator candidates that depend on either kind of class.
+      if (risk.dynamicClasses.length || risk.unstableClasses.length) continue;
       if (risk.possibleDynamicId) dynamicIdSelectors.push(selector);
-      else if (risk.unstableClasses.length) unstableClassSelectors.push(selector);
       else stableSelectors.push(selector);
     }
 
     const rankedSelectors = [
       ...stableSelectors,
-      ...unstableClassSelectors,
       ...dynamicIdSelectors
     ];
     return {
