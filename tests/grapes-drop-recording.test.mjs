@@ -1867,6 +1867,7 @@ test("iframe clicks record their position relative to the selected click target"
   Object.assign(listener, {
     isRecording: true,
     suppressClickUntil: 0,
+    iframeClickPositionMode: "relative",
     activeIonSelect: null,
     shouldSuppressSyntheticPageEvent: () => false,
     getClickTarget: () => target,
@@ -1885,7 +1886,52 @@ test("iframe clicks record their position relative to the selected click target"
 
   assert.equal(dispatched.length, 1);
   assert.equal(dispatched[0][0], "click");
-  assert.deepEqual(dispatched[0][3].clickPosition, { x: 30, y: 50 });
+  assert.deepEqual(dispatched[0][3].clickPosition, {
+    x: 30,
+    y: 50,
+    xRatio: 0.15,
+    yRatio: 0.4167,
+    width: 200,
+    height: 120
+  });
+});
+
+test("iframe clicks omit their position by default", () => {
+  const target = {
+    nodeType: 1,
+    tagName: "BUTTON",
+    getBoundingClientRect: () => ({
+      left: 100,
+      top: 40,
+      width: 200,
+      height: 120
+    })
+  };
+  const listener = Object.create(IframeEventListener.prototype);
+  const dispatched = [];
+  Object.assign(listener, {
+    isRecording: true,
+    suppressClickUntil: 0,
+    iframeClickPositionMode: "none",
+    activeIonSelect: null,
+    shouldSuppressSyntheticPageEvent: () => false,
+    getClickTarget: () => target,
+    describeDebugElement: () => "button",
+    describeDebugRoot: () => "document",
+    dispatchAction: (...args) => dispatched.push(args)
+  });
+
+  listener.clickHandler({
+    isTrusted: true,
+    clientX: 130,
+    clientY: 90,
+    target,
+    composedPath: () => [target]
+  });
+
+  assert.equal(dispatched.length, 1);
+  assert.equal(dispatched[0][0], "click");
+  assert.equal(dispatched[0][3].clickPosition, null);
 });
 
 test("iframe click code includes the recorded element-relative position", () => {
@@ -1900,16 +1946,20 @@ test("iframe click code includes the recorded element-relative position", () => 
   const code = generator.clickSetter(
     {
       type: "click",
-      clickPosition: { x: 30, y: 50 }
+      clickPosition: {
+        x: 30,
+        y: 50,
+        xRatio: 0.15,
+        yRatio: 0.4167
+      }
     },
     { funName: "ByDomPath", obj: {} },
     "iframe_1"
   );
 
-  assert.equal(
-    code,
-    'await page.locator("iframe#gjsiframe").contentFrame().locator(\'ion-grid\').nth(1).click({ position: { x: 30, y: 50 } });'
-  );
+  assert.match(code, /const clickTarget = page\.locator\("iframe#gjsiframe"\)\.contentFrame\(\)\.locator\('ion-grid'\)\.nth\(1\);/);
+  assert.match(code, /const clickBox = await clickTarget\.boundingBox\(\);/);
+  assert.match(code, /x: clickBox\.width \* 0\.15, y: clickBox\.height \* 0\.4167/);
 });
 
 test("right-click actions generate Playwright right button clicks", () => {

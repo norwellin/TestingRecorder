@@ -42,6 +42,7 @@ export class IframeEventListener {
     this.lastPreviewTarget = null;
     this.hoverHighlightEnabled = true;
     this.hoverPreviewSessionEnabled = false;
+    this.iframeClickPositionMode = "none";
     this.isRecording = false;
   }
 
@@ -759,9 +760,14 @@ export class IframeEventListener {
   loadHoverHighlightPreference() {
     try {
       if (typeof chrome === "undefined" || !chrome.storage?.local) return;
-      chrome.storage.local.get(["hoverHighlightEnabled", "hoverPreviewSessionEnabled"], (result) => {
+      chrome.storage.local.get([
+        "hoverHighlightEnabled",
+        "hoverPreviewSessionEnabled",
+        "iframeClickPositionMode"
+      ], (result) => {
         this.setHoverHighlightEnabled(result.hoverHighlightEnabled !== false);
         this.setHoverPreviewSessionEnabled(result.hoverPreviewSessionEnabled === true);
+        this.setIframeClickPositionMode(result.iframeClickPositionMode);
       });
     } catch (error) {
       console.warn("[Recorder] Unable to load iframe hover highlight preference", error);
@@ -779,6 +785,10 @@ export class IframeEventListener {
         if (areaName !== "local" || !changes.hoverPreviewSessionEnabled) return;
         this.setHoverPreviewSessionEnabled(changes.hoverPreviewSessionEnabled.newValue === true);
       });
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== "local" || !changes.iframeClickPositionMode) return;
+        this.setIframeClickPositionMode(changes.iframeClickPositionMode.newValue);
+      });
     } catch (error) {
       console.warn("[Recorder] Unable to bind iframe hover highlight preference", error);
     }
@@ -787,6 +797,10 @@ export class IframeEventListener {
   setHoverHighlightEnabled(enabled) {
     this.hoverHighlightEnabled = enabled !== false;
     if (!this.hoverHighlightEnabled) this.hideHoverPreview();
+  }
+
+  setIframeClickPositionMode(mode) {
+    this.iframeClickPositionMode = mode === "relative" ? "relative" : "none";
   }
 
   mouseoutHandler(e) {
@@ -913,9 +927,10 @@ export class IframeEventListener {
       clickable: this.describeDebugElement(target),
       clickableRoot: this.describeDebugRoot(target?.getRootNode?.())
     });
-    this.dispatchAction("click", this.currentHoveredElement, null, {
-      clickPosition: this.getClickPosition(e, this.currentHoveredElement)
-    });
+    const clickPosition = this.iframeClickPositionMode === "relative"
+      ? this.getClickPosition(e, this.currentHoveredElement)
+      : null;
+    this.dispatchAction("click", this.currentHoveredElement, null, { clickPosition });
   }
 
   contextMenuHandler(e) {
@@ -995,9 +1010,15 @@ export class IframeEventListener {
     const rawY = (Number(e.clientY) - Number(rect.top)) / scaleY - borderTop;
     const round = value => Math.round(value * 100) / 100;
 
+    const x = Math.max(0, Math.min(paddingWidth, rawX));
+    const y = Math.max(0, Math.min(paddingHeight, rawY));
     return {
-      x: round(Math.max(0, Math.min(paddingWidth, rawX))),
-      y: round(Math.max(0, Math.min(paddingHeight, rawY)))
+      x: round(x),
+      y: round(y),
+      xRatio: paddingWidth > 0 ? Math.round((x / paddingWidth) * 10000) / 10000 : 0,
+      yRatio: paddingHeight > 0 ? Math.round((y / paddingHeight) * 10000) / 10000 : 0,
+      width: round(paddingWidth),
+      height: round(paddingHeight)
     };
   }
 

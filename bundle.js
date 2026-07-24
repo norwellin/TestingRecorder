@@ -8575,12 +8575,24 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.updateUserActionDB(action, best.funName, best.obj, "source", sourcepath);
       const clickX = Number(action?.clickPosition?.x);
       const clickY = Number(action?.clickPosition?.y);
+      const clickXRatio = Number(action?.clickPosition?.xRatio);
+      const clickYRatio = Number(action?.clickPosition?.yRatio);
       if (action?.type === "rightClick") {
         const options = [`button: "right"`];
         if (Number.isFinite(clickX) && Number.isFinite(clickY)) {
           options.push(`position: { x: ${clickX}, y: ${clickY} }`);
         }
         return `await ${locator}.click({ ${options.join(", ")} });`;
+      }
+      if (action?.type === "click" && Number.isFinite(clickXRatio) && Number.isFinite(clickYRatio)) {
+        return [
+          "{",
+          `  const clickTarget = ${locator};`,
+          "  const clickBox = await clickTarget.boundingBox();",
+          "  if (!clickBox) throw new Error('Unable to calculate click coordinates');",
+          `  await clickTarget.click({ position: { x: clickBox.width * ${clickXRatio}, y: clickBox.height * ${clickYRatio} } });`,
+          "}"
+        ].join("\n");
       }
       if (action?.type === "click" && Number.isFinite(clickX) && Number.isFinite(clickY)) {
         return `await ${locator}.click({ position: { x: ${clickX}, y: ${clickY} } });`;
@@ -10286,6 +10298,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.lastPreviewTarget = null;
       this.hoverHighlightEnabled = true;
       this.hoverPreviewSessionEnabled = false;
+      this.iframeClickPositionMode = "none";
       this.isRecording = false;
     }
     init() {
@@ -10901,9 +10914,14 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     loadHoverHighlightPreference() {
       try {
         if (typeof chrome === "undefined" || !chrome.storage?.local) return;
-        chrome.storage.local.get(["hoverHighlightEnabled", "hoverPreviewSessionEnabled"], (result) => {
+        chrome.storage.local.get([
+          "hoverHighlightEnabled",
+          "hoverPreviewSessionEnabled",
+          "iframeClickPositionMode"
+        ], (result) => {
           this.setHoverHighlightEnabled(result.hoverHighlightEnabled !== false);
           this.setHoverPreviewSessionEnabled(result.hoverPreviewSessionEnabled === true);
+          this.setIframeClickPositionMode(result.iframeClickPositionMode);
         });
       } catch (error) {
         console.warn("[Recorder] Unable to load iframe hover highlight preference", error);
@@ -10920,6 +10938,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           if (areaName !== "local" || !changes.hoverPreviewSessionEnabled) return;
           this.setHoverPreviewSessionEnabled(changes.hoverPreviewSessionEnabled.newValue === true);
         });
+        chrome.storage.onChanged.addListener((changes, areaName) => {
+          if (areaName !== "local" || !changes.iframeClickPositionMode) return;
+          this.setIframeClickPositionMode(changes.iframeClickPositionMode.newValue);
+        });
       } catch (error) {
         console.warn("[Recorder] Unable to bind iframe hover highlight preference", error);
       }
@@ -10927,6 +10949,9 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     setHoverHighlightEnabled(enabled) {
       this.hoverHighlightEnabled = enabled !== false;
       if (!this.hoverHighlightEnabled) this.hideHoverPreview();
+    }
+    setIframeClickPositionMode(mode) {
+      this.iframeClickPositionMode = mode === "relative" ? "relative" : "none";
     }
     mouseoutHandler(e) {
       if (!e.relatedTarget) this.hideHoverPreview();
@@ -11019,10 +11044,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const target = this.getClickTarget(e);
       if (!target) return;
       if (this.isCanvasElement(target)) {
-        const clickPosition = this.getElementPosition(e, target);
-        if (clickPosition) this.lastCanvasPointerPosition.set(target, clickPosition);
+        const clickPosition2 = this.getElementPosition(e, target);
+        if (clickPosition2) this.lastCanvasPointerPosition.set(target, clickPosition2);
         this.currentHoveredElement = target;
-        this.dispatchAction("click", this.currentHoveredElement, null, { clickPosition });
+        this.dispatchAction("click", this.currentHoveredElement, null, { clickPosition: clickPosition2 });
         return;
       }
       if (target.tagName === "ION-SELECT") {
@@ -11038,9 +11063,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         clickable: this.describeDebugElement(target),
         clickableRoot: this.describeDebugRoot(target?.getRootNode?.())
       });
-      this.dispatchAction("click", this.currentHoveredElement, null, {
-        clickPosition: this.getClickPosition(e, this.currentHoveredElement)
-      });
+      const clickPosition = this.iframeClickPositionMode === "relative" ? this.getClickPosition(e, this.currentHoveredElement) : null;
+      this.dispatchAction("click", this.currentHoveredElement, null, { clickPosition });
     }
     contextMenuHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
@@ -11106,9 +11130,15 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const rawX = (Number(e.clientX) - Number(rect.left)) / scaleX - borderLeft;
       const rawY = (Number(e.clientY) - Number(rect.top)) / scaleY - borderTop;
       const round = (value) => Math.round(value * 100) / 100;
+      const x = Math.max(0, Math.min(paddingWidth, rawX));
+      const y = Math.max(0, Math.min(paddingHeight, rawY));
       return {
-        x: round(Math.max(0, Math.min(paddingWidth, rawX))),
-        y: round(Math.max(0, Math.min(paddingHeight, rawY)))
+        x: round(x),
+        y: round(y),
+        xRatio: paddingWidth > 0 ? Math.round(x / paddingWidth * 1e4) / 1e4 : 0,
+        yRatio: paddingHeight > 0 ? Math.round(y / paddingHeight * 1e4) / 1e4 : 0,
+        width: round(paddingWidth),
+        height: round(paddingHeight)
       };
     }
     isRangeInput(element) {

@@ -7,6 +7,7 @@ document.addEventListener("DOMContentLoaded", async function () {
     const exportButton = document.getElementById("export-script");  // ?臬?單??
     const hoverHighlightButton = document.getElementById("toggle-hover-highlight");
     const dropPositionModeSelect = document.getElementById("drop-position-mode");
+    const iframeClickPositionModeSelect = document.getElementById("iframe-click-position-mode");
     const loginEnabledInput = document.getElementById("login-enabled");
     const usernameLocatorInput = document.getElementById("username-locator");
     const passwordLocatorInput = document.getElementById("password-locator");
@@ -24,6 +25,7 @@ document.addEventListener("DOMContentLoaded", async function () {
     let actions = []; // ?脣??刻??園?銝剔??????
     let hoverHighlightEnabled = true;
     let dropPositionMode = "ratio";
+    let iframeClickPositionMode = "none";
     let pendingActionsRefresh = null;
     let pendingCodeViewRefresh = null;
     let locatorSelectInteractionActive = false;
@@ -1931,12 +1933,21 @@ document.addEventListener("DOMContentLoaded", async function () {
         });
     });
 
+    iframeClickPositionModeSelect?.addEventListener("change", async () => {
+        const nextMode = iframeClickPositionModeSelect.value === "relative"
+            ? "relative"
+            : "none";
+        iframeClickPositionMode = nextMode;
+        await chrome.storage.local.set({ iframeClickPositionMode: nextMode });
+    });
+
     credentialSourceSelect?.addEventListener("change", updateCredentialSourceUI);
 
     // 10. ?瑁??????單頛摰敺??餃? Background ?輯???
     const hoverStorage = await chrome.storage.local.get([
         "hoverHighlightEnabled",
         "dropPositionMode",
+        "iframeClickPositionMode",
         "loginSettings"
     ]);
     updateHoverHighlightButton(hoverStorage.hoverHighlightEnabled !== false);
@@ -1944,6 +1955,12 @@ document.addEventListener("DOMContentLoaded", async function () {
         ? hoverStorage.dropPositionMode
         : "ratio";
     if (dropPositionModeSelect) dropPositionModeSelect.value = dropPositionMode;
+    iframeClickPositionMode = hoverStorage.iframeClickPositionMode === "relative"
+        ? "relative"
+        : "none";
+    if (iframeClickPositionModeSelect) {
+        iframeClickPositionModeSelect.value = iframeClickPositionMode;
+    }
     const storedLoginSettings = hoverStorage.loginSettings || {};
     if (loginEnabledInput) loginEnabledInput.checked = storedLoginSettings.enabled === true;
     if (usernameLocatorInput) usernameLocatorInput.value = storedLoginSettings.usernameLocator || "";

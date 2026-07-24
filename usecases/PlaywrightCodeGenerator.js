@@ -1382,12 +1382,29 @@ declareContexts(contexts, rootAlias) {
 
     const clickX = Number(action?.clickPosition?.x);
     const clickY = Number(action?.clickPosition?.y);
+    const clickXRatio = Number(action?.clickPosition?.xRatio);
+    const clickYRatio = Number(action?.clickPosition?.yRatio);
     if (action?.type === "rightClick") {
       const options = [`button: "right"`];
       if (Number.isFinite(clickX) && Number.isFinite(clickY)) {
         options.push(`position: { x: ${clickX}, y: ${clickY} }`);
       }
       return `await ${locator}.click({ ${options.join(", ")} });`;
+    }
+
+    if (
+      action?.type === "click" &&
+      Number.isFinite(clickXRatio) &&
+      Number.isFinite(clickYRatio)
+    ) {
+      return [
+        "{",
+        `  const clickTarget = ${locator};`,
+        "  const clickBox = await clickTarget.boundingBox();",
+        "  if (!clickBox) throw new Error('Unable to calculate click coordinates');",
+        `  await clickTarget.click({ position: { x: clickBox.width * ${clickXRatio}, y: clickBox.height * ${clickYRatio} } });`,
+        "}"
+      ].join("\n");
     }
 
     if (action?.type === "click" && Number.isFinite(clickX) && Number.isFinite(clickY)) {
