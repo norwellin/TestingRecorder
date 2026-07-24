@@ -1346,6 +1346,80 @@ test("playwright-injected selector filtering removes dynamic and unstable classe
   });
 });
 
+test("finder path is preferred when the target element has a possible dynamic ID", () => {
+  const service = new DOMParserService({ mainWindow: {} });
+  const ownerDocument = { contains: () => true };
+  const target = {
+    nodeType: 1,
+    id: "i123",
+    tagName: "BUTTON",
+    ownerDocument,
+    getRootNode: () => ownerDocument,
+    getAttribute: () => null,
+    innerText: "Save"
+  };
+
+  service.generateLocatorCandidatesWithPlaywrightInjected = () => ({
+    playwrightSelector: "#i123",
+    playwrightSelectors: ["#i123"],
+    playwrightSelectorRisks: [{
+      selector: "#i123",
+      possibleDynamicId: true,
+      dynamicIds: ["i123"]
+    }],
+    finderWithoutIdSelector: "main > button:nth-of-type(1)"
+  });
+  service.getShadowChain = () => [];
+  service.inspectSelectorUniqueness = () => ({ isUnique: true });
+
+  const result = service.getOpenSourcePath(target);
+
+  assert.equal(result[0].funName, "ByDomPath");
+  assert.equal(result[0].obj.csspath, "main > button:nth-of-type(1)");
+  assert.equal(result[1].funName, "ByPlaywright");
+});
+
+test("Playwright remains preferred when a dynamic-ID target has a stable injected selector", () => {
+  const service = new DOMParserService({ mainWindow: {} });
+  const ownerDocument = { contains: () => true };
+  const target = {
+    nodeType: 1,
+    id: "i123",
+    tagName: "BUTTON",
+    ownerDocument,
+    getRootNode: () => ownerDocument,
+    getAttribute: () => null,
+    innerText: "Save"
+  };
+  const stableSelector = 'internal:role=button[name="Save"i]';
+
+  service.generateLocatorCandidatesWithPlaywrightInjected = () => ({
+    playwrightSelector: stableSelector,
+    playwrightSelectors: [stableSelector, "#i123"],
+    playwrightSelectorRisks: [
+      {
+        selector: stableSelector,
+        possibleDynamicId: false,
+        dynamicIds: []
+      },
+      {
+        selector: "#i123",
+        possibleDynamicId: true,
+        dynamicIds: ["i123"]
+      }
+    ],
+    finderWithoutIdSelector: "main > button:nth-of-type(1)"
+  });
+  service.getShadowChain = () => [];
+  service.inspectSelectorUniqueness = () => ({ isUnique: true });
+
+  const result = service.getOpenSourcePath(target);
+
+  assert.equal(result[0].funName, "ByPlaywright");
+  assert.equal(result[0].obj.selector, stableSelector);
+  assert.equal(result[1].funName, "ByDomPath");
+});
+
 test("locator options preserve dynamic selector risk metadata for the frontend", () => {
   const generator = new PlaywrightCodeGenerator({ priSize: 1 }, {}, "page");
   const selector = "button.css-1k2x3y";

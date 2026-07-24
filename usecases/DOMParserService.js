@@ -63,10 +63,8 @@ export class DOMParserService {
     }
 
     const generated = this.generateLocatorCandidatesWithPlaywrightInjected(e, realRoot);
-    const result = {};
-    let resultIndex = 0;
-
     const shadowChain = this.getShadowChain(e);
+    const candidates = [];
 
     if (generated.playwrightSelector) {
       this.playwrightObj.ByPlaywright = {
@@ -75,10 +73,10 @@ export class DOMParserService {
         selectorRisks: generated.playwrightSelectorRisks,
         shadowChain
       };
-      result[resultIndex++] = {
+      candidates.push({
         funName: "ByPlaywright",
         obj: this.playwrightObj.ByPlaywright
-      };
+      });
     }
 
     if (generated.finderWithoutIdSelector) {
@@ -96,19 +94,48 @@ export class DOMParserService {
           shadowChain,
           options: [{ ...finderPath, shadowChain }]
         };
-        result[resultIndex++] = {
+        candidates.push({
           funName: "ByDomPath",
           obj: this.playwrightObj.ByDomPath
-        };
+        });
       }
     }
+
+    const possibleDynamicTargetId = this.isDynamicGeneratedId(e.id);
+    const playwrightSelectors = generated.playwrightSelectors || [];
+    const playwrightSelectorRisks = generated.playwrightSelectorRisks || [];
+    const onlyDynamicIdPlaywrightSelectors = playwrightSelectors.length > 0 &&
+      playwrightSelectors.every(selector => {
+        const risk = playwrightSelectorRisks.find(item => item?.selector === selector) ||
+          this.analyzeSelectorRisk(selector);
+        return risk.possibleDynamicId === true;
+      });
+    const preferFinderPath = possibleDynamicTargetId &&
+      onlyDynamicIdPlaywrightSelectors;
+
+    if (preferFinderPath) {
+      candidates.sort((a, b) => {
+        if (a.funName === "ByDomPath") return -1;
+        if (b.funName === "ByDomPath") return 1;
+        return 0;
+      });
+    }
+
+    const result = {};
+    candidates.forEach((candidate, index) => {
+      result[index] = candidate;
+    });
 
     console.log("[DOMParser] locator candidates", {
       playwright: generated.playwrightSelector,
       playwrightAlternatives: generated.playwrightSelectors,
-      finderWithoutId: generated.finderWithoutIdSelector
+      finderWithoutId: generated.finderWithoutIdSelector,
+      possibleDynamicTargetId,
+      onlyDynamicIdPlaywrightSelectors,
+      preferFinderPath,
+      preferred: candidates[0]?.funName || null
     });
-    return resultIndex ? result : null;
+    return candidates.length ? result : null;
   }
 
   getGjsToolbarItemLocator(el) {

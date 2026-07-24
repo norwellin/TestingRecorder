@@ -6826,9 +6826,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         };
       }
       const generated = this.generateLocatorCandidatesWithPlaywrightInjected(e, realRoot);
-      const result = {};
-      let resultIndex = 0;
       const shadowChain = this.getShadowChain(e);
+      const candidates = [];
       if (generated.playwrightSelector) {
         this.playwrightObj.ByPlaywright = {
           selector: generated.playwrightSelector,
@@ -6836,10 +6835,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           selectorRisks: generated.playwrightSelectorRisks,
           shadowChain
         };
-        result[resultIndex++] = {
+        candidates.push({
           funName: "ByPlaywright",
           obj: this.playwrightObj.ByPlaywright
-        };
+        });
       }
       if (generated.finderWithoutIdSelector) {
         const finderCheck = this.inspectSelectorUniqueness(
@@ -6855,18 +6854,41 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
             shadowChain,
             options: [{ ...finderPath, shadowChain }]
           };
-          result[resultIndex++] = {
+          candidates.push({
             funName: "ByDomPath",
             obj: this.playwrightObj.ByDomPath
-          };
+          });
         }
       }
+      const possibleDynamicTargetId = this.isDynamicGeneratedId(e.id);
+      const playwrightSelectors = generated.playwrightSelectors || [];
+      const playwrightSelectorRisks = generated.playwrightSelectorRisks || [];
+      const onlyDynamicIdPlaywrightSelectors = playwrightSelectors.length > 0 && playwrightSelectors.every((selector2) => {
+        const risk = playwrightSelectorRisks.find((item) => item?.selector === selector2) || this.analyzeSelectorRisk(selector2);
+        return risk.possibleDynamicId === true;
+      });
+      const preferFinderPath = possibleDynamicTargetId && onlyDynamicIdPlaywrightSelectors;
+      if (preferFinderPath) {
+        candidates.sort((a, b) => {
+          if (a.funName === "ByDomPath") return -1;
+          if (b.funName === "ByDomPath") return 1;
+          return 0;
+        });
+      }
+      const result = {};
+      candidates.forEach((candidate, index) => {
+        result[index] = candidate;
+      });
       console.log("[DOMParser] locator candidates", {
         playwright: generated.playwrightSelector,
         playwrightAlternatives: generated.playwrightSelectors,
-        finderWithoutId: generated.finderWithoutIdSelector
+        finderWithoutId: generated.finderWithoutIdSelector,
+        possibleDynamicTargetId,
+        onlyDynamicIdPlaywrightSelectors,
+        preferFinderPath,
+        preferred: candidates[0]?.funName || null
       });
-      return resultIndex ? result : null;
+      return candidates.length ? result : null;
     }
     getGjsToolbarItemLocator(el) {
       const item = el?.closest?.(".gjs-toolbar-item");
