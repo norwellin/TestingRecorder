@@ -157,8 +157,7 @@ export class IframeEventListener {
 
   async dropHandler(e) {
     if (!this.isRecording) return;
-    console.log("[Recorder][DragDetection][Iframe] native drop", {
-      eventType: e.type,
+    console.log("[Recorder][DragDetection][Iframe] Drag completed via native drop", {
       contextId: this.contextId,
       target: e.target
     });
@@ -639,8 +638,7 @@ export class IframeEventListener {
 
   async dragStartHandler(e) {
     if (!this.isRecording) return;
-    console.log("[Recorder][DragDetection][Iframe] native dragstart", {
-      eventType: e.type,
+    console.log("[Recorder][DragDetection][Iframe] Drag detected via native dragstart", {
       contextId: this.contextId,
       target: e.target
     });
@@ -661,13 +659,6 @@ export class IframeEventListener {
 
   mousedownHandler(e) {
     if (!this.isRecording || !e.isTrusted) return;
-    console.log("[Recorder][DragDetection][Iframe] mousedown", {
-      eventType: e.type,
-      contextId: this.contextId,
-      x: e.clientX,
-      y: e.clientY,
-      target: e.target
-    });
     //排除:　滑桿，例如音量條、進度條、range slider
     if (this.isRangeInput(e.target)) return;
     if (!this.isMouseDragCandidate(e.target)) return;
@@ -707,17 +698,14 @@ export class IframeEventListener {
     const dx = e.clientX - this.dragStart.x;
     const dy = e.clientY - this.dragStart.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
-    console.log("[Recorder][DragDetection][Iframe] mousemove", {
-      eventType: e.type,
-      contextId: this.contextId,
-      dx,
-      dy,
-      distance,
-      threshold: this.DRAG_THRESHOLD,
-      reachedThreshold: distance >= this.DRAG_THRESHOLD
-    });
 
     if (distance >= this.DRAG_THRESHOLD && this.mouseDownFlag) {
+      console.log("[Recorder][DragDetection][Iframe] Drag detected via mousedown/mousemove threshold", {
+        contextId: this.contextId,
+        distance,
+        threshold: this.DRAG_THRESHOLD,
+        source: this.dragSource
+      });
       this.isDragging = true;
       this.dragStepFlag = 2;
       this.mouseDownFlag = false;
@@ -882,14 +870,12 @@ export class IframeEventListener {
 
   async mouseupHandler(e) {
     if (!this.isRecording || !e.isTrusted) return;
-    console.log("[Recorder][DragDetection][Iframe] mouseup", {
-      eventType: e.type,
-      contextId: this.contextId,
-      x: e.clientX,
-      y: e.clientY,
-      wasDragging: this.isDragging,
-      target: e.target
-    });
+    if (this.isDragging) {
+      console.log("[Recorder][DragDetection][Iframe] Drag completed via mouseup", {
+        contextId: this.contextId,
+        target: e.target
+      });
+    }
     if (this.shouldSuppressSyntheticPageEvent()) return;
     if (this.isFileInput(e.target)) return;
 

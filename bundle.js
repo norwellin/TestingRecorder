@@ -9220,8 +9220,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     async dropHandler(e) {
       if (!this.isRecording) return;
-      console.log("[Recorder][DragDetection][Page] native drop", {
-        eventType: e.type,
+      console.log("[Recorder][DragDetection][Page] Drag completed via native drop", {
         contextId: this.contextId,
         target: e.target
       });
@@ -9626,8 +9625,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     dragStartHandler(e) {
       if (!this.isRecording) return;
-      console.log("[Recorder][DragDetection][Page] native dragstart", {
-        eventType: e.type,
+      console.log("[Recorder][DragDetection][Page] Drag detected via native dragstart", {
         contextId: this.contextId,
         target: e.target
       });
@@ -9644,13 +9642,6 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     mousedownHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
-      console.log("[Recorder][DragDetection][Page] mousedown", {
-        eventType: e.type,
-        contextId: this.contextId,
-        x: e.clientX,
-        y: e.clientY,
-        target: e.target
-      });
       const resizeHandle = this.getGrapesResizeHandle(e.target);
       if (resizeHandle) {
         this.startGrapesResize(e, resizeHandle, "mouse");
@@ -9693,16 +9684,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const dx = e.clientX - this.dragStart.x;
       const dy = e.clientY - this.dragStart.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
-      console.log("[Recorder][DragDetection][Page] mousemove", {
-        eventType: e.type,
-        contextId: this.contextId,
-        dx,
-        dy,
-        distance,
-        threshold: this.DRAG_THRESHOLD,
-        reachedThreshold: distance >= this.DRAG_THRESHOLD
-      });
       if (distance >= this.DRAG_THRESHOLD && this.mouseDownFlag) {
+        console.log("[Recorder][DragDetection][Page] Drag detected via mousedown/mousemove threshold", {
+          contextId: this.contextId,
+          distance,
+          threshold: this.DRAG_THRESHOLD,
+          source: this.dragSource
+        });
         this.isDragging = true;
         this.dragStepFlag = 2;
         this.mouseDownFlag = false;
@@ -9837,14 +9825,12 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     async mouseupHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
-      console.log("[Recorder][DragDetection][Page] mouseup", {
-        eventType: e.type,
-        contextId: this.contextId,
-        x: e.clientX,
-        y: e.clientY,
-        wasDragging: this.isDragging,
-        target: e.target
-      });
+      if (this.isDragging) {
+        console.log("[Recorder][DragDetection][Page] Drag completed via mouseup", {
+          contextId: this.contextId,
+          target: e.target
+        });
+      }
       if (this.grapesResizeState) {
         this.finishGrapesResize(e);
         return;
@@ -10689,8 +10675,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     async dropHandler(e) {
       if (!this.isRecording) return;
-      console.log("[Recorder][DragDetection][Iframe] native drop", {
-        eventType: e.type,
+      console.log("[Recorder][DragDetection][Iframe] Drag completed via native drop", {
         contextId: this.contextId,
         target: e.target
       });
@@ -11096,8 +11081,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     async dragStartHandler(e) {
       if (!this.isRecording) return;
-      console.log("[Recorder][DragDetection][Iframe] native dragstart", {
-        eventType: e.type,
+      console.log("[Recorder][DragDetection][Iframe] Drag detected via native dragstart", {
         contextId: this.contextId,
         target: e.target
       });
@@ -11117,13 +11101,6 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     mousedownHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
-      console.log("[Recorder][DragDetection][Iframe] mousedown", {
-        eventType: e.type,
-        contextId: this.contextId,
-        x: e.clientX,
-        y: e.clientY,
-        target: e.target
-      });
       if (this.isRangeInput(e.target)) return;
       if (!this.isMouseDragCandidate(e.target)) return;
       this.dragStart = { x: e.clientX, y: e.clientY };
@@ -11158,16 +11135,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const dx = e.clientX - this.dragStart.x;
       const dy = e.clientY - this.dragStart.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
-      console.log("[Recorder][DragDetection][Iframe] mousemove", {
-        eventType: e.type,
-        contextId: this.contextId,
-        dx,
-        dy,
-        distance,
-        threshold: this.DRAG_THRESHOLD,
-        reachedThreshold: distance >= this.DRAG_THRESHOLD
-      });
       if (distance >= this.DRAG_THRESHOLD && this.mouseDownFlag) {
+        console.log("[Recorder][DragDetection][Iframe] Drag detected via mousedown/mousemove threshold", {
+          contextId: this.contextId,
+          distance,
+          threshold: this.DRAG_THRESHOLD,
+          source: this.dragSource
+        });
         this.isDragging = true;
         this.dragStepFlag = 2;
         this.mouseDownFlag = false;
@@ -11310,14 +11284,12 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     async mouseupHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
-      console.log("[Recorder][DragDetection][Iframe] mouseup", {
-        eventType: e.type,
-        contextId: this.contextId,
-        x: e.clientX,
-        y: e.clientY,
-        wasDragging: this.isDragging,
-        target: e.target
-      });
+      if (this.isDragging) {
+        console.log("[Recorder][DragDetection][Iframe] Drag completed via mouseup", {
+          contextId: this.contextId,
+          target: e.target
+        });
+      }
       if (this.shouldSuppressSyntheticPageEvent()) return;
       if (this.isFileInput(e.target)) return;
       if (this.isDragging) {
