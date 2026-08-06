@@ -7579,7 +7579,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       let inputKey = action.keyboard || "default";
       let selectValue = action.selectedValue || "default";
       if (typeof action.getSourceElement === "function") {
-        const needsSourceParsing = !sourcepath || Array.isArray(sourcepath) && sourcepath[0] === null;
+        const needsSourceParsing = action.type !== "grapesResize" && (!sourcepath || Array.isArray(sourcepath) && sourcepath[0] === null);
         console.log("[RecorderDebug][CodeGenerator generate] parse decision", {
           actionType: action.type,
           hasSourcePath: !!sourcepath,
@@ -7612,6 +7612,8 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       let generatedCode = null;
       if (action.type === "dragANDdrop") {
         generatedCode = this.dragAndDropCodeSetter(action, targetpath, sourcepath, sourceWindow, targetWindow);
+      } else if (action.type === "grapesResize") {
+        generatedCode = this.grapesResizeSetter(action, sourceWindow);
       } else if (action.type === "click" || action.type === "rightClick" || action.type === "checkBox") {
         generatedCode = this.clickSetter(action, sourcepath, sourceWindow);
       } else if (action.type === "dbclick") {
@@ -8379,6 +8381,75 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       }
       return `await ${souLocator}.dragTo(${tarLocator});`;
     }
+    grapesResizeSetter(action, sourceWindow) {
+      const resize = action?.grapesResize || {};
+      const handle = String(resize.handle || "");
+      if (!/^(tl|tc|tr|cl|cr|bl|bc|br)$/.test(handle)) return null;
+      this.mergeActionContextSnapshots(action);
+      const pagePrefix = this._getActionContextPrefix(action, "source", sourceWindow);
+      const mouseAlias = this._getMousePageAliasForAction(
+        { sourceContext: action?.sourceContext || null },
+        sourceWindow,
+        sourceWindow
+      );
+      const startXRatio = Number.isFinite(Number(resize.startXRatio)) ? Math.max(0, Math.min(1, Number(resize.startXRatio))) : 0.5;
+      const startYRatio = Number.isFinite(Number(resize.startYRatio)) ? Math.max(0, Math.min(1, Number(resize.startYRatio))) : 0.5;
+      const deltaXRatio = Number(resize.deltaXRatio);
+      const deltaYRatio = Number(resize.deltaYRatio);
+      const deltaX = Number.isFinite(Number(resize.deltaX)) ? Number(resize.deltaX) : 0;
+      const deltaY = Number.isFinite(Number(resize.deltaY)) ? Number(resize.deltaY) : 0;
+      const useXRatio = Number.isFinite(deltaXRatio);
+      const useYRatio = Number.isFinite(deltaYRatio);
+      const referenceSelector = resize.referenceSelector === ".gjs-resizer" ? ".gjs-resizer" : ".gjs-resizer-c";
+      action.setSourceMethod?.("ByGrapesResizeHandle");
+      action.setSourceData?.(`data-gjs-handler=${handle}`);
+      const lines = ["{"];
+      const resizeTargetPath = action?.resizeTargetPath;
+      const bestResizeTarget = this._getBestPath(resizeTargetPath);
+      if (bestResizeTarget) {
+        const resizeTargetPrefix = this._getContextPrefix(action.resizeTargetWindow);
+        const resizeTargetLocator = this._buildLocatorString(
+          resizeTargetPrefix,
+          bestResizeTarget
+        );
+        const componentScrollState = this._normalizeScrollState(
+          resize.componentScrollState
+        );
+        lines.push(`  const resizeTarget = ${resizeTargetLocator};`);
+        this._appendScrollRestoreLines(lines, "resizeTarget", componentScrollState);
+        lines.push(
+          "  await resizeTarget.scrollIntoViewIfNeeded();",
+          "  await resizeTarget.click();"
+        );
+        this.updateUserActionDB(
+          action,
+          bestResizeTarget.funName,
+          bestResizeTarget.obj,
+          "target",
+          resizeTargetPath
+        );
+      }
+      lines.push(
+        `  const resizeContainer = ${pagePrefix}.locator(${this.quoteForCode(`${referenceSelector}:visible`)}).first();`,
+        `  const resizeHandle = resizeContainer.locator(${this.quoteForCode(`.gjs-resizer-h[data-gjs-handler="${handle}"]:visible`)}).first();`,
+        "  await resizeHandle.waitFor({ state: 'visible' });",
+        "  const [resizeHandleBox, resizeReferenceBox] = await Promise.all([",
+        "    resizeHandle.boundingBox(),",
+        "    resizeContainer.boundingBox()",
+        "  ]);",
+        "  if (!resizeHandleBox || !resizeReferenceBox) throw new Error('Unable to calculate GrapesJS resize coordinates');",
+        `  const resizeStartX = resizeHandleBox.x + resizeHandleBox.width * ${startXRatio};`,
+        `  const resizeStartY = resizeHandleBox.y + resizeHandleBox.height * ${startYRatio};`,
+        `  const resizeDeltaX = ${useXRatio ? `resizeReferenceBox.width * ${deltaXRatio}` : deltaX};`,
+        `  const resizeDeltaY = ${useYRatio ? `resizeReferenceBox.height * ${deltaYRatio}` : deltaY};`,
+        `  await ${mouseAlias}.mouse.move(resizeStartX, resizeStartY);`,
+        `  await ${mouseAlias}.mouse.down();`,
+        `  await ${mouseAlias}.mouse.move(resizeStartX + resizeDeltaX, resizeStartY + resizeDeltaY, { steps: 15 });`,
+        `  await ${mouseAlias}.mouse.up();`,
+        "}"
+      );
+      return lines;
+    }
     _shouldUseMouseDragForGrapesIframe(action) {
       return this._isGrapesIframeContext(action?.sourceContext) && this._isGrapesIframeContext(action?.targetContext);
     }
@@ -9035,6 +9106,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.canvasWheelRecords = /* @__PURE__ */ new WeakMap();
       this.mouseDownFlag = false;
       this.dragStepFlag = 0;
+      this.grapesResizeState = null;
       this.suppressClickUntil = 0;
       this.hoverInspector = new HoverInspector(this.mainDocument, this.mainWindow);
       this.lastPreviewTarget = null;
@@ -9051,6 +9123,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.mainDocument.addEventListener("contextmenu", this.contextMenuHandler.bind(this), true);
       this.mainDocument.addEventListener("mousedown", this.mousedownHandler.bind(this), true);
       this.mainDocument.addEventListener("mousemove", this.mousemoveHandler.bind(this), true);
+      this.mainDocument.addEventListener("pointerdown", this.pointerdownHandler.bind(this), true);
+      this.mainDocument.addEventListener("pointermove", this.pointermoveHandler.bind(this), true);
+      this.mainDocument.addEventListener("pointerup", this.pointerupHandler.bind(this), true);
+      this.mainDocument.addEventListener("pointercancel", this.pointercancelHandler.bind(this), true);
       this.mainDocument.addEventListener("mouseout", this.mouseoutHandler.bind(this), true);
       this.mainDocument.addEventListener("mouseleave", this.hideHoverPreview.bind(this), true);
       this.mainDocument.addEventListener("mouseup", this.mouseupHandler.bind(this), true);
@@ -9087,6 +9163,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
           clearTimeout(this.timer);
           this.timer = null;
           this.pendingTextInputElement = null;
+          this.grapesResizeState = null;
           break;
       }
     }
@@ -9132,6 +9209,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (extraData.canvasInputPosition) action.canvasInputPosition = extraData.canvasInputPosition;
       if (extraData.canvasWheel) action.canvasWheel = extraData.canvasWheel;
       if (extraData.monaco) action.monaco = extraData.monaco;
+      if (extraData.grapesResize) action.grapesResize = extraData.grapesResize;
       if (extraData.isDragStart) action.isDragStart = true;
       if (extraData.isDrop) action.isDrop = true;
       if (typeof this.onActionRecorded === "function") {
@@ -9142,6 +9220,11 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     async dropHandler(e) {
       if (!this.isRecording) return;
+      console.log("[Recorder][DragDetection][Page] native drop", {
+        eventType: e.type,
+        contextId: this.contextId,
+        target: e.target
+      });
       e.preventDefault();
       this.currentHoveredElement = this.getDropTargetElement(e);
       const dropPosition = await this.getDropPosition(e, this.currentHoveredElement);
@@ -9543,6 +9626,11 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     dragStartHandler(e) {
       if (!this.isRecording) return;
+      console.log("[Recorder][DragDetection][Page] native dragstart", {
+        eventType: e.type,
+        contextId: this.contextId,
+        target: e.target
+      });
       const target = e.target;
       if (!target) return;
       if (this.isRangeInput(target)) return;
@@ -9556,6 +9644,18 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     mousedownHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
+      console.log("[Recorder][DragDetection][Page] mousedown", {
+        eventType: e.type,
+        contextId: this.contextId,
+        x: e.clientX,
+        y: e.clientY,
+        target: e.target
+      });
+      const resizeHandle = this.getGrapesResizeHandle(e.target);
+      if (resizeHandle) {
+        this.startGrapesResize(e, resizeHandle, "mouse");
+        return;
+      }
       if (this.isRangeInput(e.target)) return;
       if (!this.isMouseDragCandidate(e.target)) return;
       this.dragStart = { x: e.clientX, y: e.clientY };
@@ -9575,6 +9675,10 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     mousemoveHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
+      if (this.grapesResizeState) {
+        this.updateGrapesResize(e);
+        return;
+      }
       if (this.isRangeInput(e.target)) return;
       this.currentHoveredElement = this.getDragTargetElement(e.target);
       if (this.shouldPreviewHover()) {
@@ -9589,6 +9693,15 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const dx = e.clientX - this.dragStart.x;
       const dy = e.clientY - this.dragStart.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
+      console.log("[Recorder][DragDetection][Page] mousemove", {
+        eventType: e.type,
+        contextId: this.contextId,
+        dx,
+        dy,
+        distance,
+        threshold: this.DRAG_THRESHOLD,
+        reachedThreshold: distance >= this.DRAG_THRESHOLD
+      });
       if (distance >= this.DRAG_THRESHOLD && this.mouseDownFlag) {
         this.isDragging = true;
         this.dragStepFlag = 2;
@@ -9724,6 +9837,18 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     async mouseupHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
+      console.log("[Recorder][DragDetection][Page] mouseup", {
+        eventType: e.type,
+        contextId: this.contextId,
+        x: e.clientX,
+        y: e.clientY,
+        wasDragging: this.isDragging,
+        target: e.target
+      });
+      if (this.grapesResizeState) {
+        this.finishGrapesResize(e);
+        return;
+      }
       if (this.shouldSuppressSyntheticPageEvent()) return;
       if (this.isFileInput(e.target)) return;
       if (this.isDragging) {
@@ -9766,6 +9891,9 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       if (Date.now() < this.suppressClickUntil) return;
       if (this.shouldSuppressSyntheticPageEvent()) return;
       const target = this.getComposedEventTarget(e);
+      if (this.getGrapesResizeHandle(target) || this.getGrapesResizeHandle(e.target)) {
+        return;
+      }
       if (this.isCanvasElement(target)) {
         const clickPosition = this.getElementPosition(e, target);
         if (clickPosition) this.lastCanvasPointerPosition.set(target, clickPosition);
@@ -10054,6 +10182,142 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     isMouseDragCandidate(element) {
       return this.isCanvasElement(element) || !!element?.closest?.(".gjs-layer-move, [data-toggle-move]");
+    }
+    getGrapesResizeHandle(element) {
+      return element?.closest?.(".gjs-resizer-h[data-gjs-handler]") || null;
+    }
+    pointerdownHandler(e) {
+      if (!this.isRecording || !e.isTrusted) return;
+      const resizeHandle = this.getGrapesResizeHandle(e.target);
+      if (!resizeHandle) return;
+      this.startGrapesResize(e, resizeHandle, "pointer");
+    }
+    pointermoveHandler(e) {
+      if (!this.isRecording || !e.isTrusted || !this.grapesResizeState) return;
+      if (this.grapesResizeState.pointerId !== null && e.pointerId !== this.grapesResizeState.pointerId) return;
+      this.updateGrapesResize(e);
+    }
+    pointerupHandler(e) {
+      if (!this.isRecording || !e.isTrusted || !this.grapesResizeState) return;
+      if (this.grapesResizeState.pointerId !== null && e.pointerId !== this.grapesResizeState.pointerId) return;
+      this.finishGrapesResize(e);
+    }
+    pointercancelHandler(e) {
+      if (!this.grapesResizeState) return;
+      if (this.grapesResizeState.pointerId !== null && e.pointerId !== this.grapesResizeState.pointerId) return;
+      this.grapesResizeState = null;
+      this.resetMouseDragState();
+      this.suppressClickUntil = Date.now() + 300;
+    }
+    startGrapesResize(event, resizeHandle, inputType) {
+      if (this.grapesResizeState) return true;
+      const handleRect = resizeHandle?.getBoundingClientRect?.();
+      const reference = this.getGrapesResizeReference(resizeHandle);
+      if (!handleRect || !reference) {
+        console.warn("[Recorder][GrapesJS resize] unable to resolve resize geometry", {
+          handle: resizeHandle?.getAttribute?.("data-gjs-handler") || "",
+          inputType
+        });
+        this.suppressClickUntil = Date.now() + 300;
+        return false;
+      }
+      this.resetMouseDragState();
+      this.grapesResizeState = {
+        element: resizeHandle,
+        handle: String(resizeHandle.getAttribute?.("data-gjs-handler") || ""),
+        inputType,
+        pointerId: inputType === "pointer" && Number.isFinite(event.pointerId) ? event.pointerId : null,
+        startX: event.clientX,
+        startY: event.clientY,
+        startXRatio: this.clampRatio((event.clientX - handleRect.left) / handleRect.width, 0.5),
+        startYRatio: this.clampRatio((event.clientY - handleRect.top) / handleRect.height, 0.5),
+        referenceElement: reference.element,
+        referenceSelector: reference.selector,
+        referenceWidth: reference.rect.width,
+        referenceHeight: reference.rect.height,
+        moved: false
+      };
+      this.hideHoverPreview();
+      console.debug("[Recorder][GrapesJS resize] started", {
+        handle: this.grapesResizeState.handle,
+        inputType,
+        referenceSelector: reference.selector,
+        referenceWidth: reference.rect.width,
+        referenceHeight: reference.rect.height
+      });
+      return true;
+    }
+    updateGrapesResize(event) {
+      const state = this.grapesResizeState;
+      if (!state) return false;
+      const dx = event.clientX - state.startX;
+      const dy = event.clientY - state.startY;
+      if (Math.hypot(dx, dy) >= this.DRAG_THRESHOLD) state.moved = true;
+      this.hideHoverPreview();
+      return true;
+    }
+    finishGrapesResize(event) {
+      const state = this.grapesResizeState;
+      if (!state) return false;
+      this.grapesResizeState = null;
+      const deltaX = event.clientX - state.startX;
+      const deltaY = event.clientY - state.startY;
+      const moved = state.moved || Math.hypot(deltaX, deltaY) >= this.DRAG_THRESHOLD;
+      this.resetMouseDragState();
+      this.suppressClickUntil = Date.now() + 300;
+      if (!moved) return true;
+      const afterRect = state.referenceElement?.getBoundingClientRect?.();
+      this.dispatchAction("grapesResize", state.element, null, {
+        grapesResize: {
+          handle: state.handle,
+          inputType: state.inputType,
+          deltaX: this.roundCoordinate(deltaX),
+          deltaY: this.roundCoordinate(deltaY),
+          deltaXRatio: this.roundRatio(deltaX / state.referenceWidth),
+          deltaYRatio: this.roundRatio(deltaY / state.referenceHeight),
+          startXRatio: state.startXRatio,
+          startYRatio: state.startYRatio,
+          referenceSelector: state.referenceSelector,
+          referenceWidth: this.roundCoordinate(state.referenceWidth),
+          referenceHeight: this.roundCoordinate(state.referenceHeight),
+          afterWidth: this.roundCoordinate(afterRect?.width),
+          afterHeight: this.roundCoordinate(afterRect?.height)
+        }
+      });
+      console.debug("[Recorder][GrapesJS resize] completed", {
+        handle: state.handle,
+        inputType: state.inputType,
+        deltaX,
+        deltaY
+      });
+      return true;
+    }
+    getGrapesResizeReference(handle) {
+      const candidates = [
+        [handle?.closest?.(".gjs-resizer-c"), ".gjs-resizer-c"],
+        [handle?.closest?.(".gjs-resizer"), ".gjs-resizer"],
+        [this.mainDocument?.querySelector?.(".gjs-resizer-c"), ".gjs-resizer-c"],
+        [this.mainDocument?.querySelector?.(".gjs-resizer"), ".gjs-resizer"]
+      ];
+      const seen = /* @__PURE__ */ new Set();
+      for (const [element, selector2] of candidates) {
+        if (!element || seen.has(element)) continue;
+        seen.add(element);
+        const rect = element.getBoundingClientRect?.();
+        if (rect && Number.isFinite(rect.width) && Number.isFinite(rect.height) && rect.width > 0 && rect.height > 0) {
+          return { element, selector: selector2, rect };
+        }
+      }
+      return null;
+    }
+    clampRatio(value, fallback2 = 0) {
+      return Number.isFinite(value) ? Math.max(0, Math.min(1, Math.round(value * 1e4) / 1e4)) : fallback2;
+    }
+    roundRatio(value) {
+      return Number.isFinite(value) ? Math.round(value * 1e6) / 1e6 : null;
+    }
+    roundCoordinate(value) {
+      return Number.isFinite(value) ? Math.round(value * 100) / 100 : null;
     }
     getDragTargetElement(element) {
       return element?.closest?.(".gjs-layer, .gjs-layer-item, [data-layer-id], [data-gjs-type]") || element;
@@ -10425,6 +10689,11 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     async dropHandler(e) {
       if (!this.isRecording) return;
+      console.log("[Recorder][DragDetection][Iframe] native drop", {
+        eventType: e.type,
+        contextId: this.contextId,
+        target: e.target
+      });
       e.preventDefault();
       this.currentHoveredElement = this.getDropTargetElement(e);
       const dropPosition = await this.getDropPosition(e, this.currentHoveredElement);
@@ -10827,6 +11096,11 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     async dragStartHandler(e) {
       if (!this.isRecording) return;
+      console.log("[Recorder][DragDetection][Iframe] native dragstart", {
+        eventType: e.type,
+        contextId: this.contextId,
+        target: e.target
+      });
       const target = e.target;
       if (!target) return;
       if (this.isRangeInput(target)) return;
@@ -10843,6 +11117,13 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     mousedownHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
+      console.log("[Recorder][DragDetection][Iframe] mousedown", {
+        eventType: e.type,
+        contextId: this.contextId,
+        x: e.clientX,
+        y: e.clientY,
+        target: e.target
+      });
       if (this.isRangeInput(e.target)) return;
       if (!this.isMouseDragCandidate(e.target)) return;
       this.dragStart = { x: e.clientX, y: e.clientY };
@@ -10877,6 +11158,15 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       const dx = e.clientX - this.dragStart.x;
       const dy = e.clientY - this.dragStart.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
+      console.log("[Recorder][DragDetection][Iframe] mousemove", {
+        eventType: e.type,
+        contextId: this.contextId,
+        dx,
+        dy,
+        distance,
+        threshold: this.DRAG_THRESHOLD,
+        reachedThreshold: distance >= this.DRAG_THRESHOLD
+      });
       if (distance >= this.DRAG_THRESHOLD && this.mouseDownFlag) {
         this.isDragging = true;
         this.dragStepFlag = 2;
@@ -11020,6 +11310,14 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
     }
     async mouseupHandler(e) {
       if (!this.isRecording || !e.isTrusted) return;
+      console.log("[Recorder][DragDetection][Iframe] mouseup", {
+        eventType: e.type,
+        contextId: this.contextId,
+        x: e.clientX,
+        y: e.clientY,
+        wasDragging: this.isDragging,
+        target: e.target
+      });
       if (this.shouldSuppressSyntheticPageEvent()) return;
       if (this.isFileInput(e.target)) return;
       if (this.isDragging) {
@@ -11654,6 +11952,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.dynamicFrameObserver = null;
       this.dynamicFrameScanTimer = null;
       this.pendingGrapesDrops = [];
+      this.lastIframeSelection = null;
       this.hasInitializedRecordingSession = false;
       this.dropPositionMode = "ratio";
       this.setupBackgroundMessageListener();
@@ -11942,6 +12241,37 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         hasPreParsedSourcePath: !!action.preParsedSourcePath,
         preParsedSummary: this.summarizeDebugSourcePath(action.preParsedSourcePath)
       });
+      if (action.type === "click" && action.sourceContext?.type === "iframe") {
+        const selectedElement = action.getSourceElement?.();
+        if (selectedElement) {
+          const selectedPath = this.domParserService.getOpenSourcePath(
+            selectedElement,
+            action.sourceWindow
+          );
+          action.preParsedSourcePath = selectedPath;
+          this.lastIframeSelection = {
+            capturedAt: Date.now(),
+            element: selectedElement,
+            contextId: action.sourceWindow,
+            context: action.sourceContext || null,
+            path: selectedPath,
+            scrollState: this.captureElementScrollState(selectedElement)
+          };
+        }
+      }
+      if (action.type === "grapesResize") {
+        const selection = this.lastIframeSelection;
+        const isRecentSelection = selection && Date.now() - Number(selection.capturedAt || 0) <= 3e4;
+        if (isRecentSelection) {
+          action.resizeTargetWindow = selection.contextId;
+          action.resizeTargetContext = selection.context;
+          action.resizeTargetPath = selection.path;
+          action.grapesResize = {
+            ...action.grapesResize || {},
+            componentScrollState: this.captureElementScrollState(selection.element) || selection.scrollState || null
+          };
+        }
+      }
       if (action.type === "dragANDdrop") {
         if (action.isDragStart) {
           const sourcePath = this.domParserService.getOpenSourcePath(
@@ -11992,6 +12322,71 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
         generatedCodeLines: savedAction?.generatedCodeLines || []
       });
       this.syncToGlobalStorage(newLine, savedAction);
+    }
+    captureElementScrollState(targetElement) {
+      const doc = targetElement?.ownerDocument;
+      if (!doc) return null;
+      let current = targetElement;
+      let ancestorDepth = 0;
+      const view = doc.defaultView;
+      while (current && current !== doc.documentElement) {
+        if (String(current.tagName || "").toLowerCase() === "ion-content") {
+          const scroller2 = current.shadowRoot?.querySelector?.("[part='scroll'], .inner-scroll");
+          if (scroller2) {
+            return {
+              scope: "ion-content",
+              scrollLeftRatio: this.getRecordedScrollRatio(
+                scroller2.scrollLeft,
+                scroller2.scrollWidth - scroller2.clientWidth
+              ),
+              scrollTopRatio: this.getRecordedScrollRatio(
+                scroller2.scrollTop,
+                scroller2.scrollHeight - scroller2.clientHeight
+              )
+            };
+          }
+        }
+        const style = view?.getComputedStyle?.(current);
+        const overflowX = style?.overflowX || style?.overflow || "";
+        const overflowY = style?.overflowY || style?.overflow || "";
+        const canScrollX = /(auto|scroll|overlay)/.test(overflowX) && Number(current.scrollWidth) > Number(current.clientWidth);
+        const canScrollY = /(auto|scroll|overlay)/.test(overflowY) && Number(current.scrollHeight) > Number(current.clientHeight);
+        if (canScrollX || canScrollY) {
+          return {
+            scope: "element",
+            ancestorDepth,
+            scrollLeftRatio: this.getRecordedScrollRatio(
+              current.scrollLeft,
+              current.scrollWidth - current.clientWidth
+            ),
+            scrollTopRatio: this.getRecordedScrollRatio(
+              current.scrollTop,
+              current.scrollHeight - current.clientHeight
+            )
+          };
+        }
+        current = current.parentElement;
+        ancestorDepth += 1;
+      }
+      const scroller = doc.scrollingElement || doc.documentElement || doc.body;
+      if (!scroller) return null;
+      return {
+        scope: "document",
+        rootTag: String(scroller.tagName || "").toLowerCase(),
+        scrollLeftRatio: this.getRecordedScrollRatio(
+          scroller.scrollLeft,
+          scroller.scrollWidth - scroller.clientWidth
+        ),
+        scrollTopRatio: this.getRecordedScrollRatio(
+          scroller.scrollTop,
+          scroller.scrollHeight - scroller.clientHeight
+        )
+      };
+    }
+    getRecordedScrollRatio(position, maximum) {
+      const max = Number(maximum);
+      if (!Number.isFinite(max) || max <= 0) return 0;
+      return Math.max(0, Math.min(1, Math.round(Number(position) / max * 1e6) / 1e6));
     }
     // 啟動錄製器
     // 檔案：myrecorderRestructure/MainApp.js
@@ -12166,6 +12561,7 @@ ${e.stack}`, { e: { n: e.name, m: e.message, s } };
       this.scanResult = null;
       this.activeListeners = [];
       this.pendingGrapesDrops = [];
+      this.lastIframeSelection = null;
       this.hasInitializedRecordingSession = false;
       this.isStarted = false;
       return this.getState();

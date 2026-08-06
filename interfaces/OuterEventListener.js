@@ -39,6 +39,7 @@ export class OuterEventListener {
     this.canvasWheelRecords = new WeakMap();
     this.mouseDownFlag = false;
     this.dragStepFlag = 0;
+    this.grapesResizeState = null;
     this.suppressClickUntil = 0;
     this.hoverInspector = new HoverInspector(this.mainDocument, this.mainWindow);
     this.lastPreviewTarget = null;
@@ -59,6 +60,10 @@ export class OuterEventListener {
     this.mainDocument.addEventListener("contextmenu", this.contextMenuHandler.bind(this), true);
     this.mainDocument.addEventListener("mousedown", this.mousedownHandler.bind(this), true);
     this.mainDocument.addEventListener("mousemove", this.mousemoveHandler.bind(this), true);
+    this.mainDocument.addEventListener("pointerdown", this.pointerdownHandler.bind(this), true);
+    this.mainDocument.addEventListener("pointermove", this.pointermoveHandler.bind(this), true);
+    this.mainDocument.addEventListener("pointerup", this.pointerupHandler.bind(this), true);
+    this.mainDocument.addEventListener("pointercancel", this.pointercancelHandler.bind(this), true);
     this.mainDocument.addEventListener("mouseout", this.mouseoutHandler.bind(this), true);
     this.mainDocument.addEventListener("mouseleave", this.hideHoverPreview.bind(this), true);
     this.mainDocument.addEventListener("mouseup", this.mouseupHandler.bind(this), true);
@@ -100,6 +105,7 @@ export class OuterEventListener {
         clearTimeout(this.timer);
         this.timer = null;
         this.pendingTextInputElement = null;
+        this.grapesResizeState = null;
         break;
     }
   }
@@ -149,6 +155,7 @@ export class OuterEventListener {
     if (extraData.canvasInputPosition) action.canvasInputPosition = extraData.canvasInputPosition;
     if (extraData.canvasWheel) action.canvasWheel = extraData.canvasWheel;
     if (extraData.monaco) action.monaco = extraData.monaco;
+    if (extraData.grapesResize) action.grapesResize = extraData.grapesResize;
 
     // 【請補上這兩行】將拖拉標記附加到 action 上，否則 MainApp1 會認不出來！
     if (extraData.isDragStart) action.isDragStart = true;
@@ -164,6 +171,11 @@ export class OuterEventListener {
 
   async dropHandler(e) {
     if (!this.isRecording) return;
+    console.log("[Recorder][DragDetection][Page] native drop", {
+      eventType: e.type,
+      contextId: this.contextId,
+      target: e.target
+    });
     e.preventDefault();
     this.currentHoveredElement = this.getDropTargetElement(e);
     const dropPosition = await this.getDropPosition(e, this.currentHoveredElement);
@@ -642,6 +654,11 @@ export class OuterEventListener {
 
   dragStartHandler(e) {
     if (!this.isRecording) return;
+    console.log("[Recorder][DragDetection][Page] native dragstart", {
+      eventType: e.type,
+      contextId: this.contextId,
+      target: e.target
+    });
     const target = e.target;
     if (!target) return;
     if (this.isRangeInput(target)) return;
@@ -658,6 +675,18 @@ export class OuterEventListener {
 
   mousedownHandler(e) {
     if (!this.isRecording || !e.isTrusted) return;
+    console.log("[Recorder][DragDetection][Page] mousedown", {
+      eventType: e.type,
+      contextId: this.contextId,
+      x: e.clientX,
+      y: e.clientY,
+      target: e.target
+    });
+    const resizeHandle = this.getGrapesResizeHandle(e.target);
+    if (resizeHandle) {
+      this.startGrapesResize(e, resizeHandle, "mouse");
+      return;
+    }
     if (this.isRangeInput(e.target)) return;
     if (!this.isMouseDragCandidate(e.target)) return;
     this.dragStart = { x: e.clientX, y: e.clientY };
@@ -678,6 +707,10 @@ export class OuterEventListener {
 
   mousemoveHandler(e) {
     if (!this.isRecording || !e.isTrusted) return;
+    if (this.grapesResizeState) {
+      this.updateGrapesResize(e);
+      return;
+    }
     if (this.isRangeInput(e.target)) return;
     this.currentHoveredElement = this.getDragTargetElement(e.target);
     if (this.shouldPreviewHover()) {
@@ -695,6 +728,15 @@ export class OuterEventListener {
     const dx = e.clientX - this.dragStart.x;
     const dy = e.clientY - this.dragStart.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
+    console.log("[Recorder][DragDetection][Page] mousemove", {
+      eventType: e.type,
+      contextId: this.contextId,
+      dx,
+      dy,
+      distance,
+      threshold: this.DRAG_THRESHOLD,
+      reachedThreshold: distance >= this.DRAG_THRESHOLD
+    });
 
     if (distance >= this.DRAG_THRESHOLD && this.mouseDownFlag) {
       this.isDragging = true;
@@ -852,6 +894,18 @@ export class OuterEventListener {
 
   async mouseupHandler(e) {
     if (!this.isRecording || !e.isTrusted) return;
+    console.log("[Recorder][DragDetection][Page] mouseup", {
+      eventType: e.type,
+      contextId: this.contextId,
+      x: e.clientX,
+      y: e.clientY,
+      wasDragging: this.isDragging,
+      target: e.target
+    });
+    if (this.grapesResizeState) {
+      this.finishGrapesResize(e);
+      return;
+    }
     if (this.shouldSuppressSyntheticPageEvent()) return;
     if (this.isFileInput(e.target)) return;
 
@@ -899,6 +953,9 @@ export class OuterEventListener {
     if (Date.now() < this.suppressClickUntil) return;
     if (this.shouldSuppressSyntheticPageEvent()) return;
     const target = this.getComposedEventTarget(e);
+    if (this.getGrapesResizeHandle(target) || this.getGrapesResizeHandle(e.target)) {
+      return;
+    }
     if (this.isCanvasElement(target)) {
       const clickPosition = this.getElementPosition(e, target);
       if (clickPosition) this.lastCanvasPointerPosition.set(target, clickPosition);
@@ -1238,6 +1295,179 @@ export class OuterEventListener {
 
   isMouseDragCandidate(element) {
     return this.isCanvasElement(element) || !!element?.closest?.(".gjs-layer-move, [data-toggle-move]");
+  }
+
+  getGrapesResizeHandle(element) {
+    return element?.closest?.(".gjs-resizer-h[data-gjs-handler]") || null;
+  }
+
+  pointerdownHandler(e) {
+    if (!this.isRecording || !e.isTrusted) return;
+    const resizeHandle = this.getGrapesResizeHandle(e.target);
+    if (!resizeHandle) return;
+    this.startGrapesResize(e, resizeHandle, "pointer");
+  }
+
+  pointermoveHandler(e) {
+    if (!this.isRecording || !e.isTrusted || !this.grapesResizeState) return;
+    if (
+      this.grapesResizeState.pointerId !== null &&
+      e.pointerId !== this.grapesResizeState.pointerId
+    ) return;
+    this.updateGrapesResize(e);
+  }
+
+  pointerupHandler(e) {
+    if (!this.isRecording || !e.isTrusted || !this.grapesResizeState) return;
+    if (
+      this.grapesResizeState.pointerId !== null &&
+      e.pointerId !== this.grapesResizeState.pointerId
+    ) return;
+    this.finishGrapesResize(e);
+  }
+
+  pointercancelHandler(e) {
+    if (!this.grapesResizeState) return;
+    if (
+      this.grapesResizeState.pointerId !== null &&
+      e.pointerId !== this.grapesResizeState.pointerId
+    ) return;
+    this.grapesResizeState = null;
+    this.resetMouseDragState();
+    this.suppressClickUntil = Date.now() + 300;
+  }
+
+  startGrapesResize(event, resizeHandle, inputType) {
+    if (this.grapesResizeState) return true;
+
+    const handleRect = resizeHandle?.getBoundingClientRect?.();
+    const reference = this.getGrapesResizeReference(resizeHandle);
+    if (!handleRect || !reference) {
+      console.warn("[Recorder][GrapesJS resize] unable to resolve resize geometry", {
+        handle: resizeHandle?.getAttribute?.("data-gjs-handler") || "",
+        inputType
+      });
+      this.suppressClickUntil = Date.now() + 300;
+      return false;
+    }
+
+    this.resetMouseDragState();
+    this.grapesResizeState = {
+      element: resizeHandle,
+      handle: String(resizeHandle.getAttribute?.("data-gjs-handler") || ""),
+      inputType,
+      pointerId: inputType === "pointer" && Number.isFinite(event.pointerId)
+        ? event.pointerId
+        : null,
+      startX: event.clientX,
+      startY: event.clientY,
+      startXRatio: this.clampRatio((event.clientX - handleRect.left) / handleRect.width, 0.5),
+      startYRatio: this.clampRatio((event.clientY - handleRect.top) / handleRect.height, 0.5),
+      referenceElement: reference.element,
+      referenceSelector: reference.selector,
+      referenceWidth: reference.rect.width,
+      referenceHeight: reference.rect.height,
+      moved: false
+    };
+    this.hideHoverPreview();
+    console.debug("[Recorder][GrapesJS resize] started", {
+      handle: this.grapesResizeState.handle,
+      inputType,
+      referenceSelector: reference.selector,
+      referenceWidth: reference.rect.width,
+      referenceHeight: reference.rect.height
+    });
+    return true;
+  }
+
+  updateGrapesResize(event) {
+    const state = this.grapesResizeState;
+    if (!state) return false;
+    const dx = event.clientX - state.startX;
+    const dy = event.clientY - state.startY;
+    if (Math.hypot(dx, dy) >= this.DRAG_THRESHOLD) state.moved = true;
+    this.hideHoverPreview();
+    return true;
+  }
+
+  finishGrapesResize(event) {
+    const state = this.grapesResizeState;
+    if (!state) return false;
+
+    this.grapesResizeState = null;
+    const deltaX = event.clientX - state.startX;
+    const deltaY = event.clientY - state.startY;
+    const moved = state.moved || Math.hypot(deltaX, deltaY) >= this.DRAG_THRESHOLD;
+
+    this.resetMouseDragState();
+    this.suppressClickUntil = Date.now() + 300;
+    if (!moved) return true;
+
+    const afterRect = state.referenceElement?.getBoundingClientRect?.();
+    this.dispatchAction("grapesResize", state.element, null, {
+      grapesResize: {
+        handle: state.handle,
+        inputType: state.inputType,
+        deltaX: this.roundCoordinate(deltaX),
+        deltaY: this.roundCoordinate(deltaY),
+        deltaXRatio: this.roundRatio(deltaX / state.referenceWidth),
+        deltaYRatio: this.roundRatio(deltaY / state.referenceHeight),
+        startXRatio: state.startXRatio,
+        startYRatio: state.startYRatio,
+        referenceSelector: state.referenceSelector,
+        referenceWidth: this.roundCoordinate(state.referenceWidth),
+        referenceHeight: this.roundCoordinate(state.referenceHeight),
+        afterWidth: this.roundCoordinate(afterRect?.width),
+        afterHeight: this.roundCoordinate(afterRect?.height)
+      }
+    });
+    console.debug("[Recorder][GrapesJS resize] completed", {
+      handle: state.handle,
+      inputType: state.inputType,
+      deltaX,
+      deltaY
+    });
+    return true;
+  }
+
+  getGrapesResizeReference(handle) {
+    const candidates = [
+      [handle?.closest?.(".gjs-resizer-c"), ".gjs-resizer-c"],
+      [handle?.closest?.(".gjs-resizer"), ".gjs-resizer"],
+      [this.mainDocument?.querySelector?.(".gjs-resizer-c"), ".gjs-resizer-c"],
+      [this.mainDocument?.querySelector?.(".gjs-resizer"), ".gjs-resizer"]
+    ];
+
+    const seen = new Set();
+    for (const [element, selector] of candidates) {
+      if (!element || seen.has(element)) continue;
+      seen.add(element);
+      const rect = element.getBoundingClientRect?.();
+      if (
+        rect &&
+        Number.isFinite(rect.width) &&
+        Number.isFinite(rect.height) &&
+        rect.width > 0 &&
+        rect.height > 0
+      ) {
+        return { element, selector, rect };
+      }
+    }
+    return null;
+  }
+
+  clampRatio(value, fallback = 0) {
+    return Number.isFinite(value)
+      ? Math.max(0, Math.min(1, Math.round(value * 10000) / 10000))
+      : fallback;
+  }
+
+  roundRatio(value) {
+    return Number.isFinite(value) ? Math.round(value * 1000000) / 1000000 : null;
+  }
+
+  roundCoordinate(value) {
+    return Number.isFinite(value) ? Math.round(value * 100) / 100 : null;
   }
 
   getDragTargetElement(element) {

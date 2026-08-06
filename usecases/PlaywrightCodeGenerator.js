@@ -137,7 +137,8 @@ export class PlaywrightCodeGenerator {
        
        // 【🌟 核心修改 🌟】
        // 判斷是否需要重新解析 source：如果預解析沒拿到東西，才去解析
-       const needsSourceParsing = !sourcepath || (Array.isArray(sourcepath) && sourcepath[0] === null);
+       const needsSourceParsing = action.type !== "grapesResize" &&
+         (!sourcepath || (Array.isArray(sourcepath) && sourcepath[0] === null));
        console.log("[RecorderDebug][CodeGenerator generate] parse decision", {
          actionType: action.type,
          hasSourcePath: !!sourcepath,
@@ -180,6 +181,8 @@ export class PlaywrightCodeGenerator {
     let generatedCode = null;
     if (action.type === 'dragANDdrop') {
       generatedCode = this.dragAndDropCodeSetter(action, targetpath, sourcepath, sourceWindow, targetWindow);
+    } else if (action.type === 'grapesResize') {
+      generatedCode = this.grapesResizeSetter(action, sourceWindow);
     } else if (action.type === 'click' || action.type === 'rightClick' || action.type === 'checkBox') {
       generatedCode = this.clickSetter(action, sourcepath, sourceWindow);
     } else if (action.type === 'dbclick') {
@@ -1128,6 +1131,86 @@ declareContexts(contexts, rootAlias) {
       return `await ${souLocator}.dragTo(${tarLocator}, { targetPosition: { x: ${dropX}, y: ${dropY} } });`;
     }
     return `await ${souLocator}.dragTo(${tarLocator});`;
+  }
+
+  grapesResizeSetter(action, sourceWindow) {
+    const resize = action?.grapesResize || {};
+    const handle = String(resize.handle || "");
+    if (!/^(tl|tc|tr|cl|cr|bl|bc|br)$/.test(handle)) return null;
+
+    this.mergeActionContextSnapshots(action);
+    const pagePrefix = this._getActionContextPrefix(action, "source", sourceWindow);
+    const mouseAlias = this._getMousePageAliasForAction(
+      { sourceContext: action?.sourceContext || null },
+      sourceWindow,
+      sourceWindow
+    );
+    const startXRatio = Number.isFinite(Number(resize.startXRatio))
+      ? Math.max(0, Math.min(1, Number(resize.startXRatio)))
+      : 0.5;
+    const startYRatio = Number.isFinite(Number(resize.startYRatio))
+      ? Math.max(0, Math.min(1, Number(resize.startYRatio)))
+      : 0.5;
+    const deltaXRatio = Number(resize.deltaXRatio);
+    const deltaYRatio = Number(resize.deltaYRatio);
+    const deltaX = Number.isFinite(Number(resize.deltaX)) ? Number(resize.deltaX) : 0;
+    const deltaY = Number.isFinite(Number(resize.deltaY)) ? Number(resize.deltaY) : 0;
+    const useXRatio = Number.isFinite(deltaXRatio);
+    const useYRatio = Number.isFinite(deltaYRatio);
+    const referenceSelector = resize.referenceSelector === ".gjs-resizer"
+      ? ".gjs-resizer"
+      : ".gjs-resizer-c";
+
+    action.setSourceMethod?.("ByGrapesResizeHandle");
+    action.setSourceData?.(`data-gjs-handler=${handle}`);
+
+    const lines = ["{"];
+    const resizeTargetPath = action?.resizeTargetPath;
+    const bestResizeTarget = this._getBestPath(resizeTargetPath);
+    if (bestResizeTarget) {
+      const resizeTargetPrefix = this._getContextPrefix(action.resizeTargetWindow);
+      const resizeTargetLocator = this._buildLocatorString(
+        resizeTargetPrefix,
+        bestResizeTarget
+      );
+      const componentScrollState = this._normalizeScrollState(
+        resize.componentScrollState
+      );
+      lines.push(`  const resizeTarget = ${resizeTargetLocator};`);
+      this._appendScrollRestoreLines(lines, "resizeTarget", componentScrollState);
+      lines.push(
+        "  await resizeTarget.scrollIntoViewIfNeeded();",
+        "  await resizeTarget.click();"
+      );
+      this.updateUserActionDB(
+        action,
+        bestResizeTarget.funName,
+        bestResizeTarget.obj,
+        "target",
+        resizeTargetPath
+      );
+    }
+
+    lines.push(
+      `  const resizeContainer = ${pagePrefix}.locator(${this.quoteForCode(`${referenceSelector}:visible`)}).first();`,
+      `  const resizeHandle = resizeContainer.locator(${this.quoteForCode(`.gjs-resizer-h[data-gjs-handler="${handle}"]:visible`)}).first();`,
+      "  await resizeHandle.waitFor({ state: 'visible' });",
+      "  const [resizeHandleBox, resizeReferenceBox] = await Promise.all([",
+      "    resizeHandle.boundingBox(),",
+      "    resizeContainer.boundingBox()",
+      "  ]);",
+      "  if (!resizeHandleBox || !resizeReferenceBox) throw new Error('Unable to calculate GrapesJS resize coordinates');",
+      `  const resizeStartX = resizeHandleBox.x + resizeHandleBox.width * ${startXRatio};`,
+      `  const resizeStartY = resizeHandleBox.y + resizeHandleBox.height * ${startYRatio};`,
+      `  const resizeDeltaX = ${useXRatio ? `resizeReferenceBox.width * ${deltaXRatio}` : deltaX};`,
+      `  const resizeDeltaY = ${useYRatio ? `resizeReferenceBox.height * ${deltaYRatio}` : deltaY};`,
+      `  await ${mouseAlias}.mouse.move(resizeStartX, resizeStartY);`,
+      `  await ${mouseAlias}.mouse.down();`,
+      `  await ${mouseAlias}.mouse.move(resizeStartX + resizeDeltaX, resizeStartY + resizeDeltaY, { steps: 15 });`,
+      `  await ${mouseAlias}.mouse.up();`,
+      "}"
+    );
+    return lines;
   }
 
   _shouldUseMouseDragForGrapesIframe(action) {

@@ -398,6 +398,25 @@ document.addEventListener("DOMContentLoaded", async function () {
             return cell;
         }
 
+        if (action.type === "grapesResize") {
+            appendLabeledElement(
+                cell,
+                "元件",
+                action.targetData,
+                action.targetMethod,
+                action.targetDomPathOptions,
+                action.targetDomPathChain,
+                index,
+                "target"
+            );
+            appendReadOnlyLabeledValue(
+                cell,
+                "控制點",
+                action.grapesResize?.handle || action.sourceData || ""
+            );
+            return cell;
+        }
+
         if (action.type === "navigate" || action.type === "popup") {
             const viewportText = action.type === "popup" && action.viewport
                 ? `\nviewport: ${action.viewport.width} × ${action.viewport.height}`
@@ -1095,6 +1114,11 @@ document.addEventListener("DOMContentLoaded", async function () {
                 || text.includes(".mouse.down(")
                 || text.includes(".mouse.up(");
         }
+        if (action.type === "grapesResize") {
+            return /^\s*const\s+resizeTarget\s*=/.test(text)
+                || text.includes(".mouse.down(")
+                || text.includes(".mouse.up(");
+        }
         if (action.type === "input") return text.includes(".fill(");
         if (action.type === "monacoSetValue") return text.includes("editorRoot.evaluate(") || text.includes("editor.setValue(") || text.includes("model.setValue(");
         if (action.type === "canvasInput") return text.includes(".keyboard.type(");
@@ -1427,6 +1451,19 @@ document.addEventListener("DOMContentLoaded", async function () {
             }
         }
 
+        if (action?.type === "grapesResize" && field === "target") {
+            const declaration = text.match(/^(\s*const\s+resizeTarget\s*=\s*)(.*?)(;\s*)$/);
+            if (declaration) {
+                const nextExpression = replaceLocatorExpression(
+                    declaration[2],
+                    oldMethod,
+                    oldChain,
+                    candidate
+                );
+                return declaration[1] + nextExpression + declaration[3];
+            }
+        }
+
         const operation = getActionOperation(action);
         const operationIndex = text.indexOf(operation);
         if (operationIndex < 0) return text;
@@ -1486,11 +1523,18 @@ document.addEventListener("DOMContentLoaded", async function () {
             : findCodeBodyIndexForAction(codeBody, actionIndex, oldValue, subjectField);
         const actionLines = getActionGeneratedLines(action);
         const nextLines = actionLines.map(line => {
-            const isDragLocatorDeclaration =
-                action.type === "dragANDdrop" &&
-                new RegExp(`^\\s*const\\s+${subjectField === "target" ? "dropTarget" : "dragSource"}\\s*=`).test(String(line || ""));
+            const isLocatorDeclaration =
+                (
+                    action.type === "dragANDdrop" &&
+                    new RegExp(`^\\s*const\\s+${subjectField === "target" ? "dropTarget" : "dragSource"}\\s*=`).test(String(line || ""))
+                ) ||
+                (
+                    action.type === "grapesResize" &&
+                    subjectField === "target" &&
+                    /^\s*const\s+resizeTarget\s*=/.test(String(line || ""))
+                );
             const lineAction = isTriggerField ? subjectAction : action;
-            return matchesActionCodeLine(lineAction, line) || isDragLocatorDeclaration
+            return matchesActionCodeLine(lineAction, line) || isLocatorDeclaration
                 ? replaceActionLocatorInCodeLine(lineAction, line, subjectField, candidate, oldMethod, oldChain)
                 : line;
         });

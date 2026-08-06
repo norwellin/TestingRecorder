@@ -322,6 +322,32 @@ test("source locator selection updates a GrapesJS mouse-drag dragSource declarat
   );
 });
 
+test("target locator selection updates a GrapesJS resizeTarget declaration", async () => {
+  const source = await readFile(new URL("../test.js", import.meta.url), "utf8");
+  const start = source.indexOf("    function buildLocatorSuffix");
+  const end = source.indexOf("    async function updateLocatorSelection", start);
+  const helpers = source.slice(start, end);
+  const context = {};
+
+  vm.runInNewContext(
+    `${helpers}
+     globalThis.updatedLine = replaceActionLocatorInCodeLine(
+       { type: "grapesResize" },
+       "  const resizeTarget = page.locator(\\"iframe#gjsiframe\\").contentFrame().locator(\\"#old-column\\");",
+       "target",
+       { method: "ByDomPath", data: { csspath: "#new-column", shadowChain: [] } },
+       "ByDomPath",
+       []
+     );`,
+    context
+  );
+
+  assert.equal(
+    context.updatedLine,
+    '  const resizeTarget = page.locator("iframe#gjsiframe").contentFrame().locator("#new-column");'
+  );
+});
+
 function createGenerator() {
   const generator = new PlaywrightCodeGenerator({}, {}, "page");
   generator._getBestPath = (path) => path;
@@ -1917,6 +1943,260 @@ test("GrapesJS toolbar item locators generate nth-based Playwright code", () => 
     code,
     'await page.locator(".gjs-toolbar").locator(".gjs-toolbar-item").nth(2).click();'
   );
+});
+
+test("outer listener records GrapesJS resize handles as a relative resize action", async () => {
+  let referenceWidth = 400;
+  const resizeContainer = {
+    getBoundingClientRect: () => ({
+      left: 20,
+      top: 30,
+      width: referenceWidth,
+      height: 100
+    })
+  };
+  const resizeHandle = {
+    nodeType: 1,
+    getAttribute: name => name === "data-gjs-handler" ? "cr" : null,
+    getBoundingClientRect: () => ({
+      left: 416,
+      top: 76,
+      width: 8,
+      height: 8
+    }),
+    closest: selector => {
+      if (selector === ".gjs-resizer-h[data-gjs-handler]") return resizeHandle;
+      if (selector === ".gjs-resizer-c") return resizeContainer;
+      return null;
+    }
+  };
+  const dispatched = [];
+  const listener = Object.create(OuterEventListener.prototype);
+  Object.assign(listener, {
+    isRecording: true,
+    mainDocument: {},
+    DRAG_THRESHOLD: 5,
+    grapesResizeState: null,
+    suppressClickUntil: 0,
+    isDragging: false,
+    dragStart: { x: 0, y: 0 },
+    dragSource: null,
+    canvasDragPath: [],
+    mouseDownFlag: false,
+    dragStepFlag: 0,
+    hideHoverPreview: () => {},
+    dispatchAction: (...args) => dispatched.push(args)
+  });
+
+  listener.mousedownHandler({
+    isTrusted: true,
+    target: resizeHandle,
+    clientX: 420,
+    clientY: 80
+  });
+  listener.mousemoveHandler({
+    isTrusted: true,
+    target: resizeHandle,
+    clientX: 460,
+    clientY: 80
+  });
+  referenceWidth = 440;
+  await listener.mouseupHandler({
+    isTrusted: true,
+    target: resizeHandle,
+    clientX: 460,
+    clientY: 80
+  });
+
+  assert.equal(dispatched.length, 1);
+  assert.equal(dispatched[0][0], "grapesResize");
+  assert.equal(dispatched[0][1], resizeHandle);
+  assert.deepEqual(dispatched[0][3].grapesResize, {
+    handle: "cr",
+    inputType: "mouse",
+    deltaX: 40,
+    deltaY: 0,
+    deltaXRatio: 0.1,
+    deltaYRatio: 0,
+    startXRatio: 0.5,
+    startYRatio: 0.5,
+    referenceSelector: ".gjs-resizer-c",
+    referenceWidth: 400,
+    referenceHeight: 100,
+    afterWidth: 440,
+    afterHeight: 100
+  });
+});
+
+test("pointer events record GrapesJS resize once without relying on compatibility mouse events", () => {
+  const resizeContainer = {
+    getBoundingClientRect: () => ({
+      left: 0,
+      top: 0,
+      width: 500,
+      height: 200
+    })
+  };
+  const resizeHandle = {
+    getAttribute: name => name === "data-gjs-handler" ? "br" : null,
+    getBoundingClientRect: () => ({
+      left: 496,
+      top: 196,
+      width: 8,
+      height: 8
+    }),
+    closest: selector => {
+      if (selector === ".gjs-resizer-h[data-gjs-handler]") return resizeHandle;
+      if (selector === ".gjs-resizer-c") return resizeContainer;
+      return null;
+    }
+  };
+  const dispatched = [];
+  const listener = Object.create(OuterEventListener.prototype);
+  Object.assign(listener, {
+    isRecording: true,
+    mainDocument: {},
+    DRAG_THRESHOLD: 5,
+    grapesResizeState: null,
+    suppressClickUntil: 0,
+    isDragging: false,
+    dragStart: { x: 0, y: 0 },
+    dragSource: null,
+    canvasDragPath: [],
+    mouseDownFlag: false,
+    dragStepFlag: 0,
+    hideHoverPreview: () => {},
+    dispatchAction: (...args) => dispatched.push(args)
+  });
+
+  listener.pointerdownHandler({
+    isTrusted: true,
+    pointerId: 7,
+    target: resizeHandle,
+    clientX: 500,
+    clientY: 200
+  });
+  listener.pointermoveHandler({
+    isTrusted: true,
+    pointerId: 7,
+    target: resizeHandle,
+    clientX: 550,
+    clientY: 220
+  });
+  listener.pointerupHandler({
+    isTrusted: true,
+    pointerId: 7,
+    target: resizeHandle,
+    clientX: 550,
+    clientY: 220
+  });
+
+  assert.equal(dispatched.length, 1);
+  assert.equal(dispatched[0][0], "grapesResize");
+  assert.equal(dispatched[0][3].grapesResize.inputType, "pointer");
+  assert.equal(dispatched[0][3].grapesResize.deltaXRatio, 0.1);
+  assert.equal(dispatched[0][3].grapesResize.deltaYRatio, 0.1);
+});
+
+test("GrapesJS resize falls back to the outer resizer and never records a normal click", () => {
+  const zeroSizeContainer = {
+    getBoundingClientRect: () => ({ width: 0, height: 0 })
+  };
+  const outerResizer = {
+    getBoundingClientRect: () => ({ width: 500, height: 120 })
+  };
+  const resizeHandle = {
+    closest: selector => ({
+      ".gjs-resizer-h[data-gjs-handler]": resizeHandle,
+      ".gjs-resizer-c": zeroSizeContainer,
+      ".gjs-resizer": outerResizer
+    })[selector] || null
+  };
+  const listener = Object.create(OuterEventListener.prototype);
+  Object.assign(listener, {
+    mainDocument: {},
+    isRecording: true,
+    suppressClickUntil: 0,
+    shouldSuppressSyntheticPageEvent: () => false,
+    getComposedEventTarget: () => resizeHandle,
+    dispatchAction: () => {
+      throw new Error("resize handle must not be recorded as a click");
+    }
+  });
+
+  const reference = listener.getGrapesResizeReference(resizeHandle);
+  assert.equal(reference.element, outerResizer);
+  assert.equal(reference.selector, ".gjs-resizer");
+
+  listener.clickHandler({
+    isTrusted: true,
+    target: resizeHandle
+  });
+});
+
+test("GrapesJS resize code replays the recorded relative movement on the page overlay", () => {
+  const generator = new PlaywrightCodeGenerator({ priSize: 3 }, {}, "page");
+  generator.mergeActionContextSnapshots = () => {};
+  generator._getActionContextPrefix = () => "page";
+  let mouseContextAction = null;
+  generator._getMousePageAliasForAction = contextAction => {
+    mouseContextAction = contextAction;
+    return "page";
+  };
+  generator._getContextPrefix = () => 'page.locator("iframe.gjs-frame").contentFrame()';
+  const sourceMethods = [];
+  const targetMethods = [];
+  const action = {
+    grapesResize: {
+      handle: "cr",
+      startXRatio: 0.5,
+      startYRatio: 0.5,
+      deltaX: 40,
+      deltaY: 0,
+      deltaXRatio: 0.1,
+      deltaYRatio: 0,
+      referenceSelector: ".gjs-resizer",
+      componentScrollState: {
+        scope: "element",
+        ancestorDepth: 2,
+        scrollLeftRatio: 0,
+        scrollTopRatio: 0.65
+      }
+    },
+    resizeTargetWindow: "ctx_iframe_0",
+    resizeTargetPath: {
+      0: {
+        funName: "ByDomPath",
+        obj: {
+          csspath: "#target-column",
+          shadowChain: [],
+          options: []
+        }
+      }
+    },
+    setSourceMethod: value => sourceMethods.push(value),
+    setSourceData: () => {},
+    setTargetMethod: value => targetMethods.push(value),
+    setTargetData: () => {}
+  };
+
+  const code = generator.grapesResizeSetter(action, "ctx_page_0");
+  const output = code.join("\n");
+
+  assert.equal(sourceMethods[0], "ByGrapesResizeHandle");
+  assert.deepEqual(mouseContextAction, { sourceContext: null });
+  assert.equal(targetMethods[0], "ByDomPath");
+  assert.match(output, /const resizeTarget = page\.locator\("iframe\.gjs-frame"\)\.contentFrame\(\)\.locator\("#target-column"\)/);
+  assert.match(output, /state\.ancestorDepth/);
+  assert.match(output, /"scrollTopRatio":0\.65/);
+  assert.match(output, /await resizeTarget\.scrollIntoViewIfNeeded\(\)/);
+  assert.match(output, /await resizeTarget\.click\(\)/);
+  assert.match(output, /locator\("\.gjs-resizer:visible"\)/);
+  assert.match(output, /data-gjs-handler=\\"cr\\"/);
+  assert.match(output, /resizeReferenceBox\.width \* 0\.1/);
+  assert.match(output, /resizeReferenceBox\.height \* 0/);
+  assert.match(output, /await page\.mouse\.down\(\)/);
+  assert.match(output, /\{ steps: 15 \}/);
 });
 
 test("iframe clicks record their position relative to the selected click target", () => {

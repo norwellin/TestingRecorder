@@ -29,6 +29,7 @@ export class MainApp {
     this.dynamicFrameObserver = null;
     this.dynamicFrameScanTimer = null;
     this.pendingGrapesDrops = [];
+    this.lastIframeSelection = null;
     this.hasInitializedRecordingSession = false;
     this.dropPositionMode = "ratio";
 
@@ -387,6 +388,42 @@ export class MainApp {
       hasPreParsedSourcePath: !!action.preParsedSourcePath,
       preParsedSummary: this.summarizeDebugSourcePath(action.preParsedSourcePath)
     });
+
+    if (action.type === "click" && action.sourceContext?.type === "iframe") {
+      const selectedElement = action.getSourceElement?.();
+      if (selectedElement) {
+        const selectedPath = this.domParserService.getOpenSourcePath(
+          selectedElement,
+          action.sourceWindow
+        );
+        action.preParsedSourcePath = selectedPath;
+        this.lastIframeSelection = {
+          capturedAt: Date.now(),
+          element: selectedElement,
+          contextId: action.sourceWindow,
+          context: action.sourceContext || null,
+          path: selectedPath,
+          scrollState: this.captureElementScrollState(selectedElement)
+        };
+      }
+    }
+
+    if (action.type === "grapesResize") {
+      const selection = this.lastIframeSelection;
+      const isRecentSelection = selection &&
+        Date.now() - Number(selection.capturedAt || 0) <= 30000;
+      if (isRecentSelection) {
+        action.resizeTargetWindow = selection.contextId;
+        action.resizeTargetContext = selection.context;
+        action.resizeTargetPath = selection.path;
+        action.grapesResize = {
+          ...(action.grapesResize || {}),
+          componentScrollState: this.captureElementScrollState(selection.element) ||
+            selection.scrollState ||
+            null
+        };
+      }
+    }
     // ===== 拖放事件 (Drag & Drop) 狀態組裝邏輯 =====
     if (action.type === "dragANDdrop") {
       if (action.isDragStart) {
@@ -446,6 +483,83 @@ export class MainApp {
     });
     this.syncToGlobalStorage(newLine, savedAction);
 
+  }
+
+  captureElementScrollState(targetElement) {
+    const doc = targetElement?.ownerDocument;
+    if (!doc) return null;
+
+    let current = targetElement;
+    let ancestorDepth = 0;
+    const view = doc.defaultView;
+
+    while (current && current !== doc.documentElement) {
+      if (String(current.tagName || "").toLowerCase() === "ion-content") {
+        const scroller = current.shadowRoot?.querySelector?.("[part='scroll'], .inner-scroll");
+        if (scroller) {
+          return {
+            scope: "ion-content",
+            scrollLeftRatio: this.getRecordedScrollRatio(
+              scroller.scrollLeft,
+              scroller.scrollWidth - scroller.clientWidth
+            ),
+            scrollTopRatio: this.getRecordedScrollRatio(
+              scroller.scrollTop,
+              scroller.scrollHeight - scroller.clientHeight
+            )
+          };
+        }
+      }
+
+      const style = view?.getComputedStyle?.(current);
+      const overflowX = style?.overflowX || style?.overflow || "";
+      const overflowY = style?.overflowY || style?.overflow || "";
+      const canScrollX =
+        /(auto|scroll|overlay)/.test(overflowX) &&
+        Number(current.scrollWidth) > Number(current.clientWidth);
+      const canScrollY =
+        /(auto|scroll|overlay)/.test(overflowY) &&
+        Number(current.scrollHeight) > Number(current.clientHeight);
+
+      if (canScrollX || canScrollY) {
+        return {
+          scope: "element",
+          ancestorDepth,
+          scrollLeftRatio: this.getRecordedScrollRatio(
+            current.scrollLeft,
+            current.scrollWidth - current.clientWidth
+          ),
+          scrollTopRatio: this.getRecordedScrollRatio(
+            current.scrollTop,
+            current.scrollHeight - current.clientHeight
+          )
+        };
+      }
+
+      current = current.parentElement;
+      ancestorDepth += 1;
+    }
+
+    const scroller = doc.scrollingElement || doc.documentElement || doc.body;
+    if (!scroller) return null;
+    return {
+      scope: "document",
+      rootTag: String(scroller.tagName || "").toLowerCase(),
+      scrollLeftRatio: this.getRecordedScrollRatio(
+        scroller.scrollLeft,
+        scroller.scrollWidth - scroller.clientWidth
+      ),
+      scrollTopRatio: this.getRecordedScrollRatio(
+        scroller.scrollTop,
+        scroller.scrollHeight - scroller.clientHeight
+      )
+    };
+  }
+
+  getRecordedScrollRatio(position, maximum) {
+    const max = Number(maximum);
+    if (!Number.isFinite(max) || max <= 0) return 0;
+    return Math.max(0, Math.min(1, Math.round((Number(position) / max) * 1000000) / 1000000));
   }
   // 啟動錄製器
   // 檔案：myrecorderRestructure/MainApp.js
@@ -670,6 +784,7 @@ export class MainApp {
     this.scanResult = null;
     this.activeListeners = [];
     this.pendingGrapesDrops = [];
+    this.lastIframeSelection = null;
     this.hasInitializedRecordingSession = false;
     this.isStarted = false;
     return this.getState();
