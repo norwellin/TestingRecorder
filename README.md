@@ -65,6 +65,19 @@ python main.py
 
 Pull requests are welcome. For major changes, please open an issue first.
 
+## Acknowledgements
+
+The frontend user interface of this project is adapted from the
+[playwright-recorder](https://github.com/ashishjsharda/playwright-recorder)
+project developed by Ashish J. Sharda.
+
+We sincerely thank the original author for providing the open-source
+implementation, which served as a reference and foundation for the
+frontend interface of this project.
+
+The frontend interface has been modified and extended to support the
+specific requirements and functionalities of this project.
+
 ## Update
 [31.08.2025] Click event can be detect at window.
 
