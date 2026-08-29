@@ -69,7 +69,18 @@ window.global ||= window;
 # Example command to run your project
 python main.py
 ```
+## Acknowledgements
 
+The frontend user interface of this project is adapted from the
+[playwright-recorder](https://github.com/ashishjsharda/playwright-recorder)
+project developed by Ashish J. Sharda.
+
+We sincerely thank the original author for providing the open-source
+implementation, which served as a reference and foundation for the
+frontend interface of this project.
+
+The frontend interface has been modified and extended to support the
+specific requirements and functionalities of this project.
 ## Contributing
 
 Pull requests are welcome. For major changes, please open an issue first.
